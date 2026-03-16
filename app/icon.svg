@@ -1,0 +1,61 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 主渐变 -->
+    <linearGradient id="mainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff2442" />
+      <stop offset="100%" stop-color="#ff6b9d" />
+    </linearGradient>
+
+    <!-- 星光渐变 -->
+    <linearGradient id="sparkGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffd700" />
+      <stop offset="100%" stop-color="#ff6b9d" />
+    </linearGradient>
+
+    <!-- 柔和阴影 -->
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#ff2442" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- 背景 -->
+  <rect width="64" height="64" rx="14" fill="#ffffff" />
+
+  <!-- 笔记本主体 -->
+  <rect
+    x="13"
+    y="18"
+    width="38"
+    height="38"
+    rx="8"
+    fill="url(#mainGradient)"
+    filter="url(#shadow)"
+  />
+
+  <!-- 笔记横线 -->
+  <line x1="20" y1="28" x2="38" y2="28" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.6" />
+  <line x1="20" y1="36" x2="42" y2="36" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.6" />
+  <line x1="20" y1="44" x2="34" y2="44" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.6" />
+
+  <!-- 爆款星芒 -->
+  <g transform="translate(40, 16)">
+    <!-- 主星 -->
+    <circle cx="0" cy="0" r="7" fill="url(#sparkGradient)" opacity="0.9" />
+    <circle cx="0" cy="0" r="4.5" fill="#fff" />
+
+    <!-- 四向光芒 -->
+    <path d="M 0 -9 L 0 -13" stroke="#ffd700" stroke-width="2.5" stroke-linecap="round" opacity="0.8" />
+    <path d="M 0 9 L 0 13" stroke="#ffd700" stroke-width="2.5" stroke-linecap="round" opacity="0.6" />
+    <path d="M -9 0 L -13 0" stroke="#ffd700" stroke-width="2.5" stroke-linecap="round" opacity="0.6" />
+    <path d="M 9 0 L 13 0" stroke="#ffd700" stroke-width="2.5" stroke-linecap="round" opacity="0.8" />
+
+    <!-- 对角光芒 -->
+    <path d="M -6.5 -6.5 L -9.5 -9.5" stroke="#ff6b9d" stroke-width="2" stroke-linecap="round" opacity="0.5" />
+    <path d="M 6.5 6.5 L 9.5 9.5" stroke="#ff6b9d" stroke-width="2" stroke-linecap="round" opacity="0.7" />
+    <path d="M 6.5 -6.5 L 9.5 -9.5" stroke="#ff6b9d" stroke-width="2" stroke-linecap="round" opacity="0.7" />
+  </g>
+
+  <!-- 小火花 -->
+  <circle cx="52" cy="27" r="2.5" fill="#ffd700" opacity="0.5" />
+  <circle cx="47" cy="11" r="2" fill="#ff6b9d" opacity="0.5" />
+</svg>
