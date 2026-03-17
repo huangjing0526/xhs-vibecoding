@@ -21,12 +21,9 @@ export default function CoverEditor({
   const [coverDataUrl, setCoverDataUrl] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // Safety: ensure config is always valid
-  if (!config) return null;
-
   // 生成封面
   const generateCover = useCallback(async () => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || !config) return;
 
     setIsGenerating(true);
     try {
