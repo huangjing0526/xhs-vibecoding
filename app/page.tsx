@@ -21,6 +21,7 @@ import HistoryDrawer from "@/components/HistoryDrawer";
 import { saveRichHistoryEntry, HistoryEntry } from "@/lib/similarity";
 import ViralAnalyzer from "@/components/ViralAnalyzer";
 import XHSPhonePreview from "@/components/XHSPhonePreview";
+import DataManagement from "@/components/DataManagement";
 
 interface GeneratedContent {
   title: string;
@@ -30,6 +31,7 @@ interface GeneratedContent {
   firstComment: string;
   aiScore: number;
   titleScores?: number[];
+  freeTrialRemaining?: number;
 }
 
 interface Draft {
@@ -74,6 +76,12 @@ export default function Home() {
 
   // P2-3: 手机预览
   const [showPhonePreview, setShowPhonePreview] = useState(false);
+
+  // 数据管理
+  const [showDataMgmt, setShowDataMgmt] = useState(false);
+
+  // 免费试用
+  const [freeTrialInfo, setFreeTrialInfo] = useState<{ sharedAvailable: boolean; remaining: number } | null>(null);
   const [coverDataUrl, setCoverDataUrl] = useState("");
   const [coverConfig, setCoverConfig] = useState<CoverConfig>({ ...DEFAULT_COVER_CONFIG });
 
@@ -88,10 +96,16 @@ export default function Home() {
     toastTimerRef.current = setTimeout(() => setToast(null), 3500);
   }, []);
 
-  // Mount: 检查 API 配置 + 草稿 + 新手引导
+  // Mount: 检查 API 配置 + 草稿 + 新手引导 + 免费试用
   useEffect(() => {
     const apiConfig = localStorage.getItem("vibenote_api_config");
     setHasApiConfig(!!apiConfig);
+
+    // 检查免费试用状态
+    fetch("/api/free-trial")
+      .then((r) => r.json())
+      .then((data) => setFreeTrialInfo(data))
+      .catch(() => {});
 
     // P1-3: 新手引导
     if (shouldShowOnboarding()) {
@@ -268,6 +282,11 @@ export default function Home() {
             setStreamingText("");
             localStorage.removeItem("vibenote_draft");
 
+            // 更新免费试用剩余次数
+            if (typeof data.freeTrialRemaining === "number") {
+              setFreeTrialInfo((prev) => prev ? { ...prev, remaining: data.freeTrialRemaining as number } : prev);
+            }
+
             const history = loadContentHistory();
             const similarity = checkSimilarity(data.content, history);
             if (!similarity.isUnique) {
@@ -419,13 +438,15 @@ export default function Home() {
         <div className="bg-blue-600 text-white px-4 py-2.5">
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
             <p className="text-sm">
-              欢迎使用 VibeNote！开始前需配置 AI API Key —— 推荐硅基流动，注册即送免费额度。
+              {freeTrialInfo?.sharedAvailable && freeTrialInfo.remaining > 0
+                ? `欢迎体验 VibeNote！你有 ${freeTrialInfo.remaining} 次免费生成机会，也可配置自己的 API Key 无限使用。`
+                : "欢迎使用 VibeNote！开始前需配置 AI API Key —— 推荐硅基流动，注册即送免费额度。"}
             </p>
             <button
               onClick={() => setShowApiSettings(true)}
               className="shrink-0 px-4 py-1.5 bg-white text-blue-600 rounded-lg text-sm font-semibold hover:bg-blue-50 transition-colors"
             >
-              立即配置 →
+              {freeTrialInfo?.sharedAvailable && freeTrialInfo.remaining > 0 ? "配置 API Key" : "立即配置 →"}
             </button>
           </div>
         </div>
@@ -512,6 +533,18 @@ export default function Home() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <span>历史</span>
+              </button>
+
+              {/* 数据管理按钮 */}
+              <button
+                onClick={() => setShowDataMgmt(true)}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm border rounded-lg text-gray-600 hover:text-gray-900 border-gray-200 hover:border-gray-300 transition-colors"
+                title="数据管理"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>数据</span>
               </button>
 
               {/* API 配置按钮 */}
@@ -645,10 +678,26 @@ export default function Home() {
                   </div>
                 )}
 
+                {/* 免费试用剩余提示 */}
+                {!hasApiConfig && freeTrialInfo?.sharedAvailable && freeTrialInfo.remaining > 0 && (
+                  <div className="text-center text-xs text-gray-500">
+                    免费体验剩余 <span className="font-semibold text-blue-600">{freeTrialInfo.remaining}</span> 次
+                  </div>
+                )}
+                {!hasApiConfig && freeTrialInfo?.sharedAvailable && freeTrialInfo.remaining <= 0 && (
+                  <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm text-orange-700 text-center">
+                    免费次数已用完，请
+                    <button onClick={() => setShowApiSettings(true)} className="underline font-medium ml-1">
+                      配置 API Key
+                    </button>
+                    {" "}继续使用
+                  </div>
+                )}
+
                 {/* 生成按钮 */}
                 <button
                   onClick={handleGenerate}
-                  disabled={!parsedContent || isGenerating}
+                  disabled={!parsedContent || isGenerating || (!hasApiConfig && (!freeTrialInfo?.sharedAvailable || freeTrialInfo.remaining <= 0))}
                   className="w-full py-4 bg-gradient-to-r from-xhs-red to-xhs-pink text-white rounded-xl font-semibold text-lg shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
                 >
                   {isGenerating ? (
@@ -864,6 +913,13 @@ export default function Home() {
           {toast.message}
         </div>
       )}
+
+      {/* 数据管理模态框 */}
+      <DataManagement
+        isOpen={showDataMgmt}
+        onClose={() => setShowDataMgmt(false)}
+        onImported={() => showToast("数据导入成功，刷新页面后生效")}
+      />
 
       {/* P2-2: 历史记录抽屉 */}
       <HistoryDrawer

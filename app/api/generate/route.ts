@@ -6,6 +6,20 @@ import { calculateViralityScore } from "@/lib/ai";
 // AI Provider 类型
 type AIProvider = "openai" | "anthropic" | "siliconflow" | "custom" | "mock";
 
+const MAX_FREE_USES = 3;
+
+// 共享 API Key 配置（服务端环境变量）
+function getSharedConfig(): { provider: AIProvider; apiKey: string; model: string; baseURL?: string } | null {
+  const apiKey = process.env.SHARED_API_KEY;
+  if (!apiKey) return null;
+
+  const provider = (process.env.SHARED_API_PROVIDER || "siliconflow") as AIProvider;
+  const model = process.env.SHARED_API_MODEL || "Qwen/Qwen2.5-7B-Instruct";
+  const baseURL = process.env.SHARED_API_BASE;
+
+  return { provider, apiKey, model, baseURL };
+}
+
 function detectProvider(clientConfig?: any): AIProvider {
   if (clientConfig?.provider) {
     const providerKey =
@@ -19,6 +33,11 @@ function detectProvider(clientConfig?: any): AIProvider {
   if (process.env.OPENAI_API_KEY) return "openai";
   if (process.env.ANTHROPIC_API_KEY) return "anthropic";
   if (process.env.CUSTOM_API_KEY && process.env.CUSTOM_API_BASE) return "custom";
+
+  // 尝试共享 Key
+  const shared = getSharedConfig();
+  if (shared) return "shared" as any; // special marker
+
   return "mock";
 }
 
@@ -68,6 +87,17 @@ function generateMockResponse(_prompt: string) {
   };
 }
 
+// 读取免费试用次数
+function getFreeUseCount(request: NextRequest): number {
+  const cookie = request.cookies.get("vibenote_free_uses");
+  if (!cookie) return 0;
+  try {
+    return JSON.parse(cookie.value).count || 0;
+  } catch {
+    return 0;
+  }
+}
+
 export async function POST(request: NextRequest) {
   const { prompt, config: clientConfig, test } = await request.json();
 
@@ -75,8 +105,34 @@ export async function POST(request: NextRequest) {
     return new Response(JSON.stringify({ error: "Prompt is required" }), { status: 400 });
   }
 
-  const provider = detectProvider(clientConfig);
+  let detectedProvider = detectProvider(clientConfig);
+  let useSharedKey = false;
+  let freeTrialRemaining: number | undefined;
+
+  // 共享 Key 模式：检查免费次数
+  if (detectedProvider === ("shared" as any)) {
+    const usedCount = getFreeUseCount(request);
+    if (usedCount >= MAX_FREE_USES) {
+      return new Response(
+        JSON.stringify({ error: "免费试用次数已用完，请配置自己的 API Key 继续使用" }),
+        { status: 403 }
+      );
+    }
+    useSharedKey = true;
+    freeTrialRemaining = MAX_FREE_USES - usedCount - 1;
+  }
+
   const encoder = new TextEncoder();
+
+  // 准备 cookie header（仅共享模式需要）
+  let setCookieHeader: string | undefined;
+  if (useSharedKey) {
+    const usedCount = getFreeUseCount(request);
+    const newCount = usedCount + 1;
+    const cookieValue = JSON.stringify({ count: newCount });
+    // 30 天过期
+    setCookieHeader = `vibenote_free_uses=${encodeURIComponent(cookieValue)}; Path=/; Max-Age=${30 * 24 * 60 * 60}; SameSite=Lax`;
+  }
 
   const readableStream = new ReadableStream({
     async start(controller) {
@@ -86,24 +142,45 @@ export async function POST(request: NextRequest) {
 
       try {
         let rawText = "";
+        let actualProvider: AIProvider;
+        let apiKey: string;
+        let baseURL: string | undefined;
+        let model: string;
 
-        if (provider === "mock") {
+        if (useSharedKey) {
+          const shared = getSharedConfig()!;
+          actualProvider = shared.provider;
+          apiKey = shared.apiKey;
+          model = shared.model;
+          baseURL = shared.baseURL;
+
+          // 为 siliconflow 设默认 baseURL
+          if (actualProvider === "siliconflow" && !baseURL) {
+            baseURL = "https://api.siliconflow.cn/v1";
+          }
+        } else {
+          actualProvider = detectedProvider;
+          apiKey = "";
+          baseURL = undefined;
+          model = "";
+        }
+
+        if (actualProvider === "mock") {
           const mockResult = generateMockResponse(prompt);
           const fullText = JSON.stringify(mockResult, null, 2);
-          // Simulate streaming in chunks
           const chunkSize = 10;
           for (let i = 0; i < fullText.length; i += chunkSize) {
             rawText += fullText.slice(i, i + chunkSize);
             send({ type: "chunk", text: fullText.slice(i, i + chunkSize) });
             await new Promise((r) => setTimeout(r, 12));
           }
-        } else if (provider === "anthropic") {
-          const apiKey = clientConfig?.anthropicKey || process.env.ANTHROPIC_API_KEY;
-          const model = clientConfig?.anthropicModel || process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20251001";
-          const anthropic = new Anthropic({ apiKey });
+        } else if (actualProvider === "anthropic") {
+          const finalKey = useSharedKey ? apiKey : (clientConfig?.anthropicKey || process.env.ANTHROPIC_API_KEY);
+          const finalModel = useSharedKey ? model : (clientConfig?.anthropicModel || process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20251001");
+          const anthropic = new Anthropic({ apiKey: finalKey });
 
           const stream = await anthropic.messages.create({
-            model,
+            model: finalModel,
             max_tokens: 2000,
             messages: [{ role: "user", content: prompt }],
             stream: true,
@@ -117,26 +194,30 @@ export async function POST(request: NextRequest) {
           }
         } else {
           // OpenAI-compatible: openai, siliconflow, custom
-          let apiKey: string;
-          let baseURL: string | undefined;
-          let model: string;
+          let finalKey: string;
+          let finalBaseURL: string | undefined;
+          let finalModel: string;
 
-          if (provider === "siliconflow") {
-            apiKey = clientConfig?.siliconflowKey || process.env.SILICONFLOW_API_KEY || "";
-            baseURL = "https://api.siliconflow.cn/v1";
-            model = clientConfig?.siliconflowModel || process.env.SILICONFLOW_MODEL || "Qwen/Qwen2.5-7B-Instruct";
-          } else if (provider === "custom") {
-            apiKey = clientConfig?.customKey || process.env.CUSTOM_API_KEY || "";
-            baseURL = clientConfig?.customBase || process.env.CUSTOM_API_BASE;
-            model = clientConfig?.customModel || process.env.CUSTOM_MODEL || "gpt-3.5-turbo";
+          if (useSharedKey) {
+            finalKey = apiKey;
+            finalBaseURL = baseURL;
+            finalModel = model;
+          } else if (actualProvider === "siliconflow") {
+            finalKey = clientConfig?.siliconflowKey || process.env.SILICONFLOW_API_KEY || "";
+            finalBaseURL = "https://api.siliconflow.cn/v1";
+            finalModel = clientConfig?.siliconflowModel || process.env.SILICONFLOW_MODEL || "Qwen/Qwen2.5-7B-Instruct";
+          } else if (actualProvider === "custom") {
+            finalKey = clientConfig?.customKey || process.env.CUSTOM_API_KEY || "";
+            finalBaseURL = clientConfig?.customBase || process.env.CUSTOM_API_BASE;
+            finalModel = clientConfig?.customModel || process.env.CUSTOM_MODEL || "gpt-3.5-turbo";
           } else {
-            apiKey = clientConfig?.openaiKey || process.env.OPENAI_API_KEY || "";
-            model = clientConfig?.openaiModel || process.env.OPENAI_MODEL || "gpt-4o-mini";
+            finalKey = clientConfig?.openaiKey || process.env.OPENAI_API_KEY || "";
+            finalModel = clientConfig?.openaiModel || process.env.OPENAI_MODEL || "gpt-4o-mini";
           }
 
-          const openai = new OpenAI({ apiKey, baseURL });
+          const openai = new OpenAI({ apiKey: finalKey, baseURL: finalBaseURL });
           const completion = await openai.chat.completions.create({
-            model,
+            model: finalModel,
             messages: [{ role: "user", content: prompt }],
             stream: true,
           });
@@ -169,7 +250,15 @@ export async function POST(request: NextRequest) {
             (t: string) => calculateViralityScore(t).score
           );
 
-          send({ type: "done", result: { ...result, aiScore, titleScores } });
+          send({
+            type: "done",
+            result: {
+              ...result,
+              aiScore,
+              titleScores,
+              ...(freeTrialRemaining !== undefined ? { freeTrialRemaining } : {}),
+            },
+          });
         }
       } catch (error: any) {
         console.error("Generate error:", error);
@@ -194,11 +283,15 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return new Response(readableStream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "X-Accel-Buffering": "no",
-    },
-  });
+  const headers: Record<string, string> = {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+  };
+
+  if (setCookieHeader) {
+    headers["Set-Cookie"] = setCookieHeader;
+  }
+
+  return new Response(readableStream, { headers });
 }

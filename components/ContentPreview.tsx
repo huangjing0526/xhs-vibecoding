@@ -82,7 +82,7 @@ export default function ContentPreview({
   };
 
   const handleCopyAll = () => {
-    const formatted = `${selectedTitle}\n\n${editableContent}\n\n${tags.join(" ")}`;
+    const formatted = `${selectedTitle}\n\n${editableContent}\n\n${tags.join(" ")}${firstComment ? `\n\n${firstComment}` : ""}`;
     copyToClipboard(formatted, "all");
     setShowCopyMenu(false);
   };
