@@ -1,7 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import satori from "satori";
-import { Resvg } from "@resvg/resvg-js";
 import React from "react";
+
+// 动态加载 resvg-wasm，避免 webpack 解析 .wasm 文件
+let resvgModule: any = null;
+async function getResvg() {
+  if (resvgModule) return resvgModule;
+  const mod = await import("@resvg/resvg-wasm");
+  try {
+    // 从 npm 包的 URL 加载 WASM（Cloudflare 兼容）
+    const wasmUrl = new URL("@resvg/resvg-wasm/index_bg.wasm", import.meta.url);
+    const wasmResponse = await fetch(wasmUrl);
+    await mod.initWasm(wasmResponse);
+  } catch (e: any) {
+    if (!e.message?.includes("Already initialized")) throw e;
+  }
+  resvgModule = mod;
+  return mod;
+}
 
 // 尝试从 Google Fonts 加载字体
 let fontData: ArrayBuffer | null = null;
@@ -10,14 +26,12 @@ async function loadFont(): Promise<ArrayBuffer> {
   if (fontData) return fontData;
 
   try {
-    // 使用 Google Fonts CDN
     const response = await fetch(
       "https://fonts.gstatic.com/s/notosanssc/v36/k3kCo84MPvpLmixcA63oeAL7Iqp5IZJF9bmaG9_FnYxNbPzS5HE.ttf"
     );
     fontData = await response.arrayBuffer();
     return fontData;
   } catch (error) {
-    // 返回一个最小的占位字体数据
     console.error("Failed to load font:", error);
     throw new Error("Font loading failed");
   }
@@ -38,6 +52,8 @@ interface CoverParams {
 export async function POST(request: NextRequest) {
   try {
     const params: CoverParams = await request.json();
+
+    const { Resvg } = await getResvg();
     const font = await loadFont();
 
     const element = React.createElement(CoverComponent, params);
@@ -59,14 +75,14 @@ export async function POST(request: NextRequest) {
     // 转换为PNG
     const resvg = new Resvg(svg, {
       fitTo: {
-        mode: "width",
+        mode: "width" as const,
         value: 1080,
       },
     });
     const pngData = resvg.render();
     const pngBuffer = pngData.asPng();
 
-    return new NextResponse(new Uint8Array(pngBuffer), {
+    return new NextResponse(pngBuffer, {
       headers: {
         "Content-Type": "image/png",
         "Cache-Control": "public, max-age=31536000",
@@ -222,3 +238,5 @@ function CoverComponent(props: CoverParams) {
     )
   );
 }
+
+// Edge runtime for Cloudflare compatibility
