@@ -6,6 +6,7 @@ import TopicPipeline from "@/components/workflow/TopicPipeline";
 import DraftPipeline from "@/components/workflow/DraftPipeline";
 import CoverStudio from "@/components/workflow/CoverStudio";
 import LocalDocsSyncPanel from "@/components/workflow/LocalDocsSyncPanel";
+import TopicPoolImportPanel from "@/components/workflow/TopicPoolImportPanel";
 import ReviewDashboard from "@/components/workflow/ReviewDashboard";
 import WorkflowOnboarding from "@/components/workflow/WorkflowOnboarding";
 import AppShell from "@/components/workflow/AppShell";
@@ -459,6 +460,7 @@ export default function WorkflowDashboard() {
   const hasPendingMaterials = snapshot.materials.some((item) => item.status === "待提炼");
   const isFeishuReady = workflowMode === "connected" && Boolean(bootstrapConfig?.feishuReady);
   const localDocsSourceDir = bootstrapConfig?.localDocsSourceDir || "";
+  const topicPoolDir = bootstrapConfig?.topicPoolDir || "";
   const usableTopics = useMemo(() => getUsableTopics(snapshot.topics), [snapshot.topics]);
   const usableDrafts = useMemo(() => getUsableDrafts(snapshot.drafts), [snapshot.drafts]);
   const publishedMetrics = useMemo(() => {
@@ -1042,12 +1044,20 @@ export default function WorkflowDashboard() {
 
     if (activeModule === "topics") {
       return (
-        <TopicPipeline
-          topics={usableTopics}
-          selectedTopic={selectedTopic}
-          selectedMaterials={selectedMaterials}
-          onSelectTopic={handleSelectTopic}
-        />
+        <div className="space-y-3">
+          <TopicPoolImportPanel
+            defaultSourceDir={topicPoolDir}
+            isFeishuReady={isFeishuReady}
+            onNotice={setNotice}
+            onImported={loadSnapshot}
+          />
+          <TopicPipeline
+            topics={usableTopics}
+            selectedTopic={selectedTopic}
+            selectedMaterials={selectedMaterials}
+            onSelectTopic={handleSelectTopic}
+          />
+        </div>
       );
     }
 
@@ -1164,6 +1174,7 @@ export default function WorkflowDashboard() {
     selectedTopic,
     setNotice,
     snapshot,
+    topicPoolDir,
     usableDrafts,
     usableTopics,
   ]);
@@ -1194,6 +1205,7 @@ export default function WorkflowDashboard() {
       activeModule={activeModule}
       moduleCounts={moduleCounts}
       workflowMode={workflowMode}
+      aiProvider={bootstrapConfig?.aiProvider ?? null}
       syncing={isSyncing}
       syncLabel={workflowMode === "demo" ? "重载 Demo" : "同步飞书"}
       onSync={loadSnapshot}

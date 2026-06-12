@@ -17,7 +17,7 @@ export default function ModuleSidebar({
         <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#A1A1A6]">
           Workflow
         </div>
-        <h2 className="mt-1 text-base font-semibold text-[#1D1D1F]">内容生产台</h2>
+        <h2 className="mt-1 text-base font-semibold text-[#1D1D1F]">内容创作台</h2>
       </div>
 
       <button

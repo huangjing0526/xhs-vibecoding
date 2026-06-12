@@ -30,19 +30,13 @@ export default function WorkflowOnboarding({
     <section className="border border-stone-950 bg-white">
       <div className="grid gap-0 lg:grid-cols-[1fr_auto]">
         <div className="border-b border-stone-200 p-4 lg:border-b-0 lg:border-r">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="border border-stone-950 bg-stone-950 px-2 py-1 text-xs font-black uppercase tracking-[0.14em] text-white">
-              {isDemo ? "Demo Ready" : "Workflow Ready"}
-            </span>
-            <span className="border border-stone-200 px-2 py-1 text-xs font-bold text-stone-500">
-              AI: {config?.aiProvider || "mock"}
-            </span>
-            {isDemo && (
+          {isDemo && missingCount > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
               <span className="border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-bold text-amber-800">
                 缺少 {missingCount} 项飞书配置
               </span>
-            )}
-          </div>
+            </div>
+          )}
 
           <h2 className="mt-3 text-xl font-black leading-7 text-stone-950">
             {isDemo ? "先用样例跑完整闭环" : "从 3-6 条素材开始这一轮"}

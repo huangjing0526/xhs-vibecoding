@@ -13,6 +13,7 @@ interface AppShellProps {
   activeModule: WorkflowModule;
   moduleCounts: Partial<Record<WorkflowModule, number>>;
   workflowMode: WorkflowMode;
+  aiProvider?: string | null;
   syncing: boolean;
   syncLabel: string;
   onSync: () => void;
@@ -38,6 +39,7 @@ export default function AppShell({
   activeModule,
   moduleCounts,
   workflowMode,
+  aiProvider,
   syncing,
   syncLabel,
   onSync,
@@ -56,11 +58,21 @@ export default function AppShell({
             <VibeNoteLogo size={40} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-[#1D1D1F]">VibeNote Studio</div>
+            <div className="truncate text-sm font-semibold text-[#1D1D1F]">内容创作 Studio</div>
             <div className="mt-0.5 flex items-center gap-2 text-xs font-medium text-[#6E6E73]">
               <span className={`h-2 w-2 rounded-full ${isConnected ? "bg-[#0A7F64]" : "bg-[#A1A1A6]"}`} />
               <span>{isConnected ? "Connected · 飞书已连接" : "Demo · 本地体验"}</span>
             </div>
+          </div>
+          <div className="hidden items-center gap-2 sm:flex">
+            <span className="rounded-md bg-[#1D1D1F] px-2 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-white">
+              {isConnected ? "Workflow Ready" : "Demo Ready"}
+            </span>
+            {aiProvider && (
+              <span className="rounded-md border border-[#D2D2D7] bg-white px-2 py-1 text-[11px] font-semibold text-[#6E6E73]">
+                AI: {aiProvider}
+              </span>
+            )}
           </div>
           <button
             type="button"

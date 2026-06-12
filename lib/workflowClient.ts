@@ -35,6 +35,7 @@ export interface WorkflowBootstrapResult {
     aiProvider: string;
     aiReady: boolean;
     localDocsSourceDir: string;
+    topicPoolDir: string;
   };
 }
 
@@ -329,5 +330,30 @@ export async function syncLocalDocs(options?: {
       }),
     },
     "本地文档写入飞书失败"
+  );
+}
+
+export interface TopicPoolImportResult {
+  topics: ContentCard[];
+  sections: string[];
+  writeBack: boolean;
+  imported: ContentCard[];
+  skipped: number;
+}
+
+export async function importTopicPool(options?: {
+  sourceDir?: string;
+  writeBack?: boolean;
+}): Promise<TopicPoolImportResult> {
+  return workflowRequest<TopicPoolImportResult>(
+    "/api/feishu/topics/import",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        sourceDir: options?.sourceDir,
+        writeBack: options?.writeBack ?? true,
+      }),
+    },
+    "选题池导入失败"
   );
 }
