@@ -1,61 +1,41 @@
 <svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <!-- 主渐变 -->
-    <linearGradient id="mainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ff2442" />
-      <stop offset="100%" stop-color="#ff6b9d" />
-    </linearGradient>
+  <rect x="5" y="5" width="54" height="54" rx="11" fill="#f8f6f1"/>
+  <rect x="7" y="7" width="50" height="50" rx="9" fill="#ffffff" stroke="#1c1917" stroke-width="4"/>
 
-    <!-- 星光渐变 -->
-    <linearGradient id="sparkGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#ffd700" />
-      <stop offset="100%" stop-color="#ff6b9d" />
-    </linearGradient>
-
-    <!-- 柔和阴影 -->
-    <filter id="shadow">
-      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#ff2442" flood-opacity="0.3"/>
-    </filter>
-  </defs>
-
-  <!-- 背景 -->
-  <rect width="64" height="64" rx="14" fill="#ffffff" />
-
-  <!-- 笔记本主体 -->
-  <rect
-    x="13"
-    y="18"
-    width="38"
-    height="38"
-    rx="8"
-    fill="url(#mainGradient)"
-    filter="url(#shadow)"
+  <path
+    d="M20 19H40M36.5 19V39.5C36.5 45.7 32.2 49.5 26.2 49.5C22.2 49.5 19 47.9 17.2 45"
+    fill="none"
+    stroke="#1c1917"
+    stroke-width="5.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
   />
 
-  <!-- 笔记横线 -->
-  <line x1="20" y1="28" x2="38" y2="28" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.6" />
-  <line x1="20" y1="36" x2="42" y2="36" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.6" />
-  <line x1="20" y1="44" x2="34" y2="44" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.6" />
+  <path
+    d="M21 27H31M21 34H30M21 41H27"
+    fill="none"
+    stroke="#0f766e"
+    stroke-width="3"
+    stroke-linecap="round"
+  />
 
-  <!-- 爆款星芒 -->
-  <g transform="translate(40, 16)">
-    <!-- 主星 -->
-    <circle cx="0" cy="0" r="7" fill="url(#sparkGradient)" opacity="0.9" />
-    <circle cx="0" cy="0" r="4.5" fill="#fff" />
+  <path
+    d="M44 24C49.1 26.8 50.8 33.9 46.9 38.8C45.6 40.5 44 41.7 42 42.5"
+    fill="none"
+    stroke="#e11d48"
+    stroke-width="4"
+    stroke-linecap="round"
+  />
+  <path
+    d="M41.6 36.8L42 42.5L47.2 40.5"
+    fill="none"
+    stroke="#e11d48"
+    stroke-width="4"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
 
-    <!-- 四向光芒 -->
-    <path d="M 0 -9 L 0 -13" stroke="#ffd700" stroke-width="2.5" stroke-linecap="round" opacity="0.8" />
-    <path d="M 0 9 L 0 13" stroke="#ffd700" stroke-width="2.5" stroke-linecap="round" opacity="0.6" />
-    <path d="M -9 0 L -13 0" stroke="#ffd700" stroke-width="2.5" stroke-linecap="round" opacity="0.6" />
-    <path d="M 9 0 L 13 0" stroke="#ffd700" stroke-width="2.5" stroke-linecap="round" opacity="0.8" />
-
-    <!-- 对角光芒 -->
-    <path d="M -6.5 -6.5 L -9.5 -9.5" stroke="#ff6b9d" stroke-width="2" stroke-linecap="round" opacity="0.5" />
-    <path d="M 6.5 6.5 L 9.5 9.5" stroke="#ff6b9d" stroke-width="2" stroke-linecap="round" opacity="0.7" />
-    <path d="M 6.5 -6.5 L 9.5 -9.5" stroke="#ff6b9d" stroke-width="2" stroke-linecap="round" opacity="0.7" />
-  </g>
-
-  <!-- 小火花 -->
-  <circle cx="52" cy="27" r="2.5" fill="#ffd700" opacity="0.5" />
-  <circle cx="47" cy="11" r="2" fill="#ff6b9d" opacity="0.5" />
+  <rect x="42" y="14" width="8" height="8" rx="2" fill="#f59e0b"/>
+  <circle cx="49" cy="49" r="3.5" fill="#0f766e"/>
+  <circle cx="15" cy="15" r="3.5" fill="#e11d48"/>
 </svg>

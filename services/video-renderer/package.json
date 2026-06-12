@@ -1,0 +1,21 @@
+{
+  "name": "vibenote-video-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "本地视频渲染服务：Remotion 渲染图文快闪 + edge-tts 配音。独立于主 app，不进 Cloudflare 部署。",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs"
+  },
+  "dependencies": {
+    "@remotion/bundler": "^4.0.0",
+    "@remotion/renderer": "^4.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "msedge-tts": "^1.3.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "remotion": "^4.0.0"
+  }
+}

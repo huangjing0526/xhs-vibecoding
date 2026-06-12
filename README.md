@@ -159,6 +159,133 @@ npm run build
 npm start
 ```
 
+## 飞书内容闭环
+
+VibeNote 可以把飞书多维表格作为内容数据库，跑通：
+
+```text
+素材库 / 术语库 / 数据复盘表
+        ↓
+生成内容卡片
+        ↓
+生成笔记草稿
+        ↓
+生成封面方案
+        ↓
+写回飞书
+```
+
+### 1. 飞书表结构
+
+建议在同一个多维表格中准备 5 张数据表：
+
+| 表 | 环境变量 | 核心字段 |
+|---|---|---|
+| 素材库 | `FEISHU_MATERIAL_TABLE_ID` | 素材ID、来源类型、日期、原文摘要、核心事件、踩坑点、可复用方法、关联术语、状态 |
+| 术语库 | `FEISHU_GLOSSARY_TABLE_ID` | 术语、一句话解释、常见误区、真实案例、可收藏资产、适合标题角度 |
+| 选题池 | `FEISHU_TOPIC_TABLE_ID` | 选题ID、来源素材、关联术语、栏目、目标读者、读者痛点、核心观点、真实案例、可收藏资产、标题候选、封面文案、正文结构、评论引导、预计收藏价值、状态、封面标题、封面副标题、封面风格、封面主色、封面配置JSON、封面状态 |
+| 草稿库 | `FEISHU_DRAFT_TABLE_ID` | 笔记ID、选题ID、最终标题、封面文案、正文、配图建议、话题标签、评论引导、发布状态、封面标题、封面副标题、封面风格、封面主色、封面配置JSON、封面状态 |
+| 数据复盘表 | `FEISHU_REVIEW_TABLE_ID` | 笔记ID、标题、阅读量、点赞量、收藏量、评论量、分享量、72小时结论、问题归因、下一步动作、复盘备注 |
+
+### 2. 环境变量
+
+复制 `.env.example` 为 `.env.local`，补充飞书配置：
+
+```env
+FEISHU_APP_ID=cli_xxx
+FEISHU_APP_SECRET=xxx
+FEISHU_BASE_APP_TOKEN=appxxx
+
+FEISHU_MATERIAL_TABLE_ID=tblxxx
+FEISHU_GLOSSARY_TABLE_ID=tblxxx
+FEISHU_TOPIC_TABLE_ID=tblxxx
+FEISHU_DRAFT_TABLE_ID=tblxxx
+FEISHU_REVIEW_TABLE_ID=tblxxx
+```
+
+飞书应用需要开通多维表格读写权限，并把应用加入对应多维表格的协作者。
+
+### 3. API 用法
+
+读取飞书数据：
+
+```bash
+curl "http://localhost:3000/api/feishu/sync?table=material&status=待提炼"
+```
+
+生成内容卡片并写回选题池：
+
+```bash
+curl -X POST "http://localhost:3000/api/feishu/content-cards" \
+  -H "Content-Type: application/json" \
+  -d '{"count":5,"status":"待提炼","writeBack":true}'
+```
+
+生成笔记草稿并写回草稿库：
+
+```bash
+curl -X POST "http://localhost:3000/api/feishu/drafts" \
+  -H "Content-Type: application/json" \
+  -d '{"count":3,"status":"待写","writeBack":true}'
+```
+
+为选题或草稿生成封面方案：
+
+```bash
+curl -X POST "http://localhost:3000/api/feishu/covers" \
+  -H "Content-Type: application/json" \
+  -d '{"sourceType":"draft","recordId":"recxxx","writeBack":true,"renderImage":false}'
+```
+
+复盘数据：
+
+```bash
+curl -X POST "http://localhost:3000/api/feishu/review" \
+  -H "Content-Type: application/json" \
+  -d '{"writeBack":true}'
+```
+
+### 4. 同步本地协作记录
+
+工作台首页的「本地文档入库」可以扫描：
+
+- `reports/daily/`：日报、周报，写入素材库
+- `reports/issues/`：问题记录，写入素材库
+- `学习资料/` 与 `process/Vibe-*`：术语、Agent 学习，写入术语库
+- `AI协作约定/` 与 `process/`：流程标准，写入素材库
+
+默认目录：
+
+```env
+LOCAL_DOCS_SOURCE_DIR=/Users/kp/AI学习与开发/TarmeerCRM2.0/docs/06-协作记录
+```
+
+扫描预览：
+
+```bash
+curl -X POST "http://localhost:3000/api/local-docs/scan" \
+  -H "Content-Type: application/json" \
+  -d '{"categories":["daily","issues","glossary","standards"]}'
+```
+
+写入飞书素材库和术语库：
+
+```bash
+curl -X POST "http://localhost:3000/api/local-docs/sync" \
+  -H "Content-Type: application/json" \
+  -d '{"categories":["daily","issues","glossary","standards"],"writeBack":true}'
+```
+
+所有新接口统一返回：
+
+```json
+{
+  "code": 0,
+  "data": {},
+  "message": "操作成功"
+}
+```
+
 ## 常见问题
 
 ### Q: 未配置 API Key 能用吗？
