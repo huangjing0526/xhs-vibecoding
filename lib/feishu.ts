@@ -265,6 +265,22 @@ export async function updateFeishuRecord(
   );
 }
 
+export async function deleteFeishuRecord(
+  tableName: WorkflowTableName,
+  recordId: string
+): Promise<unknown> {
+  assertFeishuConfig([tableName]);
+
+  const appToken = getFeishuAppToken();
+  const tableId = getFeishuTableId(tableName);
+  return feishuRequest(
+    "DELETE",
+    `/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}`,
+    undefined,
+    `feishu.deleteRecord.${tableName}`
+  );
+}
+
 export function fieldToText(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;

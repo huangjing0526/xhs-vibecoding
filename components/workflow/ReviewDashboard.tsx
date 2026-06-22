@@ -1,9 +1,22 @@
-import type { ReviewMetric, ReviewResult } from "@/lib/xhsWorkflow";
+import { toast } from "sonner";
+import type { ReviewActionLayer, ReviewMetric, ReviewResult } from "@/lib/xhsWorkflow";
 
 interface ReviewDashboardProps {
   metrics: ReviewMetric[];
   review: ReviewResult | null;
+  onGenerate: () => void;
+  generating: boolean;
 }
+
+// 下次优化层级配色，与发布前质检维度一一对应
+const LAYER_STYLE: Record<ReviewActionLayer, string> = {
+  选题: "bg-indigo-50 text-indigo-700",
+  钩子: "bg-amber-50 text-amber-700",
+  封面: "bg-purple-50 text-purple-700",
+  标签: "bg-sky-50 text-sky-700",
+  引导: "bg-teal-50 text-teal-700",
+  内容价值: "bg-rose-50 text-rose-700",
+};
 
 function toPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
@@ -12,7 +25,19 @@ function toPercent(value: number): string {
 export default function ReviewDashboard({
   metrics,
   review,
+  onGenerate,
+  generating,
 }: ReviewDashboardProps) {
+  const handleCarry = async (advice: string) => {
+    try {
+      await navigator.clipboard.writeText(advice);
+      toast.success("已复制下次优化建议，可粘贴进新笔记");
+    } catch (error) {
+      console.error("[ReviewDashboard] 复制失败", { action: "review.carryNextAction", error });
+      toast.error("复制失败，请手动选择文本");
+    }
+  };
+
   const sortedMetrics = [...metrics].sort((a, b) => b.reads - a.reads);
   const totalReads = metrics.reduce((sum, item) => sum + item.reads, 0);
   const averageSaveRate = metrics.length > 0
@@ -96,6 +121,37 @@ export default function ReviewDashboard({
               </div>
             </div>
 
+            {review.nextActions?.length > 0 && (
+              <div className="mt-3">
+                <h3 className="text-xs font-black uppercase tracking-wider text-stone-500">下次优化</h3>
+                <ul className="mt-2 space-y-1.5">
+                  {review.nextActions.map((action, index) => (
+                    <li
+                      key={`${action.layer}-${index}`}
+                      className="flex items-start gap-2 border border-stone-200 px-2.5 py-2"
+                    >
+                      <span
+                        className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold ${LAYER_STYLE[action.layer] ?? "bg-stone-100 text-stone-600"}`}
+                      >
+                        {action.layer}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm leading-6 text-stone-800">{action.advice}</div>
+                        {action.basedOn && <div className="mt-0.5 text-xs text-stone-400">依据：{action.basedOn}</div>}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleCarry(action.advice)}
+                        className="shrink-0 border border-stone-300 px-2 py-1 text-xs font-bold text-stone-600 transition-colors hover:border-stone-950 hover:text-stone-950"
+                      >
+                        带入
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <div className="mt-3 border border-stone-200">
               {review.recordActions.map((action) => (
                 <div key={`${action.noteId}-${action.action}`} className="grid gap-3 border-b border-stone-100 p-2.5 last:border-b-0 md:grid-cols-[0.6fr_0.45fr_1.4fr]">
@@ -107,8 +163,17 @@ export default function ReviewDashboard({
             </div>
           </div>
         ) : (
-          <div className="flex min-h-[420px] items-center justify-center text-sm text-stone-500">
-            点顶部生成复盘后显示结论
+          <div className="flex min-h-[420px] flex-col items-center justify-center gap-3 text-sm text-stone-500">
+            <p>把发布后的数据回填后，生成复盘结论。</p>
+            <button
+              type="button"
+              onClick={onGenerate}
+              disabled={generating || metrics.length === 0}
+              className="bg-[#FF2442] px-5 py-2 text-sm font-black text-white transition-colors hover:bg-[#E01E3A] disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
+            >
+              {generating ? "生成中…" : "生成复盘"}
+            </button>
+            {metrics.length === 0 && <p className="text-xs text-stone-400">先发布一篇笔记才有数据可复盘</p>}
           </div>
         )}
       </div>

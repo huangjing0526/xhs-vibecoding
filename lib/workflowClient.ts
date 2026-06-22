@@ -15,6 +15,7 @@ import type {
   ReviewResult,
 } from "@/lib/xhsWorkflow";
 import type { LocalDocCategory, LocalDocFileSummary } from "@/lib/localDocs";
+import type { ExtractedClue } from "@/lib/clueIntake";
 
 export interface WorkflowSnapshot {
   materials: MaterialItem[];
@@ -158,6 +159,53 @@ export async function syncWorkflowData(): Promise<WorkflowSnapshot> {
 export async function getWorkflowBootstrap(): Promise<WorkflowBootstrapResult> {
   const response = await fetch("/api/workflow/bootstrap");
   return parseApiResponse<WorkflowBootstrapResult>(response, "工作流启动失败");
+}
+
+export type DeletableKind = "material" | "topic" | "draft";
+
+const DELETE_FALLBACK: Record<DeletableKind, string> = {
+  material: "素材删除失败",
+  topic: "选题删除失败",
+  draft: "草稿删除失败",
+};
+
+export async function deleteRecord(
+  kind: DeletableKind,
+  recordId: string
+): Promise<{ kind: DeletableKind; recordId: string }> {
+  return workflowRequest<{ kind: DeletableKind; recordId: string }>(
+    "/api/feishu/records/delete",
+    { method: "POST", body: JSON.stringify({ kind, recordId }) },
+    DELETE_FALLBACK[kind]
+  );
+}
+
+export async function saveMaterial(options: {
+  material: MaterialItem;
+  writeBack?: boolean;
+}): Promise<{ material: MaterialItem; writeBack: boolean }> {
+  return workflowRequest<{ material: MaterialItem; writeBack: boolean }>(
+    "/api/feishu/materials/save",
+    {
+      method: "POST",
+      body: JSON.stringify({ material: options.material, writeBack: options.writeBack ?? true }),
+    },
+    "素材保存失败"
+  );
+}
+
+export async function saveTopic(options: {
+  topic: ContentCard;
+  writeBack?: boolean;
+}): Promise<{ topic: ContentCard; writeBack: boolean }> {
+  return workflowRequest<{ topic: ContentCard; writeBack: boolean }>(
+    "/api/feishu/topics/save",
+    {
+      method: "POST",
+      body: JSON.stringify({ topic: options.topic, writeBack: options.writeBack ?? true }),
+    },
+    "选题保存失败"
+  );
 }
 
 export async function generateContentCards(options?: {
@@ -355,5 +403,22 @@ export async function importTopicPool(options?: {
       }),
     },
     "选题池导入失败"
+  );
+}
+
+export interface ClueIntakeResult {
+  candidates: ExtractedClue[];
+  /** 来源标签（GitHub / X / 网页），建素材时回填到素材 sourceType */
+  sourceType: string;
+  usedFallback: boolean;
+  provider: string;
+}
+
+/** 线索采集：粘贴链接（X/GitHub/网页，服务端联网抓取）或原文 → 提炼成素材候选 */
+export async function extractClues(options: { url?: string; rawText?: string }): Promise<ClueIntakeResult> {
+  return workflowRequest<ClueIntakeResult>(
+    "/api/feishu/clues",
+    { method: "POST", body: JSON.stringify(options) },
+    "线索提炼失败"
   );
 }

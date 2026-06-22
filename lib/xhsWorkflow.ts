@@ -80,12 +80,25 @@ export interface ReviewMetric {
   saveRate: number;
 }
 
+/** 复盘的「下次优化」动作，层级与发布前质检维度同构，让复盘建议能直接喂回质检关注点。 */
+export type ReviewActionLayer = "选题" | "钩子" | "封面" | "标签" | "引导" | "内容价值";
+
+export interface ReviewNextAction {
+  layer: ReviewActionLayer;
+  /** 下次具体怎么做 */
+  advice: string;
+  /** 依据的数据信号 */
+  basedOn: string;
+}
+
 export interface ReviewResult {
   summary: string;
   topPatterns: string[];
   weakPatterns: string[];
   nextTopics: string[];
   stopTopics: string[];
+  /** 按层级给出的下次优化清单 */
+  nextActions: ReviewNextAction[];
   recordActions: Array<{
     noteId: string;
     diagnosis: string;
@@ -410,6 +423,10 @@ export function buildReviewPrompt(metrics: ReviewMetric[]): string {
 复盘目标：
 判断问题卡在选题、标题封面、内容价值、互动引导中的哪一层，并给出下周优化方向。
 
+下次优化要求：
+给出 3-5 条「下次怎么做」的具体动作，每条挂到一个层级（只能用：选题 / 钩子 / 封面 / 标签 / 引导 / 内容价值），
+并说明依据哪个数据信号。这些层级对应发布前质检维度，动作要具体到下次能照做。
+
 数据：
 ${JSON.stringify(metrics, null, 2)}
 
@@ -420,6 +437,13 @@ ${JSON.stringify(metrics, null, 2)}
   "weakPatterns": ["表现弱的共同点"],
   "nextTopics": ["下周继续做的选题方向"],
   "stopTopics": ["下周暂停的选题方向"],
+  "nextActions": [
+    {
+      "layer": "选题/钩子/封面/标签/引导/内容价值",
+      "advice": "下次具体怎么做",
+      "basedOn": "依据的数据信号"
+    }
+  ],
   "recordActions": [
     {
       "noteId": "笔记ID",
@@ -574,11 +598,71 @@ export function createFallbackDraft(card: ContentCard): DraftNote {
   };
 }
 
+/** 规则版「下次优化」：从聚合数据信号推出分层动作，层级与发布前质检维度对齐。 */
+function createFallbackNextActions(metrics: ReviewMetric[]): ReviewNextAction[] {
+  const count = metrics.length || 1;
+  const avgSaveRate = metrics.reduce((sum, item) => sum + item.saveRate, 0) / count;
+  const avgInteraction = metrics.reduce((sum, item) => sum + item.interactionRate, 0) / count;
+  const sortedReads = [...metrics].map((item) => item.reads).sort((a, b) => a - b);
+  const medianReads = sortedReads[Math.floor(sortedReads.length / 2)] ?? 0;
+  const lowReadHighSave = metrics.filter((item) => item.saveRate >= 0.05 && item.reads < medianReads);
+  const highReadLowSave = metrics.filter((item) => item.reads >= 50 && item.saveRate < 0.03);
+
+  const actions: ReviewNextAction[] = [];
+
+  if (lowReadHighSave.length > 0) {
+    actions.push({
+      layer: "钩子",
+      advice: "这些笔记收藏率不错但阅读偏低，下次标题加数字/反差钩子，别用平铺直叙的标题。",
+      basedOn: `${lowReadHighSave.length} 篇「高收藏低阅读」：${lowReadHighSave.slice(0, 2).map((m) => m.title || m.noteId).join("、")}`,
+    });
+    actions.push({
+      layer: "封面",
+      advice: "封面文案改成结果前置（先抛结论/数字），提高点开率。",
+      basedOn: "阅读偏低通常先卡在标题封面这一层。",
+    });
+  } else {
+    actions.push({
+      layer: "钩子",
+      advice: "保持标题里的钩子要素（数字/提问/反差），延续当前点开表现。",
+      basedOn: `整体阅读中位数 ${medianReads}，钩子层暂无明显短板。`,
+    });
+  }
+
+  if (highReadLowSave.length > 0) {
+    actions.push({
+      layer: "标签",
+      advice: "高阅读低收藏，可能标签偏泛流量，下次补 1-2 个长尾精准标签。",
+      basedOn: `${highReadLowSave.length} 篇「高阅读低收藏」：${highReadLowSave.slice(0, 2).map((m) => m.title || m.noteId).join("、")}`,
+    });
+  }
+
+  if (avgSaveRate < 0.05) {
+    actions.push({
+      layer: "内容价值",
+      advice: "整体收藏率偏低，正文补可直接收藏的清单/模板/Prompt。",
+      basedOn: `均收藏率 ${(avgSaveRate * 100).toFixed(1)}%，低于 5% 参考线。`,
+    });
+  }
+
+  actions.push({
+    layer: "引导",
+    advice:
+      avgInteraction < 0.03
+        ? "互动率偏低，结尾换一个更具体的真实讨论问题，别用泛泛的「你觉得呢」。"
+        : "延续结尾的真实讨论问题，保持评论区互动。",
+    basedOn: `均互动率 ${(avgInteraction * 100).toFixed(1)}%。`,
+  });
+
+  return actions.slice(0, 5);
+}
+
 export function createFallbackReview(metrics: ReviewMetric[]): ReviewResult {
   const sortedByReads = [...metrics].sort((a, b) => b.reads - a.reads);
   const sortedBySaveRate = [...metrics].sort((a, b) => b.saveRate - a.saveRate);
   return {
     summary: "当前样本适合优先看阅读中位数、收藏率和评论断点。高收藏率主题值得扩写，阅读低但收藏高的主题优先换标题封面。",
+    nextActions: createFallbackNextActions(metrics),
     topPatterns: sortedBySaveRate.slice(0, 3).map((item) => `${item.title || item.noteId} 收藏率较高，可复刻结构。`),
     weakPatterns: metrics
       .filter((item) => item.reads > 0 && item.saveRate === 0)

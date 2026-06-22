@@ -50,6 +50,7 @@ export async function POST(request: NextRequest) {
     const result = {
       ...fallbackReview,
       ...aiResult.result,
+      nextActions: aiResult.result.nextActions || fallbackReview.nextActions,
       recordActions: aiResult.result.recordActions || fallbackReview.recordActions,
     };
 

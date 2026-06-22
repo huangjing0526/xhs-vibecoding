@@ -2,22 +2,38 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import TopicPipeline from "@/components/workflow/TopicPipeline";
-import DraftPipeline from "@/components/workflow/DraftPipeline";
+import EntityList, { type EntityColumn } from "@/components/workflow/EntityList";
 import CoverStudio from "@/components/workflow/CoverStudio";
 import LocalDocsSyncPanel from "@/components/workflow/LocalDocsSyncPanel";
 import TopicPoolImportPanel from "@/components/workflow/TopicPoolImportPanel";
+import ClueIntakePanel from "@/components/workflow/ClueIntakePanel";
 import ReviewDashboard from "@/components/workflow/ReviewDashboard";
 import WorkflowOnboarding from "@/components/workflow/WorkflowOnboarding";
-import AppShell from "@/components/workflow/AppShell";
 import BloggerResearch from "@/components/workflow/BloggerResearch";
-import ModuleHeader from "@/components/workflow/ModuleHeader";
-import PipelineOverview from "@/components/workflow/PipelineOverview";
 import RewriteStudio from "@/components/workflow/RewriteStudio";
-import SegmentedControl from "@/components/workflow/SegmentedControl";
 import VideoStudio from "@/components/workflow/VideoStudio";
-import { getWorkflowModuleMeta, type WorkflowModule } from "@/components/workflow/workflowModules";
-import type { BloggerDistillation } from "@/lib/bloggerWorkflow";
+import WorkbenchShell, { type WorkbenchAreaId, type WorkbenchArea } from "@/components/workflow/WorkbenchShell";
+import WorkbenchDrawer from "@/components/workflow/WorkbenchDrawer";
+import NoteList from "@/components/workflow/NoteList";
+import NoteEditor from "@/components/workflow/NoteEditor";
+import NoteInspector from "@/components/workflow/NoteInspector";
+import QualityGate from "@/components/workflow/QualityGate";
+import { runQualityCheck } from "@/lib/qualityCheck";
+import ManualEntryForm, { type ManualField } from "@/components/workflow/ManualEntryForm";
+import {
+  applyMaterialEdit,
+  applyTopicEdit,
+  createManualMaterial,
+  createManualTopic,
+  type ManualMaterialInput,
+  type ManualTopicInput,
+} from "@/lib/manualEntry";
+import type { ExtractedClue } from "@/lib/clueIntake";
+import {
+  DEMO_BLOGGER_PROFILES,
+  getDistillationForBlogger,
+  type BloggerDistillation,
+} from "@/lib/bloggerWorkflow";
 import { DEFAULT_COVER_CONFIG, downloadCover, type CoverConfig } from "@/lib/cover";
 import type { CoverPlan } from "@/lib/coverWorkflow";
 import {
@@ -31,7 +47,6 @@ import { createMarkdownDemoSnapshot, DEMO_SELECTED_MATERIAL_IDS, DEMO_SNAPSHOT }
 import {
   hasContentCardContent,
   hasDraftContent,
-  hasGeneratedCover,
   isPublishedDraft,
   type ContentCard,
   type DraftNote,
@@ -45,14 +60,52 @@ import {
   generateImageAsset,
   generateReview,
   getWorkflowBootstrap,
+  deleteRecord,
   publishDraft,
   saveDraft,
+  saveMaterial,
+  saveTopic,
   syncWorkflowData,
+  type DeletableKind,
   type WorkflowBootstrapResult,
   type WorkflowMode,
   type WorkflowSnapshot,
 } from "@/lib/workflowClient";
 import type { VideoPlan } from "@/lib/videoWorkflow";
+
+// 对标博主道库选项：源自模块常量，全程不变，提到组件外避免每次渲染重建
+const DAOKU_OPTIONS = DEMO_BLOGGER_PROFILES.map((profile) => ({ bloggerId: profile.id, name: profile.name }));
+
+// 顶层三区与右侧抽屉标题：静态，提到组件外
+const AREAS: WorkbenchArea[] = [
+  { id: "workbench", label: "工作台" },
+  { id: "library", label: "素材库" },
+  { id: "review", label: "复盘" },
+];
+const DRAWER_TITLES: Record<"cover" | "video" | "blogger" | "rewrite" | "quality", string> = {
+  cover: "封面与配图",
+  video: "视频方案",
+  blogger: "拆解对标博主",
+  rewrite: "更像爆款",
+  quality: "质检与发布兜底",
+};
+
+// 手动新增/编辑弹窗的字段定义：新增与编辑共用同一套
+const MATERIAL_FIELDS: ManualField[] = [
+  { name: "event", label: "核心事件", placeholder: "一句话说清这条素材讲了什么", required: true },
+  { name: "method", label: "可复用方法", placeholder: "从中能沉淀出的做法/结论", required: true, multiline: true },
+  { name: "sourceType", label: "来源类型", placeholder: "如 开发日报 / 问题记录（可留空）" },
+  { name: "pitfall", label: "踩坑/痛点", placeholder: "选填" },
+  { name: "relatedTerm", label: "相关术语", placeholder: "选填" },
+];
+const TOPIC_FIELDS: ManualField[] = [
+  { name: "title", label: "标题", placeholder: "这条选题的标题", required: true },
+  { name: "coreViewpoint", label: "核心观点", placeholder: "想传达的核心结论", required: true, multiline: true },
+  { name: "painPoint", label: "读者痛点", placeholder: "戳中读者的什么痛点", required: true },
+  { name: "targetReader", label: "目标读者", placeholder: "选填" },
+  { name: "realCase", label: "真实案例", placeholder: "选填" },
+  { name: "reusableAsset", label: "可收藏资产", placeholder: "选填" },
+];
 
 const EMPTY_SNAPSHOT: WorkflowSnapshot = {
   materials: [],
@@ -243,12 +296,15 @@ interface SourceWorkspaceProps {
   onToggleMaterial: (materialId: string) => void;
   onSelectPendingMaterials: () => void;
   onClearSelectedMaterials: () => void;
+  onAdd: () => void;
+  onEditMaterial: (item: MaterialItem) => void;
+  onDeleteMaterial: (materialId: string) => void;
+  onBatchDeleteMaterials: (materialIds: string[]) => void;
   onNotice: (notice: Notice) => void;
   onImported: () => Promise<void>;
 }
 
 type MaterialViewFilter = "all" | "pending" | "processed";
-type ProductionGoal = "imageText" | "video" | "rewrite";
 
 function SourceWorkspace({
   materials,
@@ -258,11 +314,14 @@ function SourceWorkspace({
   onToggleMaterial,
   onSelectPendingMaterials,
   onClearSelectedMaterials,
+  onAdd,
+  onEditMaterial,
+  onDeleteMaterial,
+  onBatchDeleteMaterials,
   onNotice,
   onImported,
 }: SourceWorkspaceProps) {
   const [materialFilter, setMaterialFilter] = useState<MaterialViewFilter>("all");
-  const [productionGoal, setProductionGoal] = useState<ProductionGoal>("imageText");
   const pendingMaterials = materials.filter((item) => item.status === "待提炼");
   const processedMaterials = materials.filter((item) => item.status !== "待提炼");
   const visibleMaterials =
@@ -271,29 +330,39 @@ function SourceWorkspace({
       : materialFilter === "processed"
         ? processedMaterials
         : materials;
-  const selectedCount = selectedMaterialIds.length;
+
+  const materialColumns: EntityColumn<MaterialItem>[] = [
+    {
+      key: "source",
+      label: "来源",
+      width: "140px",
+      render: (item) => (
+        <div className="min-w-0">
+          <div className="text-xs font-bold text-stone-400">{item.sourceId}</div>
+          <div className="mt-1.5 inline-flex bg-stone-100 px-2 py-0.5 text-xs font-semibold text-stone-600">
+            {item.status || "素材"}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "event",
+      label: "核心事件",
+      render: (item) => (
+        <div className="text-sm font-black leading-6 text-stone-950">{clip(item.event || item.summary, 82)}</div>
+      ),
+    },
+    {
+      key: "method",
+      label: "可复用方法",
+      render: (item) => (
+        <div className="text-sm font-semibold leading-6 text-stone-600">{clip(item.method || item.pitfall, 92)}</div>
+      ),
+    },
+  ];
 
   return (
     <div className="space-y-3">
-      <section className="rounded-lg border border-[#E5E5EA] bg-white p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h3 className="text-base font-semibold text-[#1D1D1F]">本轮目标</h3>
-            <p className="mt-1 text-sm text-[#6E6E73]">先确定本轮素材用于图文、视频还是改写。</p>
-          </div>
-          <SegmentedControl
-            value={productionGoal}
-            onChange={setProductionGoal}
-            ariaLabel="本轮目标"
-            options={[
-              { value: "imageText", label: "图文", description: "选题、草稿、图片" },
-              { value: "video", label: "视频", description: "脚本、分镜、Prompt" },
-              { value: "rewrite", label: "改写", description: "标题、正文、结构" },
-            ]}
-          />
-        </div>
-      </section>
-
       <LocalDocsSyncPanel
         defaultSourceDir={localDocsSourceDir}
         isFeishuReady={isFeishuReady}
@@ -301,36 +370,39 @@ function SourceWorkspace({
         onImported={onImported}
       />
 
-      <section className="rounded-lg border border-[#E5E5EA] bg-white">
-        <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
-          {[
-            { id: "all", label: "全部", value: materials.length },
-            { id: "pending", label: "待提炼", value: pendingMaterials.length },
-            { id: "processed", label: "已处理", value: processedMaterials.length },
-          ].map((item) => {
-            const isActive = materialFilter === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setMaterialFilter(item.id as MaterialViewFilter)}
-                className={`px-3 py-1.5 text-sm font-black transition-colors ${
-                  isActive
-                    ? "bg-stone-950 text-white"
-                    : "bg-stone-100 text-stone-700 hover:bg-stone-200"
-                }`}
-              >
-                {item.label}
-                <span className={`ml-1.5 text-xs font-bold tabular-nums ${isActive ? "text-stone-400" : "text-stone-400"}`}>
-                  {item.value}
-                </span>
-              </button>
-            );
-          })}
-          <div className="ml-auto flex items-center gap-2">
-            <span className="text-xs text-stone-400">
-              已选 <span className="font-black text-stone-700 tabular-nums">{selectedCount}</span>
-            </span>
+      <EntityList
+        items={visibleMaterials}
+        getRowId={(item) => item.recordId}
+        columns={materialColumns}
+        selectedIds={selectedMaterialIds}
+        onToggleRow={onToggleMaterial}
+        onRowClick={(item) => onToggleMaterial(item.recordId)}
+        filters={[
+          { id: "all", label: "全部", count: materials.length },
+          { id: "pending", label: "待提炼", count: pendingMaterials.length },
+          { id: "processed", label: "已处理", count: processedMaterials.length },
+        ]}
+        activeFilter={materialFilter}
+        onFilterChange={(id) => setMaterialFilter(id as MaterialViewFilter)}
+        onEdit={onEditMaterial}
+        onDelete={(item) => onDeleteMaterial(item.recordId)}
+        deleteConfirm={(item) => {
+          const label = clip(item.event || item.summary, 40);
+          return isFeishuReady
+            ? `确定永久删除这条素材吗？\n「${label}」\n会从飞书素材表彻底删除，不可恢复。`
+            : `确定移除这条素材吗？\n「${label}」`;
+        }}
+        onBatchDelete={onBatchDeleteMaterials}
+        batchDeleteConfirm={(count) =>
+          isFeishuReady
+            ? `确定永久删除选中的 ${count} 条素材吗？会从飞书素材表彻底删除，不可恢复。`
+            : `确定移除选中的 ${count} 条素材吗？`
+        }
+        emptyText="当前筛选下暂无素材"
+        onAdd={onAdd}
+        addLabel="+ 新增素材"
+        toolbarExtra={
+          <>
             <button
               type="button"
               onClick={onSelectPendingMaterials}
@@ -342,79 +414,14 @@ function SourceWorkspace({
             <button
               type="button"
               onClick={onClearSelectedMaterials}
-              disabled={selectedCount === 0}
+              disabled={selectedMaterialIds.length === 0}
               className="border border-stone-300 bg-white px-3 py-1.5 text-sm font-black text-stone-600 transition-colors hover:border-rose-600 hover:text-rose-600 disabled:cursor-not-allowed disabled:border-stone-200 disabled:text-stone-300"
             >
               清空
             </button>
-          </div>
-        </div>
-
-        <div className="hidden grid-cols-[42px_140px_minmax(220px,1fr)_minmax(220px,0.92fr)] border-y border-stone-200 bg-stone-50 px-4 py-2 text-xs font-black uppercase tracking-wider text-stone-400 xl:grid 2xl:grid-cols-[42px_160px_minmax(260px,1fr)_minmax(250px,0.92fr)]">
-          <div>选</div>
-          <div>来源</div>
-          <div>核心事件</div>
-          <div>可复用方法</div>
-        </div>
-
-        <div className="max-h-[calc(100vh-280px)] min-h-[420px] overflow-auto">
-          {(() => {
-            const activeItems = visibleMaterials.filter((item) => !(item as MaterialItem & { archived?: boolean }).archived);
-            const archivedItems = visibleMaterials.filter((item) => (item as MaterialItem & { archived?: boolean }).archived);
-            const renderRow = (item: MaterialItem, archived = false) => {
-              const isSelected = selectedMaterialIds.includes(item.recordId);
-              return (
-                <button
-                  key={item.recordId}
-                  type="button"
-                  onClick={() => !archived && onToggleMaterial(item.recordId)}
-                  disabled={archived}
-                  className={`grid w-full gap-3 border-b border-stone-100 px-4 py-3 text-left transition-colors xl:grid-cols-[42px_140px_minmax(220px,1fr)_minmax(220px,0.92fr)] 2xl:grid-cols-[42px_160px_minmax(260px,1fr)_minmax(250px,0.92fr)] ${
-                    archived ? "bg-stone-50 opacity-60" : isSelected ? "bg-rose-50" : "bg-white hover:bg-stone-50"
-                  }`}
-                >
-                  <span className={`mt-0.5 flex h-5 w-5 items-center justify-center text-xs font-black ${
-                    isSelected ? "bg-rose-600 text-white" : "bg-stone-100 text-transparent"
-                  }`}>
-                    ✓
-                  </span>
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold text-stone-400">{item.sourceId}</div>
-                    <div className="mt-1.5 inline-flex bg-stone-100 px-2 py-0.5 text-xs font-semibold text-stone-600">
-                      {item.status || "素材"}
-                    </div>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="xl:hidden text-xs font-bold text-stone-400">核心事件</div>
-                    <div className="text-sm font-black leading-6 text-stone-950">{clip(item.event || item.summary, 82)}</div>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="xl:hidden text-xs font-bold text-stone-400">可复用方法</div>
-                    <div className="text-sm font-semibold leading-6 text-stone-600">{clip(item.method || item.pitfall, 92)}</div>
-                  </div>
-                </button>
-              );
-            };
-            return (
-              <>
-                {activeItems.map((item) => renderRow(item, false))}
-                {archivedItems.length > 0 && (
-                  <details className="group">
-                    <summary className="flex cursor-pointer items-center gap-2 border-y border-stone-200 bg-stone-100 px-4 py-2 text-xs font-black text-stone-500 hover:bg-stone-200">
-                      <span className="transition-transform group-open:rotate-90">▸</span>
-                      <span>已归档 <span className="tabular-nums">{archivedItems.length}</span> 条</span>
-                    </summary>
-                    {archivedItems.map((item) => renderRow(item, true))}
-                  </details>
-                )}
-                {visibleMaterials.length === 0 && (
-                  <div className="p-10 text-center text-sm text-stone-500">当前筛选下暂无素材</div>
-                )}
-              </>
-            );
-          })()}
-        </div>
-      </section>
+          </>
+        }
+      />
     </div>
   );
 }
@@ -430,8 +437,13 @@ export default function WorkflowDashboard() {
   const [contentImageTemplate, setContentImageTemplate] = useState<ContentImageTemplateType>("flowchart");
   const [contentImagePlan, setContentImagePlan] = useState<ContentImagePlan | null>(null);
   const [review, setReview] = useState<ReviewResult | null>(null);
-  const [activeModule, setActiveModule] = useState<WorkflowModule>("overview");
+  // 顶层工作区：内容工作台 / 素材库 / 复盘
+  const [area, setArea] = useState<WorkbenchAreaId>("library");
+  // 右侧抽屉里当前打开的重型工具
+  const [drawer, setDrawer] = useState<null | "cover" | "video" | "blogger" | "rewrite" | "quality">(null);
   const [bloggerDistillation, setBloggerDistillation] = useState<BloggerDistillation | null>(null);
+  // 每条选题各自绑定的对标博主道库：topicId -> bloggerId（""=不绑定）
+  const [topicDaokuMap, setTopicDaokuMap] = useState<Record<string, string>>({});
   const [videoPlan, setVideoPlan] = useState<VideoPlan | null>(null);
   const [videoRendered, setVideoRendered] = useState(false);
   const setNotice = useCallback((notice: Notice) => {
@@ -454,9 +466,14 @@ export default function WorkflowDashboard() {
   const [coverDataUrl, setCoverDataUrl] = useState("");
   const [contentImageDataUrl, setContentImageDataUrl] = useState("");
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
+  // 编辑弹窗：素材 / 选题
+  const [editingMaterial, setEditingMaterial] = useState<MaterialItem | null>(null);
+  const [editingTopic, setEditingTopic] = useState<ContentCard | null>(null);
+  // 新增弹窗：素材（素材库工具条）/ 选题（新建笔记）
+  const [addingMaterial, setAddingMaterial] = useState(false);
+  const [addingTopic, setAddingTopic] = useState(false);
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("demo");
   const [bootstrapConfig, setBootstrapConfig] = useState<WorkflowBootstrapResult["config"] | null>(null);
-  const [showOnboarding, setShowOnboarding] = useState(false);
   const hasPendingMaterials = snapshot.materials.some((item) => item.status === "待提炼");
   const isFeishuReady = workflowMode === "connected" && Boolean(bootstrapConfig?.feishuReady);
   const localDocsSourceDir = bootstrapConfig?.localDocsSourceDir || "";
@@ -470,6 +487,11 @@ export default function WorkflowDashboard() {
   const selectedMaterials = useMemo(
     () => snapshot.materials.filter((item) => selectedMaterialIds.includes(item.recordId)),
     [selectedMaterialIds, snapshot.materials]
+  );
+  // 发布前质检：纯规则、实时随草稿/选题/封面变化（阶段 A，不写回飞书）
+  const qualityResult = useMemo(
+    () => runQualityCheck({ draft: selectedDraft, topic: selectedTopic, coverReady: Boolean(coverDataUrl) }),
+    [selectedDraft, selectedTopic, coverDataUrl]
   );
 
   const setFriendlyError = useCallback((action: string, error: unknown) => {
@@ -500,15 +522,17 @@ export default function WorkflowDashboard() {
     });
   }, []);
 
-  const loadFeishuSnapshot = useCallback(async () => {
+  const loadFeishuSnapshot = useCallback(async (): Promise<WorkflowSnapshot | null> => {
     setIsSyncing(true);
     try {
       const data = await syncWorkflowData();
       applySnapshot(data);
       setWorkflowMode("connected");
       setNotice({ type: "success", message: "飞书数据已同步" });
+      return data;
     } catch (error) {
       setFriendlyError("workflow.sync", error);
+      return null;
     } finally {
       setIsSyncing(false);
     }
@@ -517,7 +541,7 @@ export default function WorkflowDashboard() {
   const handleUseDemo = useCallback(() => {
     setWorkflowMode("demo");
     applySnapshot(DEMO_SNAPSHOT, DEMO_SELECTED_MATERIAL_IDS);
-    setActiveModule("assets");
+    setArea("workbench");
     setCoverPlan(null);
     setCoverDataUrl("");
     setImageMode("cover");
@@ -530,7 +554,7 @@ export default function WorkflowDashboard() {
     const nextSnapshot = createMarkdownDemoSnapshot(markdown);
     setWorkflowMode("demo");
     applySnapshot(nextSnapshot, [nextSnapshot.materials[0]?.recordId || ""]);
-    setActiveModule("images");
+    setArea("workbench");
     setCoverPlan(null);
     setCoverDataUrl("");
     setImageMode("content");
@@ -571,6 +595,23 @@ export default function WorkflowDashboard() {
     setContentImageDataUrl("");
   }, []);
 
+
+  const handleBindDaoku = useCallback((topicId: string, bloggerId: string) => {
+    setTopicDaokuMap((current) => ({ ...current, [topicId]: bloggerId }));
+  }, []);
+
+  // 当前选题生效的道库：优先用该选题绑定的，其次退回博主步全局选择
+  const getDaokuForTopic = useCallback(
+    (topic: ContentCard | null): BloggerDistillation | null => {
+      const boundId = topic ? topicDaokuMap[topic.topicId] : undefined;
+      if (!boundId) return bloggerDistillation;
+      if (bloggerDistillation?.bloggerId === boundId) return bloggerDistillation;
+      return getDistillationForBlogger(boundId);
+    },
+    [bloggerDistillation, topicDaokuMap]
+  );
+
+  // 草稿步换选题：切到该选题已有的草稿（没有则置空，由「生成草稿」补）
   const handleToggleMaterial = useCallback((materialId: string) => {
     setSelectedMaterialIds((current) =>
       current.includes(materialId)
@@ -592,6 +633,107 @@ export default function WorkflowDashboard() {
     setSelectedMaterialIds([]);
   }, []);
 
+  // 通用删除底座：连飞书时先删飞书记录，失败则中止本地移除并提示。
+  const deleteEntityRemote = useCallback(
+    async (kind: DeletableKind, recordIds: string[]): Promise<boolean> => {
+      if (workflowMode !== "connected") return true;
+      const targets = recordIds.filter(Boolean);
+      if (targets.length === 0) return true;
+      try {
+        await Promise.all(targets.map((recordId) => deleteRecord(kind, recordId)));
+        return true;
+      } catch (error) {
+        setFriendlyError(`${kind}.delete`, error);
+        return false;
+      }
+    },
+    [setFriendlyError, workflowMode]
+  );
+
+  const handleDeleteMaterial = useCallback(async (materialId: string) => {
+    const target = snapshot.materials.find((item) => item.recordId === materialId);
+    const ok = await deleteEntityRemote("material", target?.recordId ? [target.recordId] : []);
+    if (!ok) return;
+    setSnapshot((current) => ({
+      ...current,
+      materials: current.materials.filter((item) => item.recordId !== materialId),
+    }));
+    setSelectedMaterialIds((current) => current.filter((id) => id !== materialId));
+    setNotice({ type: "success", message: workflowMode === "connected" ? "素材已从飞书删除" : "素材已移除" });
+  }, [deleteEntityRemote, setNotice, snapshot.materials, workflowMode]);
+
+  const handleBatchDeleteMaterials = useCallback(async (materialIds: string[]) => {
+    const idSet = new Set(materialIds);
+    const recordIds = snapshot.materials.filter((item) => idSet.has(item.recordId)).map((item) => item.recordId);
+    const ok = await deleteEntityRemote("material", recordIds);
+    if (!ok) return;
+    setSnapshot((current) => ({
+      ...current,
+      materials: current.materials.filter((item) => !idSet.has(item.recordId)),
+    }));
+    setSelectedMaterialIds((current) => current.filter((id) => !idSet.has(id)));
+    setNotice({ type: "success", message: `已删除 ${materialIds.length} 条素材` });
+  }, [deleteEntityRemote, setNotice, snapshot.materials]);
+
+  const handleEditMaterial = useCallback((item: MaterialItem) => setEditingMaterial(item), []);
+
+  const handleSubmitEditMaterial = useCallback(async (input: ManualMaterialInput) => {
+    if (!editingMaterial) return;
+    const updated = applyMaterialEdit(editingMaterial, input);
+    setSnapshot((current) => ({
+      ...current,
+      materials: current.materials.map((item) => (item.recordId === updated.recordId ? updated : item)),
+    }));
+    setEditingMaterial(null);
+    if (workflowMode === "connected") {
+      try {
+        await saveMaterial({ material: updated, writeBack: true });
+      } catch (error) {
+        setFriendlyError("materials.save", error);
+        return;
+      }
+    }
+    setNotice({ type: "success", message: "素材已更新" });
+  }, [editingMaterial, setFriendlyError, setNotice, workflowMode]);
+
+  const handleDeleteTopic = useCallback(async (topic: ContentCard) => {
+    const ok = await deleteEntityRemote("topic", topic.recordId ? [topic.recordId] : []);
+    if (!ok) return;
+    setSnapshot((current) => ({
+      ...current,
+      topics: current.topics.filter((item) => !isSameTopic(item, topic)),
+    }));
+    setSelectedTopic((current) => (current && current.topicId === topic.topicId ? null : current));
+    setNotice({ type: "success", message: workflowMode === "connected" ? "选题已从飞书删除" : "选题已移除" });
+  }, [deleteEntityRemote, setNotice, workflowMode]);
+
+  const handleEditTopic = useCallback((topic: ContentCard) => setEditingTopic(topic), []);
+
+  const handleSubmitEditTopic = useCallback(async (input: ManualTopicInput) => {
+    if (!editingTopic) return;
+    const updated = applyTopicEdit(editingTopic, input);
+    setSnapshot((current) => ({
+      ...current,
+      topics: current.topics.map((item) =>
+        (item.topicId && item.topicId === updated.topicId) ||
+        (item.recordId && updated.recordId && item.recordId === updated.recordId)
+          ? updated
+          : item
+      ),
+    }));
+    setSelectedTopic((current) => (current && current.topicId === updated.topicId ? updated : current));
+    setEditingTopic(null);
+    if (workflowMode === "connected") {
+      try {
+        await saveTopic({ topic: updated, writeBack: true });
+      } catch (error) {
+        setFriendlyError("topics.save", error);
+        return;
+      }
+    }
+    setNotice({ type: "success", message: "选题已更新" });
+  }, [editingTopic, setFriendlyError, setNotice, workflowMode]);
+
   useEffect(() => {
     let isActive = true;
 
@@ -603,9 +745,6 @@ export default function WorkflowDashboard() {
         if (!isActive) return;
 
         setBootstrapConfig(bootstrap.config);
-        const shouldShowGuide =
-          typeof window !== "undefined" && !window.localStorage.getItem("xhs_workflow_onboarding_closed");
-        setShowOnboarding(shouldShowGuide || bootstrap.mode === "demo");
 
         if (bootstrap.mode === "demo") {
           setWorkflowMode("demo");
@@ -615,13 +754,16 @@ export default function WorkflowDashboard() {
         }
 
         setWorkflowMode("connected");
-        await loadFeishuSnapshot();
+        const data = await loadFeishuSnapshot();
+        // 已连飞书且已有素材的回头用户，直接落到素材步，不停在引导页
+        if (isActive && data && data.materials.length > 0) {
+          setArea("workbench");
+        }
       } catch (error) {
         if (!isActive) return;
         console.error("[WorkflowDashboard] 启动失败，切换 Demo", { action: "workflow.bootstrap", error });
         setWorkflowMode("demo");
         applySnapshot(DEMO_SNAPSHOT, DEMO_SELECTED_MATERIAL_IDS);
-        setShowOnboarding(true);
         setNotice({ type: "error", message: "工作流启动失败，已切换 Demo 模式" });
       } finally {
         if (isActive) setIsSyncing(false);
@@ -634,12 +776,37 @@ export default function WorkflowDashboard() {
     };
   }, [applySnapshot, loadFeishuSnapshot, setNotice]);
 
-  const handleDismissOnboarding = useCallback(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem("xhs_workflow_onboarding_closed", "1");
-    }
-    setShowOnboarding(false);
-  }, []);
+  const handleAddMaterial = useCallback((input: ManualMaterialInput) => {
+    const material = createManualMaterial(input);
+    setSnapshot((current) => ({ ...current, materials: [material, ...current.materials] }));
+    setSelectedMaterialIds((current) => [...current, material.recordId]);
+    setNotice({ type: "success", message: "已手动新增素材并选中" });
+  }, [setNotice]);
+
+  // 线索采集：把提炼出的候选批量建成本地素材并选中，走与手动新增同一条路径
+  const handleAddClues = useCallback((candidates: ExtractedClue[], sourceLabel: string) => {
+    if (candidates.length === 0) return;
+    const materials = candidates.map((clue) =>
+      createManualMaterial({
+        event: clue.event,
+        method: clue.method,
+        pitfall: clue.pitfall,
+        relatedTerm: clue.relatedTerm,
+        sourceType: sourceLabel,
+      })
+    );
+    setSnapshot((current) => ({ ...current, materials: [...materials, ...current.materials] }));
+    setSelectedMaterialIds((current) => [...materials.map((item) => item.recordId), ...current]);
+    setNotice({ type: "success", message: `已加入 ${materials.length} 条线索素材并选中` });
+  }, [setNotice]);
+
+  const handleAddTopic = useCallback((input: ManualTopicInput) => {
+    const topic = createManualTopic(input);
+    setSnapshot((current) => ({ ...current, topics: [topic, ...current.topics] }));
+    setSelectedTopic(topic);
+    setSelectedDraft(null);
+    setNotice({ type: "success", message: "已手动新增选题并选中" });
+  }, [setNotice]);
 
   const handleGenerateTopics = useCallback(async () => {
     if (!hasPendingMaterials) {
@@ -667,7 +834,8 @@ export default function WorkflowDashboard() {
         topics: mergeByKey(current.topics, result.cards, (topic) => topic.topicId),
       }));
       setSelectedTopic(result.cards[0] || null);
-      setActiveModule("topics");
+      setSelectedDraft(null);
+      setArea("workbench");
       setNotice({
         type: "success",
         message: shouldWriteBack ? "已基于已选素材生成选题，并写回飞书" : "已基于 Demo 素材生成选题",
@@ -699,7 +867,6 @@ export default function WorkflowDashboard() {
         drafts: mergeByKey(current.drafts, result.drafts, (draft) => draft.noteId),
       }));
       setSelectedDraft(result.drafts[0] || null);
-      setActiveModule("rewrite");
       setNotice({
         type: "success",
         message: shouldWriteBack ? "草稿已生成，并写回飞书" : "Demo 草稿已生成",
@@ -748,7 +915,6 @@ export default function WorkflowDashboard() {
         metrics: mergeByKey(current.metrics, [result.reviewMetric], (item) => item.noteId),
       }));
       setSelectedDraft(result.draft);
-      setActiveModule("review");
       setNotice({
         type: "success",
         message: shouldWriteBack ? "草稿已发布，复盘记录已创建" : "Demo 草稿已发布",
@@ -762,6 +928,21 @@ export default function WorkflowDashboard() {
       setIsPublishingDraft(false);
     }
   }, [loadFeishuSnapshot, setFriendlyError, setNotice, workflowMode]);
+
+  // 质检面板里「标签重配 / 引导重写」内联编辑：只改前端当前草稿，不写回飞书；
+  // 之后在中栏点「保存」可一并写回。
+  const handlePatchDraft = useCallback(
+    (patch: Partial<DraftNote>) => {
+      if (!selectedDraft) return;
+      const next = { ...selectedDraft, ...patch };
+      setSelectedDraft(next);
+      setSnapshot((current) => ({
+        ...current,
+        drafts: current.drafts.map((item) => (isSameDraft(item, next) ? next : item)),
+      }));
+    },
+    [selectedDraft]
+  );
 
   const handleGenerateCover = useCallback(async () => {
     const sourceDraft = selectedDraft;
@@ -810,7 +991,6 @@ export default function WorkflowDashboard() {
         }));
         setSelectedTopic(updatedTopic);
       }
-      setActiveModule("images");
       setNotice({ type: "success", message: result.usedFallback ? "已用规则生成封面方案" : "封面方案已生成" });
       if (result.writeBack) {
         await loadFeishuSnapshot();
@@ -844,7 +1024,6 @@ export default function WorkflowDashboard() {
       });
       setContentImagePlan(result.plan);
       setImageMode("content");
-      setActiveModule("images");
       setNotice({
         type: "success",
         message: result.usedFallback ? "已用规则生成内容配图" : "内容配图已生成",
@@ -866,7 +1045,6 @@ export default function WorkflowDashboard() {
         metrics: shouldWriteBack ? undefined : publishedMetrics,
       });
       setReview(result.review);
-      setActiveModule("review");
       setNotice({
         type: "success",
         message: shouldWriteBack ? "复盘已生成，并写回飞书" : "Demo 复盘已生成",
@@ -905,108 +1083,6 @@ export default function WorkflowDashboard() {
     setContentImageDataUrl("");
   }, []);
 
-  const primaryLabel =
-    activeModule === "bloggers"
-      ? "选择素材"
-      : activeModule === "assets"
-        ? "生成选题"
-        : activeModule === "topics"
-          ? "生成草稿"
-          : activeModule === "rewrite"
-            ? "生成图片"
-            : activeModule === "images"
-              ? imageMode === "content"
-                ? contentImageDataUrl
-                  ? "下载内容图"
-                  : "生成内容图"
-                : coverDataUrl
-                  ? "下载封面"
-                  : "生成封面方案"
-              : activeModule === "video"
-                ? videoPlan
-                  ? selectedDraft
-                    ? "标记发布"
-                    : "先生成草稿"
-                  : "先生成视频方案"
-                : "生成复盘";
-
-  const primaryDisabled =
-    activeModule === "bloggers"
-      ? false
-      : activeModule === "assets"
-        ? isGeneratingTopics || selectedMaterials.length === 0
-        : activeModule === "topics"
-          ? isGeneratingDrafts || !selectedTopic
-          : activeModule === "rewrite"
-            ? !selectedDraft && !selectedTopic
-            : activeModule === "images"
-              ? imageMode === "content"
-                ? isGeneratingContentImage || (!contentImageDataUrl && !selectedDraft && !selectedTopic)
-                : isGeneratingCover || (!coverDataUrl && !selectedDraft && !selectedTopic)
-              : activeModule === "video"
-                ? !videoPlan || !selectedDraft
-                : isReviewing || publishedMetrics.length === 0;
-
-  const handlePrimaryAction = useCallback(() => {
-    if (activeModule === "bloggers") {
-      setActiveModule("assets");
-      return;
-    }
-    if (activeModule === "assets") {
-      handleGenerateTopics();
-      return;
-    }
-    if (activeModule === "topics") {
-      handleGenerateDraft();
-      return;
-    }
-    if (activeModule === "rewrite") {
-      setActiveModule("images");
-      return;
-    }
-    if (activeModule === "images") {
-      if (imageMode === "content") {
-        if (contentImageDataUrl) {
-          handleDownloadContentImage();
-        } else {
-          handleGenerateContentImage();
-        }
-      } else {
-        if (coverDataUrl) {
-          handleDownloadCover();
-        } else {
-          handleGenerateCover();
-        }
-      }
-      return;
-    }
-    if (activeModule === "video") {
-      if (videoPlan && selectedDraft) {
-        handlePublishDraft(selectedDraft);
-      } else {
-        setNotice({ type: "info", message: "请先在视频页生成视频方案。" });
-      }
-      return;
-    }
-    handleGenerateReview();
-  }, [
-    activeModule,
-    contentImageDataUrl,
-    coverDataUrl,
-    handleDownloadContentImage,
-    handleDownloadCover,
-    handleGenerateCover,
-    handleGenerateContentImage,
-    handleGenerateDraft,
-    handleGenerateReview,
-    handleGenerateTopics,
-    handlePublishDraft,
-    imageMode,
-    selectedDraft,
-    setNotice,
-    videoPlan,
-  ]);
-
   const handleApplyRewriteToDraft = useCallback((draft: DraftNote) => {
     setSnapshot((current) => ({
       ...current,
@@ -1016,264 +1092,350 @@ export default function WorkflowDashboard() {
     setNotice({ type: "success", message: "改写结果已应用到当前草稿" });
   }, [setNotice]);
 
-  const activePanel = useMemo(() => {
-    if (activeModule === "bloggers") {
-      return (
-        <BloggerResearch
-          selectedDistillation={bloggerDistillation}
-          onDistillationChange={setBloggerDistillation}
-        />
-      );
-    }
+  // 选一篇笔记：带出它的草稿，并清掉上一篇的封面/配图预览
+  const handleSelectNote = useCallback((topic: ContentCard) => {
+    setSelectedTopic(topic);
+    setSelectedDraft(usableDrafts.find((item) => item.topicId === topic.topicId) || null);
+    setCoverPlan(null);
+    setCoverDataUrl("");
+    setContentImagePlan(null);
+    setContentImageDataUrl("");
+  }, [usableDrafts]);
 
-    if (activeModule === "assets") {
-      return (
-        <SourceWorkspace
-          materials={snapshot.materials}
-          selectedMaterialIds={selectedMaterialIds}
-          localDocsSourceDir={localDocsSourceDir}
-          isFeishuReady={isFeishuReady}
-          onToggleMaterial={handleToggleMaterial}
-          onSelectPendingMaterials={handleSelectPendingMaterials}
-          onClearSelectedMaterials={handleClearSelectedMaterials}
-          onNotice={setNotice}
-          onImported={loadSnapshot}
-        />
-      );
-    }
+  const boundDaokuName = DAOKU_OPTIONS.find(
+    (option) => option.bloggerId === topicDaokuMap[selectedTopic?.topicId || ""]
+  )?.name;
+  const bloggerReady = Boolean(bloggerDistillation);
+  const videoReady = Boolean(videoPlan);
 
-    if (activeModule === "topics") {
-      return (
-        <div className="space-y-3">
-          <TopicPoolImportPanel
-            defaultSourceDir={topicPoolDir}
-            isFeishuReady={isFeishuReady}
-            onNotice={setNotice}
-            onImported={loadSnapshot}
-          />
-          <TopicPipeline
-            topics={usableTopics}
-            selectedTopic={selectedTopic}
-            selectedMaterials={selectedMaterials}
-            onSelectTopic={handleSelectTopic}
-          />
-        </div>
-      );
-    }
+  return (
+    <>
+      <WorkbenchShell
+        areas={AREAS}
+        area={area}
+        onAreaChange={setArea}
+        workflowMode={workflowMode}
+        aiProvider={bootstrapConfig?.aiProvider ?? null}
+        syncing={isSyncing}
+        syncLabel={workflowMode === "demo" ? "重载 Demo" : "同步飞书"}
+        onSync={loadSnapshot}
+      >
+        {area === "workbench" && (
+          <div className="flex h-full">
+            <div className="hidden w-72 shrink-0 border-r border-[#E5E5EA] md:block">
+              <NoteList
+                notes={usableTopics}
+                drafts={usableDrafts}
+                selectedTopicId={selectedTopic?.topicId ?? null}
+                onSelect={handleSelectNote}
+                onNew={() => setAddingTopic(true)}
+                onGenerateFromMaterials={() => setArea("library")}
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <NoteEditor
+                selectedTopic={selectedTopic}
+                selectedDraft={selectedDraft}
+                boundDaokuName={boundDaokuName}
+                isGenerating={isGeneratingDrafts}
+                isSaving={isSavingDraft}
+                onGenerateDraft={handleGenerateDraft}
+                onSaveDraft={handleSaveDraft}
+                onOpenRewrite={() => setDrawer("rewrite")}
+              />
+            </div>
+            <div className="hidden w-80 shrink-0 border-l border-[#E5E5EA] lg:block">
+              <NoteInspector
+                topic={selectedTopic}
+                draft={selectedDraft}
+                onEditTopic={() => selectedTopic && handleEditTopic(selectedTopic)}
+                onDeleteTopic={() => selectedTopic && handleDeleteTopic(selectedTopic)}
+                sourceSummary={selectedTopic?.sourceMaterial || ""}
+                onOpenLibrary={() => setArea("library")}
+                daokuOptions={DAOKU_OPTIONS}
+                topicDaokuMap={topicDaokuMap}
+                onBindDaoku={handleBindDaoku}
+                bloggerReady={bloggerReady}
+                onOpenBlogger={() => setDrawer("blogger")}
+                coverDataUrl={coverDataUrl}
+                onOpenCover={() => setDrawer("cover")}
+                videoReady={videoReady}
+                onOpenVideo={() => setDrawer("video")}
+                quality={qualityResult}
+                onOpenQuality={() => setDrawer("quality")}
+                onPublish={() => {
+                  if (selectedDraft) handlePublishDraft(selectedDraft);
+                }}
+                publishing={isPublishingDraft}
+              />
+            </div>
+          </div>
+        )}
 
-    if (activeModule === "rewrite") {
-      return (
-        <div className="space-y-4">
-          <RewriteStudio
+        {area === "library" && (
+          <div className="h-full overflow-auto p-4">
+            <div className="mx-auto max-w-5xl space-y-3">
+              <WorkflowOnboarding
+                mode={workflowMode}
+                config={bootstrapConfig}
+                onUseDemo={handleUseDemo}
+                onLoadMarkdown={handleLoadMarkdownDemo}
+                onConnectFeishu={handleConnectFeishu}
+                onOpenSource={() => setArea("workbench")}
+                onDismiss={() => setArea("workbench")}
+              />
+              <section className="flex flex-col gap-3 border border-[#E5E5EA] bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-[#1D1D1F]">从素材生成选题</h3>
+                  <p className="mt-1 text-sm text-[#6E6E73]">
+                    勾选下方素材，一键提炼成选题——每条选题就是一篇新笔记。已选{" "}
+                    <span className="font-bold tabular-nums text-[#1D1D1F]">{selectedMaterials.length}</span> 条。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleGenerateTopics}
+                  disabled={isGeneratingTopics || selectedMaterials.length === 0}
+                  className="shrink-0 rounded-lg bg-[#FF2442] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#E01E3A] disabled:cursor-not-allowed disabled:bg-[#E5E5EA] disabled:text-[#A1A1A6]"
+                >
+                  {isGeneratingTopics ? "生成中…" : "生成选题"}
+                </button>
+              </section>
+              <ClueIntakePanel onClues={handleAddClues} onNotice={setNotice} />
+              <TopicPoolImportPanel
+                defaultSourceDir={topicPoolDir}
+                isFeishuReady={isFeishuReady}
+                onNotice={setNotice}
+                onImported={loadSnapshot}
+              />
+              <SourceWorkspace
+                materials={snapshot.materials}
+                selectedMaterialIds={selectedMaterialIds}
+                localDocsSourceDir={localDocsSourceDir}
+                isFeishuReady={isFeishuReady}
+                onToggleMaterial={handleToggleMaterial}
+                onSelectPendingMaterials={handleSelectPendingMaterials}
+                onClearSelectedMaterials={handleClearSelectedMaterials}
+                onAdd={() => setAddingMaterial(true)}
+                onEditMaterial={handleEditMaterial}
+                onDeleteMaterial={handleDeleteMaterial}
+                onBatchDeleteMaterials={handleBatchDeleteMaterials}
+                onNotice={setNotice}
+                onImported={loadSnapshot}
+              />
+            </div>
+          </div>
+        )}
+
+        {area === "review" && (
+          <div className="h-full overflow-auto p-4">
+            <div className="mx-auto max-w-5xl">
+              <ReviewDashboard
+                metrics={publishedMetrics}
+                review={review}
+                onGenerate={handleGenerateReview}
+                generating={isReviewing}
+              />
+            </div>
+          </div>
+        )}
+      </WorkbenchShell>
+
+      <WorkbenchDrawer open={drawer !== null} title={drawer ? DRAWER_TITLES[drawer] : ""} onClose={() => setDrawer(null)}>
+        {drawer === "cover" && (
+          <div className="space-y-3">
+            <CoverStudio
+              topics={usableTopics}
+              drafts={usableDrafts}
+              selectedTopic={selectedTopic}
+              selectedDraft={selectedDraft}
+              coverConfig={coverConfig}
+              coverPlan={coverPlan}
+              imageMode={imageMode}
+              contentImageTemplate={contentImageTemplate}
+              contentImagePlan={contentImagePlan}
+              contentImageDataUrl={contentImageDataUrl}
+              isGenerating={isGeneratingCover}
+              isGeneratingContentImage={isGeneratingContentImage}
+              onGenerateCover={handleGenerateCover}
+              onGenerateContentImage={handleGenerateContentImage}
+              onSelectTopic={handleSelectTopic}
+              onSelectDraft={handleSelectDraft}
+              onConfigChange={setCoverConfig}
+              onCoverGenerated={setCoverDataUrl}
+              onImageModeChange={setImageMode}
+              onContentTemplateChange={handleContentTemplateChange}
+              onContentImageGenerated={setContentImageDataUrl}
+            />
+            {(coverDataUrl || contentImageDataUrl) && (
+              <div className="flex flex-wrap gap-2">
+                {coverDataUrl && (
+                  <button
+                    type="button"
+                    onClick={handleDownloadCover}
+                    className="rounded-lg border border-[#D2D2D7] bg-white px-4 py-2 text-sm font-semibold text-[#1D1D1F] hover:bg-[#F5F5F7]"
+                  >
+                    下载封面
+                  </button>
+                )}
+                {contentImageDataUrl && (
+                  <button
+                    type="button"
+                    onClick={handleDownloadContentImage}
+                    className="rounded-lg border border-[#D2D2D7] bg-white px-4 py-2 text-sm font-semibold text-[#1D1D1F] hover:bg-[#F5F5F7]"
+                  >
+                    下载配图
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {drawer === "video" && (
+          <VideoStudio
             selectedTopic={selectedTopic}
             selectedDraft={selectedDraft}
             bloggerDistillation={bloggerDistillation}
-            onApplyToDraft={handleApplyRewriteToDraft}
+            onVideoPlanChange={setVideoPlan}
+            imageUrls={[coverDataUrl, contentImageDataUrl].filter(Boolean)}
+            onRenderedChange={setVideoRendered}
           />
-          <DraftPipeline
-            topics={usableTopics}
-            drafts={usableDrafts}
+        )}
+        {drawer === "blogger" && (
+          <BloggerResearch
+            selectedDistillation={bloggerDistillation}
+            onDistillationChange={setBloggerDistillation}
+          />
+        )}
+        {drawer === "rewrite" && (
+          <RewriteStudio
             selectedTopic={selectedTopic}
             selectedDraft={selectedDraft}
-            isGenerating={isGeneratingDrafts}
-            isSaving={isSavingDraft}
-            isPublishing={isPublishingDraft}
-            onGenerateDraft={handleGenerateDraft}
-            onSelectTopic={handleSelectTopic}
-            onSelectDraft={handleSelectDraft}
-            onSaveDraft={handleSaveDraft}
-            onPublishDraft={handlePublishDraft}
-            onOpenCover={() => setActiveModule("images")}
+            bloggerDistillation={getDaokuForTopic(selectedTopic)}
+            onApplyToDraft={handleApplyRewriteToDraft}
           />
-        </div>
-      );
-    }
-
-    if (activeModule === "images") {
-      return (
-        <CoverStudio
-          topics={usableTopics}
-          drafts={usableDrafts}
-          selectedTopic={selectedTopic}
-          selectedDraft={selectedDraft}
-          coverConfig={coverConfig}
-          coverPlan={coverPlan}
-          imageMode={imageMode}
-          contentImageTemplate={contentImageTemplate}
-          contentImagePlan={contentImagePlan}
-          contentImageDataUrl={contentImageDataUrl}
-          isGenerating={isGeneratingCover}
-          isGeneratingContentImage={isGeneratingContentImage}
-          onGenerateCover={handleGenerateCover}
-          onGenerateContentImage={handleGenerateContentImage}
-          onSelectTopic={handleSelectTopic}
-          onSelectDraft={handleSelectDraft}
-          onConfigChange={setCoverConfig}
-          onCoverGenerated={setCoverDataUrl}
-          onImageModeChange={setImageMode}
-          onContentTemplateChange={handleContentTemplateChange}
-          onContentImageGenerated={setContentImageDataUrl}
-        />
-      );
-    }
-
-    if (activeModule === "video") {
-      return (
-        <VideoStudio
-          selectedTopic={selectedTopic}
-          selectedDraft={selectedDraft}
-          bloggerDistillation={bloggerDistillation}
-          onVideoPlanChange={setVideoPlan}
-          imageUrls={[coverDataUrl, contentImageDataUrl].filter(Boolean)}
-          onRenderedChange={setVideoRendered}
-        />
-      );
-    }
-
-    return (
-      <ReviewDashboard
-        metrics={publishedMetrics}
-        review={review}
-      />
-    );
-  }, [
-    activeModule,
-    bloggerDistillation,
-    contentImageDataUrl,
-    contentImagePlan,
-    contentImageTemplate,
-    coverConfig,
-    coverDataUrl,
-    coverPlan,
-    handleApplyRewriteToDraft,
-    handleContentTemplateChange,
-    handleGenerateCover,
-    handleGenerateContentImage,
-    handleGenerateDraft,
-    handlePublishDraft,
-    handleSaveDraft,
-    handleSelectDraft,
-    handleSelectTopic,
-    handleToggleMaterial,
-    handleSelectPendingMaterials,
-    handleClearSelectedMaterials,
-    isFeishuReady,
-    localDocsSourceDir,
-    loadSnapshot,
-    imageMode,
-    isGeneratingCover,
-    isGeneratingContentImage,
-    isGeneratingDrafts,
-    isPublishingDraft,
-    isSavingDraft,
-    publishedMetrics,
-    review,
-    selectedDraft,
-    selectedMaterialIds,
-    selectedMaterials,
-    selectedTopic,
-    setNotice,
-    snapshot,
-    topicPoolDir,
-    usableDrafts,
-    usableTopics,
-  ]);
-
-  const imageAssetCount = [...usableTopics, ...usableDrafts].filter(hasGeneratedCover).length + (contentImageDataUrl ? 1 : 0);
-  const moduleCounts: Partial<Record<WorkflowModule, number>> = {
-    bloggers: bloggerDistillation ? 1 : 0,
-    assets: snapshot.materials.length,
-    topics: usableTopics.length,
-    rewrite: usableDrafts.length,
-    images: imageAssetCount,
-    video: videoPlan ? 1 : 0,
-    review: publishedMetrics.length,
-  };
-  const moduleCountLabels: Partial<Record<WorkflowModule, string>> = {
-    bloggers: "个道库",
-    assets: "条素材",
-    topics: "条选题",
-    rewrite: "条草稿",
-    images: "张图片",
-    video: "个方案",
-    review: "条已发布",
-  };
-  const moduleMeta = getWorkflowModuleMeta(activeModule);
-
-  return (
-    <AppShell
-      activeModule={activeModule}
-      moduleCounts={moduleCounts}
-      workflowMode={workflowMode}
-      aiProvider={bootstrapConfig?.aiProvider ?? null}
-      syncing={isSyncing}
-      syncLabel={workflowMode === "demo" ? "重载 Demo" : "同步飞书"}
-      onSync={loadSnapshot}
-      onModuleChange={setActiveModule}
-      onboarding={showOnboarding ? (
-        <WorkflowOnboarding
-          mode={workflowMode}
-          config={bootstrapConfig}
-          onUseDemo={handleUseDemo}
-          onLoadMarkdown={handleLoadMarkdownDemo}
-          onConnectFeishu={handleConnectFeishu}
-          onOpenSource={() => setActiveModule("assets")}
-          onDismiss={handleDismissOnboarding}
-        />
-      ) : null}
-      context={{
-        bloggerDistillation,
-        selectedMaterialsCount: selectedMaterials.length,
-        selectedTopic,
-        selectedDraft,
-        coverReady: Boolean(coverDataUrl),
-        contentImageReady: Boolean(contentImageDataUrl),
-        videoReady: Boolean(videoPlan),
-        reviewSummary: review?.summary,
-        primaryLabel,
-        primaryDisabled,
-        onPrimaryAction: handlePrimaryAction,
-      }}
-    >
-      {activeModule === "overview" ? (
-        <PipelineOverview
-          counts={moduleCounts}
-          countLabels={moduleCountLabels}
-          workflowMode={workflowMode}
-          onOpenModule={setActiveModule}
-          selectedTopicTitle={selectedTopic?.titleCandidates?.[0] ?? selectedTopic?.coreViewpoint ?? null}
-          selectedDraftTitle={selectedDraft?.title ?? null}
-          videoRendered={videoRendered}
-        />
-      ) : (
-        <>
-          <ModuleHeader
-            title={moduleMeta.label}
-            description={moduleMeta.description}
-            count={moduleCounts[activeModule]}
-            countLabel={moduleCountLabels[activeModule]}
-            primary={{
-              label: primaryLabel,
-              disabled: primaryDisabled,
-              onClick: handlePrimaryAction,
+        )}
+        {drawer === "quality" && (
+          <QualityGate
+            result={qualityResult}
+            draft={selectedDraft}
+            onApplyDraftPatch={handlePatchDraft}
+            onResolve={(action) => {
+              if (action === "rewrite") setDrawer("rewrite");
+              else if (action === "cover") setDrawer("cover");
+              else if (action === "source") {
+                setDrawer(null);
+                setArea("library");
+              }
             }}
+            onPublish={() => {
+              if (selectedDraft) handlePublishDraft(selectedDraft);
+            }}
+            publishing={isPublishingDraft}
           />
+        )}
+      </WorkbenchDrawer>
 
-          {activePanel}
+      <ManualEntryForm
+        open={Boolean(editingMaterial)}
+        onOpenChange={(open) => {
+          if (!open) setEditingMaterial(null);
+        }}
+        asModal
+        title="编辑素材"
+        submitLabel="保存修改"
+        fields={MATERIAL_FIELDS}
+        initialValues={
+          editingMaterial
+            ? {
+                event: editingMaterial.event || editingMaterial.summary,
+                method: editingMaterial.method,
+                sourceType: editingMaterial.sourceType,
+                pitfall: editingMaterial.pitfall,
+                relatedTerm: editingMaterial.relatedTerm,
+              }
+            : undefined
+        }
+        onSubmit={(values) =>
+          handleSubmitEditMaterial({
+            event: values.event,
+            method: values.method,
+            sourceType: values.sourceType,
+            pitfall: values.pitfall,
+            relatedTerm: values.relatedTerm,
+          })
+        }
+      />
 
-          {coverDataUrl && (
-            <div className="rounded-lg border border-[#BFE7DC] bg-[#F0FBF8] px-4 py-3 text-sm font-semibold text-[#0A7F64]">
-              封面图已生成，可在图片生成区下载，也可以用顶部主按钮直接下载。
-            </div>
-          )}
+      <ManualEntryForm
+        open={Boolean(editingTopic)}
+        onOpenChange={(open) => {
+          if (!open) setEditingTopic(null);
+        }}
+        asModal
+        title="编辑选题"
+        submitLabel="保存修改"
+        fields={TOPIC_FIELDS}
+        initialValues={
+          editingTopic
+            ? {
+                title: editingTopic.titleCandidates[0] || "",
+                coreViewpoint: editingTopic.coreViewpoint,
+                painPoint: editingTopic.painPoint,
+                targetReader: editingTopic.targetReader,
+                realCase: editingTopic.realCase,
+                reusableAsset: editingTopic.reusableAsset,
+              }
+            : undefined
+        }
+        onSubmit={(values) =>
+          handleSubmitEditTopic({
+            title: values.title,
+            coreViewpoint: values.coreViewpoint,
+            painPoint: values.painPoint,
+            targetReader: values.targetReader,
+            realCase: values.realCase,
+            reusableAsset: values.reusableAsset,
+          })
+        }
+      />
 
-          {contentImageDataUrl && (
-            <div className="rounded-lg border border-[#C7D7FE] bg-[#F4F7FF] px-4 py-3 text-sm font-semibold text-[#2563EB]">
-              内容配图已生成，可在图片生成区下载，也可以用顶部主按钮直接下载。
-            </div>
-          )}
-        </>
-      )}
-    </AppShell>
+      <ManualEntryForm
+        open={addingMaterial}
+        onOpenChange={setAddingMaterial}
+        asModal
+        title="新增素材"
+        submitLabel="加入素材库"
+        fields={MATERIAL_FIELDS}
+        onSubmit={(values) =>
+          handleAddMaterial({
+            event: values.event,
+            method: values.method,
+            sourceType: values.sourceType,
+            pitfall: values.pitfall,
+            relatedTerm: values.relatedTerm,
+          })
+        }
+      />
+
+      <ManualEntryForm
+        open={addingTopic}
+        onOpenChange={setAddingTopic}
+        asModal
+        title="新建笔记（选题）"
+        submitLabel="创建"
+        fields={TOPIC_FIELDS}
+        onSubmit={(values) =>
+          handleAddTopic({
+            title: values.title,
+            coreViewpoint: values.coreViewpoint,
+            painPoint: values.painPoint,
+            targetReader: values.targetReader,
+            realCase: values.realCase,
+            reusableAsset: values.reusableAsset,
+          })
+        }
+      />
+    </>
   );
 }
