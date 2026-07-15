@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import CoverEditor from "@/components/CoverEditor";
+import { DEFAULT_TARGET_ID, assetPx, assetRatioCss } from "@/lib/targets";
 import { DEFAULT_COVER_CONFIG, generateCoverDataUrl, type CoverConfig } from "@/lib/cover";
 import {
   contentCardToCoverInput,
@@ -206,7 +207,11 @@ function CoverVersionThumbnail({ config }: { config: CoverConfig }) {
       if (!canvasRef.current) return;
 
       try {
-        const dataUrl = await generateCoverDataUrl(canvasRef.current, config);
+        const dataUrl = await generateCoverDataUrl(
+          canvasRef.current,
+          config,
+          assetPx(DEFAULT_TARGET_ID, "cover")
+        );
         if (!isCancelled) setPreviewUrl(dataUrl);
       } catch (error) {
         console.warn("[CoverStudio] 封面缩略图生成失败", {
@@ -223,7 +228,10 @@ function CoverVersionThumbnail({ config }: { config: CoverConfig }) {
   }, [config]);
 
   return (
-    <div className="relative aspect-[3/4] overflow-hidden border border-stone-300 bg-stone-100">
+    <div
+      className="relative overflow-hidden border border-stone-300 bg-stone-100"
+      style={{ aspectRatio: assetRatioCss(DEFAULT_TARGET_ID, "cover") }}
+    >
       {previewUrl ? (
         <Image src={previewUrl} alt="封面缩略图" fill sizes="128px" className="object-cover" unoptimized />
       ) : (
@@ -255,7 +263,11 @@ function ContentImagePreview({
       if (!canvasRef.current || !plan) return;
 
       try {
-        const dataUrl = await renderContentImageDataUrl(canvasRef.current, plan);
+        const dataUrl = await renderContentImageDataUrl(
+          canvasRef.current,
+          plan,
+          assetPx(DEFAULT_TARGET_ID, "content")
+        );
         if (!isCancelled) {
           setPreviewUrl(dataUrl);
           onGenerated(dataUrl);
@@ -277,7 +289,10 @@ function ContentImagePreview({
   return (
     <div className="border border-stone-300 bg-stone-50 p-4">
       <div className="mx-auto max-w-[420px]">
-        <div className="relative aspect-[3/4] overflow-hidden border border-stone-950 bg-white shadow-[10px_10px_0_#1c1917]">
+        <div
+          className="relative overflow-hidden border border-stone-950 bg-white shadow-[10px_10px_0_#1c1917]"
+          style={{ aspectRatio: assetRatioCss(DEFAULT_TARGET_ID, "content") }}
+        >
           {previewUrl ? (
             <Image src={previewUrl} alt="内容配图预览" fill sizes="420px" className="object-cover" unoptimized />
           ) : (

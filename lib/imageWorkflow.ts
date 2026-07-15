@@ -457,13 +457,13 @@ const SANS_FONT = '"PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-seri
 
 export async function renderContentImageDataUrl(
   canvas: HTMLCanvasElement,
-  plan: ContentImagePlan
+  plan: ContentImagePlan,
+  px: readonly [number, number]
 ): Promise<string> {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Cannot get canvas context");
 
-  const width = 1080;
-  const height = 1440;
+  const [width, height] = px;
   canvas.width = width;
   canvas.height = height;
 

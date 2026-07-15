@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import satori from "satori";
 import React from "react";
+import { DEFAULT_TARGET_ID, assetPx } from "@/lib/targets";
 
 // 动态加载 resvg-wasm，避免 webpack 解析 .wasm 文件
 let resvgModule: any = null;
@@ -56,12 +57,13 @@ export async function POST(request: NextRequest) {
     const { Resvg } = await getResvg();
     const font = await loadFont();
 
-    const element = React.createElement(CoverComponent, params);
+    const [width, height] = assetPx(DEFAULT_TARGET_ID, "cover");
 
-    // 小红书封面比例 3:4 (竖版)
+    const element = React.createElement(CoverComponent, { ...params, width, height });
+
     const svg = await satori(element, {
-      width: 1080,
-      height: 1440,
+      width,
+      height,
       fonts: [
         {
           name: "Noto Sans SC",
@@ -76,7 +78,7 @@ export async function POST(request: NextRequest) {
     const resvg = new Resvg(svg, {
       fitTo: {
         mode: "width" as const,
-        value: 1080,
+        value: width,
       },
     });
     const pngData = resvg.render();
@@ -97,7 +99,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function CoverComponent(props: CoverParams) {
+function CoverComponent(props: CoverParams & { width: number; height: number }) {
   const {
     title,
     subtitle,
@@ -108,6 +110,8 @@ function CoverComponent(props: CoverParams) {
     titleColor,
     titleSize,
     titlePosition,
+    width,
+    height,
   } = props;
 
   const getTitleStyle = (): React.CSSProperties => {
@@ -157,8 +161,8 @@ function CoverComponent(props: CoverParams) {
     "div",
     {
       style: {
-        width: 1080,
-        height: 1440,
+        width,
+        height,
         display: "flex",
         position: "relative" as const,
         backgroundColor,

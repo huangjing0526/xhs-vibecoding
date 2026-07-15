@@ -199,13 +199,13 @@ export function getCoverTemplate(id?: CoverTemplateId): CoverTemplateDefinition 
 
 export async function generateCoverDataUrl(
   canvas: HTMLCanvasElement,
-  config: CoverConfig
+  config: CoverConfig,
+  px: readonly [number, number]
 ): Promise<string> {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Cannot get canvas context");
 
-  const width = 1080;
-  const height = 1440;
+  const [width, height] = px;
   canvas.width = width;
   canvas.height = height;
 

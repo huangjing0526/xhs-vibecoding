@@ -79,13 +79,13 @@ videoGroup = `${locale}-${aspect}`   // "zh-9:16" / "en-9:16"
 
 ## 3. 架构设计
 
-### 3.1 目录
+### 3.1 目录（终态）
 
 ```text
 lib/targets/
   types.ts          PublishTarget / TargetKind / Locale / FieldSpec / AspectId
   index.ts          TARGETS 注册表 + getTarget() / listByLocale() / listByVideoGroup()
-  geometry.ts       3:4 / 9:16 单一来源（现散在 4 处，见 4.1）
+  geometry.ts       比例单一来源
   xhs-post.ts  xhs-video.ts  channels-video.ts
   douyin-video.ts  tiktok-video.ts  fb-reel.ts
   rules/zh.ts       中文规则包（从 qualityCheck / topicScoring / contentStrategy 抽出）
@@ -95,6 +95,8 @@ lib/targets/
 ```
 
 命名用 `targets` 而非 `platforms`：键是发布目标不是平台，名字要诚实。
+
+**这是终态，不是起点。** 上述结构随各阶段的消费方逐步长出，`lib/targets.ts` 到达一定体积后再拆成目录。Phase 1 实际落地的是单文件 37 行（见 6.Phase 1）。
 
 ### 3.2 PublishTarget
 
@@ -257,12 +259,26 @@ VideoPlan 单独建表而不是塞进选题表字段，避免重蹈 `封面配�
 > 1. `ImageUploader` 曾被列为孤儿。实为**活代码**，`CoverEditor.tsx:11` 引用它。删除会导致编译失败。
 > 2. `lib/similarity.ts` 曾被列为「新系统 `similarityRisk` 在用，需保留」。实为**孤儿**——仅 `HistoryDrawer`（孤儿）引用。新系统的 `similarityRisk` 由 `lib/topicScoring.ts:33` 的本地函数 `calcSimilarityRisk` 计算，与 `lib/similarity.ts` 无关，属同名不同物。
 
-### Phase 1 · 抽档案
+### Phase 1 · 抽档案 ✅
 
-纯重构，行为不变。`xhs-post` 档案逐字复刻现有常量。
+纯重构，行为不变。
 
-- 新建 `lib/targets/*`
-- `lib/qualityCheck.ts` 先接（纯函数、客户端、无持久化，最安全的试验田）
+**计划变更（执行时）**：原定「`qualityCheck.ts` 先接，最安全的试验田」。该判断失效——`lib/qualityCheck.ts` 是并发会话正在扩写的文件（新增 6 个质检维度），改它等于在他人未提交的 WIP 上叠加。改为先接几何：`lib/cover.ts`、`lib/imageWorkflow.ts`、`app/api/cover/route.tsx`、`CoverEditor`、`CoverStudio` 均不在并发改动清单内，零冲突，同样是纯重构，且有真实消费方验证抽象。质检接入顺延至并发会话落地后。
+
+**已落地**：
+
+- 新建 `lib/targets.ts`（37 行单文件）：`assetPx(targetId, kind)` / `assetRatioCss(targetId, kind)` / `DEFAULT_TARGET_ID`
+- 5 处调用点接入，几何硬编码在 `lib/targets.ts` 之外归零
+- 验证：`tsc` 通过、`next build` 通过、真机实测预览框 0.7500、canvas 1080×1440
+
+**确立的两条纪律**（`/simplify` 审查后）：
+
+1. **只把确有消费方读取的东西放进档案。** 初版曾加入 `9:16`、`getTarget()`、`TARGET_ORDER`、`platform`/`kind`/`locale`、`assets.video`，全部零读者，已删。尤其 `9:16`：真正的 1080×1920 在 `services/video-renderer/src/Root.tsx`，该包无法 import `@/lib`，故这行不是单一来源，而是与本体无联系的又一份副本——正是本次改造要消灭的东西。档案声明了而硬编码仍生效的字段，只是多造一份副本。
+2. **渲染叶子不认识发布目标。** `generateCoverDataUrl` / `renderContentImageDataUrl` 接收 `px` 参数，不反向 import 注册表。canvas 工具不该知道「发布目标」存在。
+
+**放弃的做法**：比例一度用 `ASPECTS[].className` 存 Tailwind 类，需把 `lib/**` 加入 `tailwind.config.ts` 的 content glob，否则 JIT 扫不到、预览框静默塌成 0 高（tsc 与 build 均不报错）。改为 `style={{ aspectRatio }}` 由 px 推导后，该配置改动整个撤销，漂移在结构上不可能发生。
+
+**已知未覆盖**：`lib/cover.ts` / `lib/imageWorkflow.ts` 的 `draw*` 中约 45 个绝对坐标仍以 1080 宽为基准，Phase 3 处理。`lib/targets.ts` 只覆盖画布宽高，不覆盖布局坐标。
 
 ### Phase 2 · 加目标维度
 

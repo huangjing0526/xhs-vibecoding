@@ -8,6 +8,7 @@ import {
   generateCoverDataUrl,
 } from "@/lib/cover";
 import type { CoverTemplateOption } from "@/lib/coverWorkflow";
+import { DEFAULT_TARGET_ID, assetPx, assetRatioCss } from "@/lib/targets";
 import ImageUploader from "./ImageUploader";
 
 interface CoverEditorProps {
@@ -65,7 +66,11 @@ export default function CoverEditor({
 
     setIsGenerating(true);
     try {
-      const dataUrl = await generateCoverDataUrl(canvasRef.current, config);
+      const dataUrl = await generateCoverDataUrl(
+        canvasRef.current,
+        config,
+        assetPx(DEFAULT_TARGET_ID, "cover")
+      );
       setCoverDataUrl(dataUrl);
       onCoverGenerated?.(dataUrl);
     } catch (error) {
@@ -104,7 +109,10 @@ export default function CoverEditor({
     <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <div className="border border-stone-300 bg-stone-50 p-4">
         <div className="mx-auto max-w-[420px]">
-          <div className="relative aspect-[3/4] overflow-hidden border border-stone-950 bg-stone-200 shadow-[10px_10px_0_#1c1917]">
+          <div
+            className="relative overflow-hidden border border-stone-950 bg-stone-200 shadow-[10px_10px_0_#1c1917]"
+            style={{ aspectRatio: assetRatioCss(DEFAULT_TARGET_ID, "cover") }}
+          >
             {coverDataUrl ? (
               <img
                 src={coverDataUrl}
