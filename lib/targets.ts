@@ -23,10 +23,42 @@ const TARGET_ASSETS: Record<TargetId, Record<AssetKind, AspectId>> = {
 };
 
 /**
- * 改造期间的默认目标。数据模型尚未带 target 维度（见改造方案 Phase 2），
- * 各调用点暂时显式传入此常量，届时替换为草稿上的真实目标。
+ * 缺省目标：飞书记录没填目标、或手动新建条目时落到这里。
+ * 目前只有一个目标，所以它既是缺省也是唯一值；接入第二个目标后仍是「拿不到目标时的兜底」。
  */
 export const DEFAULT_TARGET_ID: TargetId = "xhs-post";
+
+const ALL_TARGET_IDS: readonly TargetId[] = ["xhs-post"];
+
+export function isTargetId(value: string): value is TargetId {
+  return (ALL_TARGET_IDS as readonly string[]).includes(value);
+}
+
+/**
+ * 解析选题「目标清单」（\n 连接）。
+ *
+ * 只兜「空」不兜「未知」：飞书可人工编辑，代码尚未注册的目标（Phase 4 前手填的 douyin-video 等）
+ * 原样保留，与 status 字段同一策略——降级会在写回时静默覆盖人填的值。空清单兜底为缺省目标，
+ * 因为选题至少要投一个目标。返回 string[] 而非 TargetId[]。
+ */
+export function parseTargets(text: string): string[] {
+  const parsed = text
+    .split(/\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const unique = Array.from(new Set(parsed));
+  return unique.length > 0 ? unique : [DEFAULT_TARGET_ID];
+}
+
+/** 解析草稿/复盘「发布目标」（单值）。空兜底为缺省目标；非空的未知值原样保留（理由见 parseTargets）。 */
+export function parseTarget(text: string): string {
+  const value = text.trim();
+  return value || DEFAULT_TARGET_ID;
+}
+
+export function serializeTargets(targets: string[]): string {
+  return targets.join("\n");
+}
 
 export function assetAspect(id: TargetId, kind: AssetKind): AspectId {
   return TARGET_ASSETS[id][kind];

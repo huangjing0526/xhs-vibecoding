@@ -49,7 +49,9 @@ export async function POST(request: NextRequest) {
     let usedFallback = false;
 
     for (const card of cards.slice(0, count)) {
-      const fallbackDraft = createFallbackDraft(card);
+      // Phase 4 一稿多投时改为遍历 card.targets 各出一篇；现阶段每条选题只投第一个目标。
+      // targets 一定非空（parseTargets / 各构造点保证），故直接取首个。
+      const fallbackDraft = createFallbackDraft(card, card.targets[0]);
       const aiResult = await generateWorkflowJson<DraftNote>({
         action: "drafts.generateOne",
         prompt: buildDraftPrompt(card),

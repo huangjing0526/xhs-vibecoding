@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { apiError, apiOk, readJsonBody } from "../_utils";
 import { fieldToText, getFeishuRecord, updateFeishuRecord, WorkflowTableName } from "@/lib/feishu";
 import { generateWorkflowJson } from "@/lib/workflowAi";
-import { DEFAULT_TARGET_ID, assetAspect } from "@/lib/targets";
+import { DEFAULT_TARGET_ID, assetAspect, parseTarget } from "@/lib/targets";
 import {
   buildCoverPlanPrompt,
   contentCardToCoverInput,
@@ -33,6 +33,7 @@ function normalizeDraftFromRecord(recordId: string, fields: Record<string, unkno
   return {
     noteId: fieldToText(fields["笔记ID"]) || recordId,
     topicId: fieldToText(fields["选题ID"]),
+    target: parseTarget(fieldToText(fields["发布目标"])),
     title: fieldToText(fields["最终标题"] ?? fields["标题"]),
     coverText: fieldToText(fields["封面文案"]),
     content: fieldToText(fields["正文"]),

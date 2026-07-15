@@ -1,4 +1,5 @@
 import { DRAFT_STATUS, MATERIAL_STATUS, TOPIC_STATUS } from "@/lib/xhsWorkflow";
+import { DEFAULT_TARGET_ID } from "@/lib/targets";
 import type { WorkflowSnapshot } from "@/lib/workflowClient";
 
 export const DEMO_SELECTED_MATERIAL_IDS = [
@@ -120,6 +121,7 @@ export const DEMO_SNAPSHOT: WorkflowSnapshot = {
       commentPrompt: "你用 AI 写代码时，更卡在需求描述，还是验收改 bug？",
       estimatedSaveValue: 5,
       status: TOPIC_STATUS.pending,
+      targets: [DEFAULT_TARGET_ID],
     },
     {
       topicId: "DEMO-TOPIC-VALIDATION",
@@ -141,11 +143,13 @@ export const DEMO_SNAPSHOT: WorkflowSnapshot = {
       commentPrompt: "你最常漏掉构建检查，还是浏览器预览？",
       estimatedSaveValue: 4,
       status: TOPIC_STATUS.pending,
+      targets: [DEFAULT_TARGET_ID],
     },
   ],
   drafts: [
     {
       noteId: "DEMO-NOTE-AGENT",
+      target: DEFAULT_TARGET_ID,
       topicId: "DEMO-TOPIC-AGENT",
       title: "AI 编程别急着写代码：先讲清楚 Agent 协作",
       coverText: "AI 编程\n先别急着写代码",
@@ -160,6 +164,7 @@ export const DEMO_SNAPSHOT: WorkflowSnapshot = {
   metrics: [
     {
       noteId: "DEMO-NOTE-AGENT",
+      target: DEFAULT_TARGET_ID,
       title: "AI 编程别急着写代码：先讲清楚 Agent 协作",
       reads: 428,
       likes: 18,
@@ -171,6 +176,7 @@ export const DEMO_SNAPSHOT: WorkflowSnapshot = {
     },
     {
       noteId: "DEMO-NOTE-VALIDATION",
+      target: DEFAULT_TARGET_ID,
       title: "AI 写完代码后，我一定检查这 4 件事",
       reads: 236,
       likes: 9,
@@ -252,12 +258,14 @@ export function createMarkdownDemoSnapshot(markdown: string): WorkflowSnapshot {
         commentPrompt: "你写 AI 实践笔记时，更卡在标题，还是正文结构？",
         estimatedSaveValue: 4,
         status: TOPIC_STATUS.pending,
+        targets: [DEFAULT_TARGET_ID],
       },
     ],
     drafts: [
       {
         noteId,
         topicId,
+        target: DEFAULT_TARGET_ID,
         title,
         coverText: `${title.slice(0, 12)}\n别写成流水账`,
         content: `这次经历最值得记录的，不是“我做了什么”，而是它能不能变成别人也能复用的方法。\n\n原始素材里最核心的场景是：${summary}\n\n如果直接写，很容易变成流水账。但小红书更需要先讲清楚：读者为什么要点进来？他能收藏什么？\n\n我会把它拆成 5 段：\n1. 先说痛点\n2. 再讲真实场景\n3. 说明踩坑点\n4. 给一张可收藏清单\n5. 用一个二选一问题收尾\n\n可直接复用的结构：场景 -> 卡点 -> 做法 -> 清单 -> 评论问题。\n\n你写 AI 实践笔记时，更卡在标题，还是正文结构？`,

@@ -6,6 +6,7 @@ import {
   type DraftNote,
   type MaterialItem,
 } from "./xhsWorkflow";
+import { DEFAULT_TARGET_ID } from "./targets";
 
 /**
  * 手动新增工厂：每一步都允许用户手动建一条，而不是必须从飞书/本地文档/上游自动生成导入。
@@ -86,6 +87,7 @@ export function createManualTopic(input: ManualTopicInput): ContentCard {
   const title = input.title.trim();
   return {
     topicId: localId("topic"),
+    targets: [DEFAULT_TARGET_ID],
     sourceMaterial: "手动录入",
     relatedTerm: "",
     column: "手动",
@@ -144,6 +146,7 @@ export function createManualDraft(input: ManualDraftInput): DraftNote {
   return {
     noteId: localId("note"),
     topicId: input.topicId?.trim() || "",
+    target: DEFAULT_TARGET_ID,
     title,
     coverText: input.coverText?.trim() || title,
     content: input.content.trim(),

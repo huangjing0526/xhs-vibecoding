@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { readFile } from "fs/promises";
 import path from "path";
 import { TOPIC_STATUS, type ContentCard } from "@/lib/xhsWorkflow";
+import { DEFAULT_TARGET_ID } from "@/lib/targets";
 
 /**
  * 选题池对接：把个人内容库 `选题池.md` 里「待发酵 / 可启动」分区的提炼选题，
@@ -94,6 +95,7 @@ function buildSeed(params: {
 
   return {
     topicId: stableTopicId(params.title),
+    targets: [DEFAULT_TARGET_ID],
     sourceMaterial: params.source,
     relatedTerm: "",
     column: params.form,

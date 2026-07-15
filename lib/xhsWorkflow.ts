@@ -1,5 +1,11 @@
 import { FeishuRecord, fieldToNumber, fieldToText } from "./feishu";
 import { deriveStrategyForCard, firstThreeLines, inferAssetType } from "./contentStrategy";
+import {
+  DEFAULT_TARGET_ID,
+  parseTarget,
+  parseTargets,
+  serializeTargets,
+} from "./targets";
 
 /**
  * 各实体 status 字段的规范值。
@@ -117,6 +123,12 @@ export interface ContentCard extends CoverMetadata {
   commentPrompt: string;
   estimatedSaveValue: number;
   status: string;
+  /**
+   * 这条选题打算投的发布目标（飞书「目标清单」）。一稿多投时一条选题对应多篇草稿。
+   * 类型是 string 而非 TargetId：与 status 同理，飞书可人工编辑，读到代码尚未注册的目标
+   * （如 Phase 4 前手填的 douyin-video）要原样保留，收成封闭类型会在写回时静默覆盖。
+   */
+  targets: string[];
   /** 道库评分（飞书 选题表 字段：质量分 / 命中道 / 偏爆偏哑） */
   daokuScore?: string;
   daokuHit?: string;
@@ -144,6 +156,8 @@ export interface DraftNote extends CoverMetadata {
   tags: string[];
   commentPrompt: string;
   status: string;
+  /** 这篇草稿投向的发布目标（飞书「发布目标」）。string 而非 TargetId，理由见 ContentCard.targets。 */
+  target: string;
   qualityScoreBeforeWrite?: number;
   qualityScoreAfterReview?: number;
   qualityIssues?: string[];
@@ -161,6 +175,8 @@ export interface DraftNote extends CoverMetadata {
 export interface ReviewMetric {
   noteId: string;
   title: string;
+  /** 这条复盘对应的发布目标（飞书「发布目标」）。string 而非 TargetId，理由见 ContentCard.targets。 */
+  target: string;
   reads: number;
   likes: number;
   saves: number;
@@ -304,6 +320,7 @@ export function normalizeContentCard(record: FeishuRecord): ContentCard {
   return {
     ...normalizeStrategyMetadata(fields),
     ...normalizeCoverMetadata(fields),
+    targets: parseTargets(fieldToText(fields["目标清单"])),
     recordId: record.record_id,
     topicId: fieldToText(fields["选题ID"]) || record.record_id,
     sourceMaterial: fieldToText(fields["来源素材"]),
@@ -356,6 +373,7 @@ export function normalizeDraftNote(record: FeishuRecord): DraftNote {
     ...normalizeCoverMetadata(fields),
     recordId: record.record_id,
     noteId: fieldToText(fields["笔记ID"]) || record.record_id,
+    target: parseTarget(fieldToText(fields["发布目标"])),
     topicId: fieldToText(fields["选题ID"]),
     title: fieldToText(fields["最终标题"] ?? fields["标题"]),
     coverText: fieldToText(fields["封面文案"]),
@@ -403,6 +421,7 @@ export function normalizeReviewMetric(record: FeishuRecord): ReviewMetric {
 
   return {
     noteId: fieldToText(fields["笔记ID"]) || record.record_id,
+    target: parseTarget(fieldToText(fields["发布目标"])),
     title: fieldToText(fields["标题"] ?? fields["笔记标题"]),
     reads,
     likes,
@@ -548,7 +567,6 @@ ${JSON.stringify(card, null, 2)}
 
 请只返回 JSON，不要解释。不要生成封面方案、流程图、架构图或配图方案；这些由独立的图片生成模块处理。格式：
 {
-  "noteId": "NOTE-YYYYMMDD-001",
   "topicId": "选题ID",
   "title": "最终标题",
   "content": "正文",
@@ -721,6 +739,7 @@ export function createFallbackContentCards(
       commentPrompt: "你用 AI 写代码时，更卡在需求描述，还是验收改 bug？",
       estimatedSaveValue: 4,
       status: TOPIC_STATUS.pending,
+      targets: [DEFAULT_TARGET_ID],
       contentLane: "work-situation",
       referencePool: "workflow-system",
       viralTitleStructure: "pain-solved",
@@ -731,12 +750,21 @@ export function createFallbackContentCards(
   });
 }
 
-export function createFallbackDraft(card: ContentCard): DraftNote {
+/**
+ * 笔记ID 带发布目标后缀。一稿多投后同一选题会出多篇草稿，不带后缀会让发布时的复盘 upsert
+ * 互相覆盖（见改造方案 4.4）。date 形如 20260715。
+ */
+export function makeNoteId(date: string, topicId: string, target: string): string {
+  return `NOTE-${date}-${topicId.slice(-3)}-${target}`;
+}
+
+export function createFallbackDraft(card: ContentCard, target: string): DraftNote {
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const title = card.titleCandidates[0] || card.coreViewpoint;
   return {
-    noteId: `NOTE-${today}-${card.topicId.slice(-3)}`,
+    noteId: makeNoteId(today, card.topicId, target),
     topicId: card.topicId,
+    target,
     title,
     coverText: "",
     content: `这次踩坑是：${card.painPoint}\n\n场景：${card.realCase}\n\n我现在会先做三步：\n1. 让 AI 复述需求和边界\n2. 列出影响页面、接口、数据和测试\n3. 再进入代码实现\n\n可复用提示词：写代码前，先列出影响范围和不确定点。\n\n${card.commentPrompt}`,
@@ -926,6 +954,8 @@ export function normalizeGeneratedContentCard(card: Partial<ContentCard>, fallba
     commentPrompt: keepNonMarketingText(commentPrompt, fallback.commentPrompt),
     estimatedSaveValue: unknownToNumber(card.estimatedSaveValue, fallback.estimatedSaveValue),
     status: unknownToText(card.status, fallback.status || TOPIC_STATUS.pending),
+    // targets 由业务决定，不接受 AI 覆盖。
+    targets: fallback.targets,
     selectionScore: unknownToNumber(card.selectionScore, fallback.selectionScore || 0) || undefined,
     selectionReason: unknownToText(card.selectionReason, fallback.selectionReason),
     avoidSimilarTo: unknownToTextList(card.avoidSimilarTo, fallback.avoidSimilarTo || []),
@@ -950,8 +980,12 @@ export function normalizeGeneratedDraft(draft: Partial<DraftNote>, fallback: Dra
   const tags = unknownToTextList(draft.tags, fallback.tags);
 
   const normalized = {
-    noteId: unknownToText(draft.noteId, fallback.noteId),
+    // noteId 与 target 都由业务在生成前确定，不接受 AI 覆盖：noteId 内嵌 target 后缀，是发布时
+    // 复盘 upsert 的匹配键（见 makeNoteId）。一稿多投时同一选题喂给 AI 的 prompt 对每个目标相同，
+    // 若采信 AI 返回的 noteId，多个目标会拿到同一个 id，复盘行互相覆盖——正是本阶段要防的串台。
+    noteId: fallback.noteId,
     topicId: unknownToText(draft.topicId, fallback.topicId),
+    target: fallback.target,
     title: keepNonMarketingText(unknownToText(draft.title, fallback.title), fallback.title),
     coverText: unknownToText(draft.coverText, fallback.coverText),
     content: limitDraftContent(stripMarketingParagraphs(content, fallback.content)),
@@ -1026,6 +1060,7 @@ export function mapContentCardToFeishuFields(card: ContentCard): Record<string, 
     "评论引导": card.commentPrompt,
     "预计收藏价值": card.estimatedSaveValue,
     "状态": card.status || TOPIC_STATUS.pending,
+    "目标清单": serializeTargets(card.targets),
     ...(card.daokuScore ? { "质量分": card.daokuScore } : {}),
     ...(card.daokuHit ? { "命中道": card.daokuHit } : {}),
     ...(card.daokuVerdict ? { "偏爆偏哑": card.daokuVerdict } : {}),
@@ -1071,6 +1106,7 @@ export function mapDraftToFeishuFields(draft: DraftNote): Record<string, unknown
   return appendCoverMetadataFields(appendStrategyMetadataFields({
     "笔记ID": draft.noteId,
     "选题ID": draft.topicId,
+    "发布目标": draft.target,
     "最终标题": draft.title,
     "封面文案": draft.coverText,
     "正文": draft.content,
@@ -1091,6 +1127,7 @@ export function createReviewMetricFromDraft(draft: DraftNote): ReviewMetric {
   return {
     noteId: draft.noteId,
     title: draft.title,
+    target: draft.target,
     reads: 0,
     likes: 0,
     saves: 0,
@@ -1111,5 +1148,6 @@ export function mapReviewMetricToFeishuFields(metric: ReviewMetric): Record<stri
   return appendStrategyMetadataFields({
     "笔记ID": metric.noteId,
     "标题": metric.title,
+    "发布目标": metric.target,
   }, metric);
 }

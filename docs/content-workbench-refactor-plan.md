@@ -308,9 +308,25 @@ VideoPlan 单独建表而不是塞进选题表字段，避免重蹈 `封面配�
 
 纯前端重构，不改数据模型。必须在 2c 之前——否则 6 个目标的分支会全砸进这 1598 行 / 25 个 useState。
 
-#### Phase 2c · 加 target 维度
+#### Phase 2c · 加 target 维度 ✅
 
-实体加 target、飞书加列、笔记ID 加目标后缀（见 4.4）。风险最高。
+实体加 target、飞书加列、笔记ID 加目标后缀（见 4.4）。
+
+- `ContentCard.targets: string[]`（飞书「目标清单」\n 连接）、`DraftNote.target` / `ReviewMetric.target: string`（飞书「发布目标」）。
+- `makeNoteId(date, topicId, target)` = `NOTE-${date}-${topicId后3}-${target}`，集中格式。复盘从草稿继承 target 与 noteId，读写同键。
+- 飞书三列由脚本幂等建好（连同修复 `812f9a1` 遗留的 28 个缺失列——见下「飞书 schema 修复」）。空表，noteId 改格式零迁移。
+- 一稿多投的循环点在 `drafts/route.ts`：现每条选题投 `targets[0]`，Phase 4 改为遍历 `card.targets` 各出一篇，签名已就位。
+
+**类型是 `string` 不是 `TargetId`，与 2a 的 status 同一策略**：飞书可人工编辑，`parseTarget(s)` 只兜「空」不兜「未知」——代码尚未注册的目标（Phase 4 前手填的 `douyin-video`）原样保留，降级会在写回时静默覆盖人填的值。已验证多目标清单含未注册值可写入飞书。
+
+**审计修掉的半成品**：初版把带后缀的 noteId 只接在兜底路径，AI 主路径 `normalizeGeneratedDraft` 仍 `unknownToText(draft.noteId, fallback.noteId)`——AI 返回的无后缀 noteId 覆盖了它，而 `buildDraftPrompt` 还明确让 AI 输出 noteId。这样一稿多投时同选题不同目标喂给 AI 的 prompt 相同 → 返回同一 noteId → 复盘照样串台，2c 的目的在主路径落空。已改为 `noteId: fallback.noteId`（与 `target` 同样「不接受 AI 覆盖」），并从 prompt schema 删掉 noteId。已实证：AI 返回无后缀 id 时两目标仍保留各自带后缀的 noteId。
+
+**留给后续清理（记录以免遗忘）**：
+
+- `covers/route.ts` 的 `assetAspect(DEFAULT_TARGET_ID, "cover")` 硬编缺省目标，忽略了记录实际的 target。今天对（单目标同比例），第二个目标带不同封面比例时会选错。
+- `covers/route.ts` 的 `normalizeDraftFromRecord` 是 `normalizeDraftNote` 的手搓子集，现在是第二个 target 归一点，需手工保持同步——宜合并。
+- `RewriteStudio.tsx` 的 `NOTE-${Date.now()}` 未走 `makeNoteId`（唯一但无后缀；因单条草稿无 fan-out，不串台）。
+- `makeNoteId` 的 `topicId.slice(-3)`：两条不同选题若同日期同目标且尾 3 字符相同仍会撞（既有问题，2c 未引入也未解决）。
 
 #### Phase 2d · 同步 `scripts/*.mjs`
 
@@ -319,6 +335,15 @@ VideoPlan 单独建表而不是塞进选题表字段，避免重蹈 `封面配�
 #### Phase 2e · `lib/xhsWorkflow.ts` → `lib/contentWorkflow.ts`
 
 **故意放最后。** 在内容仍 100% 小红书时改名，等于给文件挂一块比实质大的招牌。
+
+#### 飞书 schema 修复（2c 期间发现并处理）
+
+做 2c 时审计「代码写入的字段 vs 飞书实际列」，发现 **28 个字段代码要写、飞书表里没有**，全部来自 `812f9a1`（搁置三周的 WIP）新增的策略字段与质检字段。实测飞书对未知字段是 **拒绝整条写入**（`FieldNameNotFound`，非忽略），所以 `812f9a1` 之后只要 `writeBack=true`，生成选题/草稿/发布都会失败——它从未对真实飞书跑过，一直没暴露。
+
+- 选题池缺 10、草稿库缺 12、复盘表缺 6。
+- 用幂等脚本补齐（先 dry-run，只建缺的，不碰现有列），全部建「多行文本」/「数字」——**沿用现有约定：枚举值也用文本存**（`偏爆偏哑` 等既有列即如此）。建「单选」会在写入未预设选项时踩同类错误。
+- 加上 2c 的 3 个 target 列，共补 31 列。三表各写一条字段齐全记录并删除，端到端验证通过。
+- 教训：`tsc` 和 `next build` 都发现不了「写入不存在的飞书列」——这类只有真跑写入或对比表结构能抓到。提交 `812f9a1` 时只看了代码，漏了这一层。
 
 ### Phase 3 · 管线参数化
 

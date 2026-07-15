@@ -12,6 +12,7 @@ import {
   type RewriteTarget,
 } from "@/lib/rewriteWorkflow";
 import { DRAFT_STATUS, type ContentCard, type DraftNote } from "@/lib/xhsWorkflow";
+import { DEFAULT_TARGET_ID } from "@/lib/targets";
 
 interface RewriteStudioProps {
   selectedTopic: ContentCard | null;
@@ -65,6 +66,7 @@ export default function RewriteStudio({
     const baseDraft: DraftNote = selectedDraft || {
       noteId: `NOTE-${Date.now().toString(36).toUpperCase()}`,
       topicId: selectedTopic?.topicId || "",
+      target: selectedTopic?.targets[0] ?? DEFAULT_TARGET_ID,
       title: "",
       coverText: selectedTopic?.coverText || "",
       content: "",
