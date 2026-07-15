@@ -108,6 +108,13 @@ function buildSeed(params: {
     commentPrompt: "",
     estimatedSaveValue: 3,
     status: "待写",
+    contentLane: "work-situation",
+    referencePool: "workflow-system",
+    viralTitleStructure: "workflow-reveal",
+    viralBodyStructure: "story-method-asset",
+    hookType: "scene",
+    assetType: "checklist",
+    selectionReason: "来自选题池导入",
     ...(daokuHit ? { daokuHit } : {}),
     ...(daokuVerdict ? { daokuVerdict } : {}),
   };

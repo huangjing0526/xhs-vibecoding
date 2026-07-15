@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import EntityList, { type EntityColumn } from "@/components/workflow/EntityList";
 import CoverStudio from "@/components/workflow/CoverStudio";
@@ -12,8 +12,8 @@ import WorkflowOnboarding from "@/components/workflow/WorkflowOnboarding";
 import BloggerResearch from "@/components/workflow/BloggerResearch";
 import RewriteStudio from "@/components/workflow/RewriteStudio";
 import VideoStudio from "@/components/workflow/VideoStudio";
-import WorkbenchShell, { type WorkbenchAreaId, type WorkbenchArea } from "@/components/workflow/WorkbenchShell";
-import WorkbenchDrawer from "@/components/workflow/WorkbenchDrawer";
+import WorkbenchShell, { type WorkbenchAreaId, type WorkbenchNavGroup } from "@/components/workflow/WorkbenchShell";
+import PageHeader from "@/components/workflow/PageHeader";
 import NoteList from "@/components/workflow/NoteList";
 import NoteEditor from "@/components/workflow/NoteEditor";
 import NoteInspector from "@/components/workflow/NoteInspector";
@@ -76,19 +76,114 @@ import type { VideoPlan } from "@/lib/videoWorkflow";
 // 对标博主道库选项：源自模块常量，全程不变，提到组件外避免每次渲染重建
 const DAOKU_OPTIONS = DEMO_BLOGGER_PROFILES.map((profile) => ({ bloggerId: profile.id, name: profile.name }));
 
-// 顶层三区与右侧抽屉标题：静态，提到组件外
-const AREAS: WorkbenchArea[] = [
-  { id: "workbench", label: "工作台" },
-  { id: "library", label: "素材库" },
-  { id: "review", label: "复盘" },
-];
-const DRAWER_TITLES: Record<"cover" | "video" | "blogger" | "rewrite" | "quality", string> = {
-  cover: "封面与配图",
-  video: "视频方案",
-  blogger: "拆解对标博主",
-  rewrite: "更像爆款",
-  quality: "质检与发布兜底",
+// 每个区的单一事实源（按 id 收敛）：所属分组、侧栏标签 / 副标题、页头副标题。
+// 侧栏导航与页头标题都从这里派生，杜绝「nav 标签 ≠ 页头标题」的漂移。
+type AreaGroup = "内容流程" | "制作工具";
+interface AreaDef {
+  group: AreaGroup;
+  label: string;
+  hint?: string;
+  subtitle: string;
+}
+const AREAS: Record<WorkbenchAreaId, AreaDef> = {
+  workbench: { group: "内容流程", label: "工作台", hint: "写笔记 · 从选题到发布", subtitle: "选一篇笔记，从选题到发布一条龙" },
+  library: { group: "内容流程", label: "素材库", hint: "攒料 · 出选题", subtitle: "攒料、提炼、导入——所有选题的来源。" },
+  review: { group: "内容流程", label: "复盘", hint: "看数据 · 拿建议", subtitle: "已发布笔记的数据表现与改进建议。" },
+  cover: { group: "制作工具", label: "封面与配图", subtitle: "为当前笔记生成封面与内容配图。" },
+  video: { group: "制作工具", label: "视频方案", subtitle: "把笔记转成口播 / 分镜视频脚本。" },
+  rewrite: { group: "制作工具", label: "更像爆款", subtitle: "对标道库改写，贴近爆款结构。" },
+  blogger: { group: "制作工具", label: "对标拆解", subtitle: "拆解对标博主，沉淀可复用的道库。" },
+  quality: { group: "制作工具", label: "质检发布", subtitle: "发布前规则质检与兜底修复。" },
 };
+
+// 侧栏两级导航，从 AREAS 派生：AREA_ORDER 是 Record 键的完整列表，
+// 新增区 id 时类型层会强制补 AREAS，从而保证它一定有导航入口。
+const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "review", "cover", "video", "rewrite", "blogger", "quality"];
+const GROUP_ORDER: AreaGroup[] = ["内容流程", "制作工具"];
+const NAV_GROUPS: WorkbenchNavGroup[] = GROUP_ORDER.map((title) => ({
+  title,
+  items: AREA_ORDER.filter((id) => AREAS[id].group === title).map((id) => ({
+    id,
+    label: AREAS[id].label,
+    hint: AREAS[id].hint,
+  })),
+}));
+
+// 制作工具页统一的滚动容器：居中定宽，与素材库 / 复盘保持一致
+function ToolScroll({ children }: { children: ReactNode }) {
+  return (
+    <div className="h-full overflow-auto">
+      <div className="mx-auto max-w-5xl p-4 md:p-6">{children}</div>
+    </div>
+  );
+}
+
+// 工具页的「当前笔记」上下文条：工具页脱离了三栏，用它提示正在处理哪篇
+function NoteContextBar({ note, onGoWorkbench }: { note: ContentCard | null; onGoWorkbench: () => void }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-[#E5E5EA] bg-white px-3 py-2 text-xs">
+      <span className="shrink-0 font-semibold text-[#8B8983]">当前笔记</span>
+      <span className="truncate font-bold text-[#1D1D1F]">
+        {note ? note.titleCandidates[0] || note.coreViewpoint : "未选择"}
+      </span>
+      <button
+        type="button"
+        onClick={onGoWorkbench}
+        className="ml-auto shrink-0 font-semibold text-[#FF2442] transition-colors hover:text-[#E01E3A]"
+      >
+        切换 →
+      </button>
+    </div>
+  );
+}
+
+// 工具页无笔记时的空态：把用户引回工作台选一篇
+function EmptyNote({ hint, onGoWorkbench }: { hint: string; onGoWorkbench: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-[#D2D2D7] bg-white py-16 text-center">
+      <p className="text-sm text-[#6E6E73]">{hint}</p>
+      <button
+        type="button"
+        onClick={onGoWorkbench}
+        className="rounded-lg bg-[#1D1D1F] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-black"
+      >
+        去工作台选笔记 →
+      </button>
+    </div>
+  );
+}
+
+// 制作工具页统一骨架：滚动容器 + 页头（标题/副标题取自 AREAS）+ 可选「当前笔记」条 + 缺笔记空态。
+// 封面/视频/改写/质检共用它，只各自传入自己的工具组件与就绪条件。
+function ToolPage({
+  area,
+  note,
+  ready = true,
+  emptyHint,
+  onGoWorkbench,
+  children,
+}: {
+  area: WorkbenchAreaId;
+  /** 传入则显示「当前笔记」上下文条；对标拆解这类与具体笔记无关的页不传。 */
+  note?: ContentCard | null;
+  /** false 时显示空态而非 children（缺笔记 / 缺草稿）。 */
+  ready?: boolean;
+  emptyHint?: string;
+  onGoWorkbench: () => void;
+  children: ReactNode;
+}) {
+  const meta = AREAS[area];
+  return (
+    <ToolScroll>
+      <PageHeader
+        title={meta.label}
+        subtitle={meta.subtitle}
+        meta={note !== undefined ? <NoteContextBar note={note} onGoWorkbench={onGoWorkbench} /> : undefined}
+      />
+      {ready ? children : <EmptyNote hint={emptyHint || ""} onGoWorkbench={onGoWorkbench} />}
+    </ToolScroll>
+  );
+}
 
 // 手动新增/编辑弹窗的字段定义：新增与编辑共用同一套
 const MATERIAL_FIELDS: ManualField[] = [
@@ -276,11 +371,13 @@ function mergeRelatedTopics(topics: ContentCard[]): ContentCard[] {
 
 function getUsableTopics(topics: ContentCard[]): ContentCard[] {
   const uniqueTopics = dedupeByKey(topics.filter(hasContentCardContent), (topic) => topic.topicId || topic.recordId || "");
-  return mergeRelatedTopics(uniqueTopics);
+  return mergeRelatedTopics(uniqueTopics).sort((left, right) => (right.selectionScore || 0) - (left.selectionScore || 0));
 }
 
 function getUsableDrafts(drafts: DraftNote[]): DraftNote[] {
-  return dedupeByKey(drafts.filter(hasDraftContent), (draft) => draft.noteId || draft.recordId || "");
+  return dedupeByKey(drafts.filter(hasDraftContent), (draft) => draft.noteId || draft.recordId || "").sort(
+    (left, right) => (right.qualityScoreBeforeWrite || 0) - (left.qualityScoreBeforeWrite || 0)
+  );
 }
 
 function clip(text: string | undefined, maxLength = 92): string {
@@ -439,8 +536,6 @@ export default function WorkflowDashboard() {
   const [review, setReview] = useState<ReviewResult | null>(null);
   // 顶层工作区：内容工作台 / 素材库 / 复盘
   const [area, setArea] = useState<WorkbenchAreaId>("library");
-  // 右侧抽屉里当前打开的重型工具
-  const [drawer, setDrawer] = useState<null | "cover" | "video" | "blogger" | "rewrite" | "quality">(null);
   const [bloggerDistillation, setBloggerDistillation] = useState<BloggerDistillation | null>(null);
   // 每条选题各自绑定的对标博主道库：topicId -> bloggerId（""=不绑定）
   const [topicDaokuMap, setTopicDaokuMap] = useState<Record<string, string>>({});
@@ -1111,7 +1206,7 @@ export default function WorkflowDashboard() {
   return (
     <>
       <WorkbenchShell
-        areas={AREAS}
+        groups={NAV_GROUPS}
         area={area}
         onAreaChange={setArea}
         workflowMode={workflowMode}
@@ -1121,60 +1216,96 @@ export default function WorkflowDashboard() {
         onSync={loadSnapshot}
       >
         {area === "workbench" && (
-          <div className="flex h-full">
-            <div className="hidden w-72 shrink-0 border-r border-[#E5E5EA] md:block">
-              <NoteList
-                notes={usableTopics}
-                drafts={usableDrafts}
-                selectedTopicId={selectedTopic?.topicId ?? null}
-                onSelect={handleSelectNote}
-                onNew={() => setAddingTopic(true)}
-                onGenerateFromMaterials={() => setArea("library")}
+          <div className="flex h-full flex-col">
+            <div className="shrink-0 border-b border-[#E5E5EA] bg-white px-4 py-2.5 md:px-6">
+              <PageHeader
+                variant="bar"
+                title={AREAS.workbench.label}
+                subtitle={
+                  selectedTopic
+                    ? selectedTopic.titleCandidates[0] || selectedTopic.coreViewpoint
+                    : AREAS.workbench.subtitle
+                }
+                action={
+                  <button
+                    type="button"
+                    onClick={() => setAddingTopic(true)}
+                    className="rounded-lg bg-[#1D1D1F] px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-black"
+                  >
+                    + 新建笔记
+                  </button>
+                }
               />
             </div>
-            <div className="min-w-0 flex-1">
-              <NoteEditor
-                selectedTopic={selectedTopic}
-                selectedDraft={selectedDraft}
-                boundDaokuName={boundDaokuName}
-                isGenerating={isGeneratingDrafts}
-                isSaving={isSavingDraft}
-                onGenerateDraft={handleGenerateDraft}
-                onSaveDraft={handleSaveDraft}
-                onOpenRewrite={() => setDrawer("rewrite")}
-              />
-            </div>
-            <div className="hidden w-80 shrink-0 border-l border-[#E5E5EA] lg:block">
-              <NoteInspector
-                topic={selectedTopic}
-                draft={selectedDraft}
-                onEditTopic={() => selectedTopic && handleEditTopic(selectedTopic)}
-                onDeleteTopic={() => selectedTopic && handleDeleteTopic(selectedTopic)}
-                sourceSummary={selectedTopic?.sourceMaterial || ""}
-                onOpenLibrary={() => setArea("library")}
-                daokuOptions={DAOKU_OPTIONS}
-                topicDaokuMap={topicDaokuMap}
-                onBindDaoku={handleBindDaoku}
-                bloggerReady={bloggerReady}
-                onOpenBlogger={() => setDrawer("blogger")}
-                coverDataUrl={coverDataUrl}
-                onOpenCover={() => setDrawer("cover")}
-                videoReady={videoReady}
-                onOpenVideo={() => setDrawer("video")}
-                quality={qualityResult}
-                onOpenQuality={() => setDrawer("quality")}
-                onPublish={() => {
-                  if (selectedDraft) handlePublishDraft(selectedDraft);
-                }}
-                publishing={isPublishingDraft}
-              />
+            <div className="flex min-h-0 flex-1">
+              <div className="hidden w-72 shrink-0 border-r border-[#E5E5EA] md:block">
+                <NoteList
+                  notes={usableTopics}
+                  drafts={usableDrafts}
+                  selectedTopicId={selectedTopic?.topicId ?? null}
+                  onSelect={handleSelectNote}
+                  onNew={() => setAddingTopic(true)}
+                  onGenerateFromMaterials={() => setArea("library")}
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <NoteEditor
+                  selectedTopic={selectedTopic}
+                  selectedDraft={selectedDraft}
+                  boundDaokuName={boundDaokuName}
+                  isGenerating={isGeneratingDrafts}
+                  isSaving={isSavingDraft}
+                  onGenerateDraft={handleGenerateDraft}
+                  onSaveDraft={handleSaveDraft}
+                  onOpenRewrite={() => setArea("rewrite")}
+                />
+              </div>
+              <div className="hidden w-80 shrink-0 border-l border-[#E5E5EA] lg:block">
+                <NoteInspector
+                  topic={selectedTopic}
+                  draft={selectedDraft}
+                  onEditTopic={() => selectedTopic && handleEditTopic(selectedTopic)}
+                  onDeleteTopic={() => selectedTopic && handleDeleteTopic(selectedTopic)}
+                  sourceSummary={selectedTopic?.sourceMaterial || ""}
+                  onOpenLibrary={() => setArea("library")}
+                  daokuOptions={DAOKU_OPTIONS}
+                  topicDaokuMap={topicDaokuMap}
+                  onBindDaoku={handleBindDaoku}
+                  bloggerReady={bloggerReady}
+                  onOpenBlogger={() => setArea("blogger")}
+                  coverDataUrl={coverDataUrl}
+                  onOpenCover={() => setArea("cover")}
+                  videoReady={videoReady}
+                  onOpenVideo={() => setArea("video")}
+                  quality={qualityResult}
+                  onOpenQuality={() => setArea("quality")}
+                  onPublish={() => {
+                    if (selectedDraft) handlePublishDraft(selectedDraft);
+                  }}
+                  publishing={isPublishingDraft}
+                />
+              </div>
             </div>
           </div>
         )}
 
         {area === "library" && (
-          <div className="h-full overflow-auto p-4">
-            <div className="mx-auto max-w-5xl space-y-3">
+          <ToolScroll>
+            <PageHeader
+              title={AREAS.library.label}
+              subtitle={AREAS.library.subtitle}
+              action={
+                <button
+                  type="button"
+                  onClick={handleGenerateTopics}
+                  disabled={isGeneratingTopics || selectedMaterials.length === 0}
+                  className="rounded-lg bg-[#FF2442] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#E01E3A] disabled:cursor-not-allowed disabled:bg-[#E5E5EA] disabled:text-[#A1A1A6]"
+                >
+                  {isGeneratingTopics ? "生成中…" : `生成选题（${selectedMaterials.length}）`}
+                </button>
+              }
+            />
+            <div className="space-y-3">
               <WorkflowOnboarding
                 mode={workflowMode}
                 config={bootstrapConfig}
@@ -1184,30 +1315,30 @@ export default function WorkflowDashboard() {
                 onOpenSource={() => setArea("workbench")}
                 onDismiss={() => setArea("workbench")}
               />
-              <section className="flex flex-col gap-3 border border-[#E5E5EA] bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold text-[#1D1D1F]">从素材生成选题</h3>
-                  <p className="mt-1 text-sm text-[#6E6E73]">
-                    勾选下方素材，一键提炼成选题——每条选题就是一篇新笔记。已选{" "}
+              <details className="group rounded-lg border border-[#E5E5EA] bg-white">
+                <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-[#1D1D1F]">录入与提炼</h3>
+                    <p className="mt-0.5 text-xs text-[#8B8983]">线索采集、选题池导入——展开按需使用</p>
+                  </div>
+                  <span className="text-xs font-semibold text-[#8B8983] transition-transform group-open:rotate-180">
+                    ▾
+                  </span>
+                </summary>
+                <div className="space-y-3 border-t border-[#E5E5EA] p-4">
+                  <p className="text-sm text-[#6E6E73]">
+                    勾选下方素材，点右上「生成选题」即可提炼——每条选题就是一篇新笔记。已选{" "}
                     <span className="font-bold tabular-nums text-[#1D1D1F]">{selectedMaterials.length}</span> 条。
                   </p>
+                  <ClueIntakePanel onClues={handleAddClues} onNotice={setNotice} />
+                  <TopicPoolImportPanel
+                    defaultSourceDir={topicPoolDir}
+                    isFeishuReady={isFeishuReady}
+                    onNotice={setNotice}
+                    onImported={loadSnapshot}
+                  />
                 </div>
-                <button
-                  type="button"
-                  onClick={handleGenerateTopics}
-                  disabled={isGeneratingTopics || selectedMaterials.length === 0}
-                  className="shrink-0 rounded-lg bg-[#FF2442] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#E01E3A] disabled:cursor-not-allowed disabled:bg-[#E5E5EA] disabled:text-[#A1A1A6]"
-                >
-                  {isGeneratingTopics ? "生成中…" : "生成选题"}
-                </button>
-              </section>
-              <ClueIntakePanel onClues={handleAddClues} onNotice={setNotice} />
-              <TopicPoolImportPanel
-                defaultSourceDir={topicPoolDir}
-                isFeishuReady={isFeishuReady}
-                onNotice={setNotice}
-                onImported={loadSnapshot}
-              />
+              </details>
               <SourceWorkspace
                 materials={snapshot.materials}
                 selectedMaterialIds={selectedMaterialIds}
@@ -1224,117 +1355,143 @@ export default function WorkflowDashboard() {
                 onImported={loadSnapshot}
               />
             </div>
-          </div>
+          </ToolScroll>
         )}
 
         {area === "review" && (
-          <div className="h-full overflow-auto p-4">
-            <div className="mx-auto max-w-5xl">
-              <ReviewDashboard
-                metrics={publishedMetrics}
-                review={review}
-                onGenerate={handleGenerateReview}
-                generating={isReviewing}
-              />
-            </div>
-          </div>
+          <ToolScroll>
+            <PageHeader title={AREAS.review.label} subtitle={AREAS.review.subtitle} />
+            <ReviewDashboard
+              metrics={publishedMetrics}
+              review={review}
+              onGenerate={handleGenerateReview}
+              generating={isReviewing}
+            />
+          </ToolScroll>
         )}
-      </WorkbenchShell>
 
-      <WorkbenchDrawer open={drawer !== null} title={drawer ? DRAWER_TITLES[drawer] : ""} onClose={() => setDrawer(null)}>
-        {drawer === "cover" && (
-          <div className="space-y-3">
-            <CoverStudio
-              topics={usableTopics}
-              drafts={usableDrafts}
+        {area === "cover" && (
+          <ToolPage area="cover" note={selectedTopic} onGoWorkbench={() => setArea("workbench")}>
+            <div className="space-y-3">
+              <CoverStudio
+                topics={usableTopics}
+                drafts={usableDrafts}
+                selectedTopic={selectedTopic}
+                selectedDraft={selectedDraft}
+                coverConfig={coverConfig}
+                coverPlan={coverPlan}
+                imageMode={imageMode}
+                contentImageTemplate={contentImageTemplate}
+                contentImagePlan={contentImagePlan}
+                contentImageDataUrl={contentImageDataUrl}
+                isGenerating={isGeneratingCover}
+                isGeneratingContentImage={isGeneratingContentImage}
+                onGenerateCover={handleGenerateCover}
+                onGenerateContentImage={handleGenerateContentImage}
+                onSelectTopic={handleSelectTopic}
+                onSelectDraft={handleSelectDraft}
+                onConfigChange={setCoverConfig}
+                onCoverGenerated={setCoverDataUrl}
+                onImageModeChange={setImageMode}
+                onContentTemplateChange={handleContentTemplateChange}
+                onContentImageGenerated={setContentImageDataUrl}
+              />
+              {(coverDataUrl || contentImageDataUrl) && (
+                <div className="flex flex-wrap gap-2">
+                  {coverDataUrl && (
+                    <button
+                      type="button"
+                      onClick={handleDownloadCover}
+                      className="rounded-lg border border-[#D2D2D7] bg-white px-4 py-2 text-sm font-semibold text-[#1D1D1F] hover:bg-[#F5F5F7]"
+                    >
+                      下载封面
+                    </button>
+                  )}
+                  {contentImageDataUrl && (
+                    <button
+                      type="button"
+                      onClick={handleDownloadContentImage}
+                      className="rounded-lg border border-[#D2D2D7] bg-white px-4 py-2 text-sm font-semibold text-[#1D1D1F] hover:bg-[#F5F5F7]"
+                    >
+                      下载配图
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </ToolPage>
+        )}
+
+        {area === "video" && (
+          <ToolPage
+            area="video"
+            note={selectedTopic}
+            ready={Boolean(selectedTopic || selectedDraft)}
+            emptyHint="做视频前，先在工作台选一篇笔记。"
+            onGoWorkbench={() => setArea("workbench")}
+          >
+            <VideoStudio
               selectedTopic={selectedTopic}
               selectedDraft={selectedDraft}
-              coverConfig={coverConfig}
-              coverPlan={coverPlan}
-              imageMode={imageMode}
-              contentImageTemplate={contentImageTemplate}
-              contentImagePlan={contentImagePlan}
-              contentImageDataUrl={contentImageDataUrl}
-              isGenerating={isGeneratingCover}
-              isGeneratingContentImage={isGeneratingContentImage}
-              onGenerateCover={handleGenerateCover}
-              onGenerateContentImage={handleGenerateContentImage}
-              onSelectTopic={handleSelectTopic}
-              onSelectDraft={handleSelectDraft}
-              onConfigChange={setCoverConfig}
-              onCoverGenerated={setCoverDataUrl}
-              onImageModeChange={setImageMode}
-              onContentTemplateChange={handleContentTemplateChange}
-              onContentImageGenerated={setContentImageDataUrl}
+              bloggerDistillation={bloggerDistillation}
+              onVideoPlanChange={setVideoPlan}
+              imageUrls={[coverDataUrl, contentImageDataUrl].filter(Boolean)}
+              onRenderedChange={setVideoRendered}
             />
-            {(coverDataUrl || contentImageDataUrl) && (
-              <div className="flex flex-wrap gap-2">
-                {coverDataUrl && (
-                  <button
-                    type="button"
-                    onClick={handleDownloadCover}
-                    className="rounded-lg border border-[#D2D2D7] bg-white px-4 py-2 text-sm font-semibold text-[#1D1D1F] hover:bg-[#F5F5F7]"
-                  >
-                    下载封面
-                  </button>
-                )}
-                {contentImageDataUrl && (
-                  <button
-                    type="button"
-                    onClick={handleDownloadContentImage}
-                    className="rounded-lg border border-[#D2D2D7] bg-white px-4 py-2 text-sm font-semibold text-[#1D1D1F] hover:bg-[#F5F5F7]"
-                  >
-                    下载配图
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
+          </ToolPage>
         )}
-        {drawer === "video" && (
-          <VideoStudio
-            selectedTopic={selectedTopic}
-            selectedDraft={selectedDraft}
-            bloggerDistillation={bloggerDistillation}
-            onVideoPlanChange={setVideoPlan}
-            imageUrls={[coverDataUrl, contentImageDataUrl].filter(Boolean)}
-            onRenderedChange={setVideoRendered}
-          />
+
+        {area === "rewrite" && (
+          <ToolPage
+            area="rewrite"
+            note={selectedTopic}
+            ready={Boolean(selectedTopic || selectedDraft)}
+            emptyHint="改写前，先在工作台选一篇笔记。"
+            onGoWorkbench={() => setArea("workbench")}
+          >
+            <RewriteStudio
+              selectedTopic={selectedTopic}
+              selectedDraft={selectedDraft}
+              bloggerDistillation={getDaokuForTopic(selectedTopic)}
+              onApplyToDraft={handleApplyRewriteToDraft}
+            />
+          </ToolPage>
         )}
-        {drawer === "blogger" && (
-          <BloggerResearch
-            selectedDistillation={bloggerDistillation}
-            onDistillationChange={setBloggerDistillation}
-          />
+
+        {area === "blogger" && (
+          <ToolPage area="blogger" onGoWorkbench={() => setArea("workbench")}>
+            <BloggerResearch
+              selectedDistillation={bloggerDistillation}
+              onDistillationChange={setBloggerDistillation}
+            />
+          </ToolPage>
         )}
-        {drawer === "rewrite" && (
-          <RewriteStudio
-            selectedTopic={selectedTopic}
-            selectedDraft={selectedDraft}
-            bloggerDistillation={getDaokuForTopic(selectedTopic)}
-            onApplyToDraft={handleApplyRewriteToDraft}
-          />
+
+        {area === "quality" && (
+          <ToolPage
+            area="quality"
+            note={selectedTopic}
+            ready={Boolean(selectedDraft)}
+            emptyHint="质检需要一篇草稿，先在工作台生成草稿。"
+            onGoWorkbench={() => setArea("workbench")}
+          >
+            <QualityGate
+              result={qualityResult}
+              draft={selectedDraft}
+              onApplyDraftPatch={handlePatchDraft}
+              onResolve={(action) => {
+                if (action === "rewrite") setArea("rewrite");
+                else if (action === "cover") setArea("cover");
+                else if (action === "source") setArea("library");
+              }}
+              onPublish={() => {
+                if (selectedDraft) handlePublishDraft(selectedDraft);
+              }}
+              publishing={isPublishingDraft}
+            />
+          </ToolPage>
         )}
-        {drawer === "quality" && (
-          <QualityGate
-            result={qualityResult}
-            draft={selectedDraft}
-            onApplyDraftPatch={handlePatchDraft}
-            onResolve={(action) => {
-              if (action === "rewrite") setDrawer("rewrite");
-              else if (action === "cover") setDrawer("cover");
-              else if (action === "source") {
-                setDrawer(null);
-                setArea("library");
-              }
-            }}
-            onPublish={() => {
-              if (selectedDraft) handlePublishDraft(selectedDraft);
-            }}
-            publishing={isPublishingDraft}
-          />
-        )}
-      </WorkbenchDrawer>
+      </WorkbenchShell>
 
       <ManualEntryForm
         open={Boolean(editingMaterial)}

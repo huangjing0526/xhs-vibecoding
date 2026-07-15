@@ -12,7 +12,10 @@ import {
   mapDraftToFeishuFields,
   normalizeGeneratedDraft,
   normalizeContentCard,
+  normalizeDraftNote,
 } from "@/lib/xhsWorkflow";
+import { firstThreeLines, hasCollectibleAsset } from "@/lib/contentStrategy";
+import { scoreTopicCards } from "@/lib/topicScoring";
 
 interface DraftsRequest {
   count?: number;
@@ -30,7 +33,11 @@ export async function POST(request: NextRequest) {
     const sourceCards =
       body.cards ||
       filterByStatus((await searchFeishuRecords("topic")).map(normalizeContentCard), status);
-    const cards = filterUsableContentCards(sourceCards).slice(0, count);
+    const recentDrafts = writeBack ? (await searchFeishuRecords("draft")).map(normalizeDraftNote) : [];
+    const cards = scoreTopicCards(filterUsableContentCards(sourceCards), {
+      recentTopics: body.cards ? [] : filterUsableContentCards(sourceCards),
+      recentDrafts,
+    }).slice(0, count);
 
     if (cards.length === 0) {
       return apiBadRequest("没有找到待写选题，请先生成内容卡片");
@@ -50,7 +57,24 @@ export async function POST(request: NextRequest) {
       });
       providers.add(aiResult.provider);
       usedFallback = usedFallback || aiResult.usedFallback;
-      drafts.push(normalizeGeneratedDraft(aiResult.result, { ...fallbackDraft, topicId: card.topicId }));
+      const normalizedDraft = normalizeGeneratedDraft(aiResult.result, { ...fallbackDraft, topicId: card.topicId });
+      drafts.push({
+        ...normalizedDraft,
+        qualityScoreBeforeWrite: card.selectionScore,
+        collectibleAssetPreview:
+          normalizedDraft.collectibleAssetPreview || card.reusableAsset || normalizedDraft.collectibleAssetPreview,
+        openingHookPreview: normalizedDraft.openingHookPreview || firstThreeLines(normalizedDraft.content),
+        similarityRisk:
+          card.avoidSimilarTo?.length && hasCollectibleAsset(normalizedDraft, card)
+            ? normalizedDraft.similarityRisk || "medium"
+            : normalizedDraft.similarityRisk || "low",
+        contentLane: normalizedDraft.contentLane || card.contentLane,
+        referencePool: normalizedDraft.referencePool || card.referencePool,
+        viralTitleStructure: normalizedDraft.viralTitleStructure || card.viralTitleStructure,
+        viralBodyStructure: normalizedDraft.viralBodyStructure || card.viralBodyStructure,
+        hookType: normalizedDraft.hookType || card.hookType,
+        assetType: normalizedDraft.assetType || card.assetType,
+      });
     }
 
     let writeResult: unknown = null;

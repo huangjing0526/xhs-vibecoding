@@ -17,7 +17,9 @@ import {
   normalizeMaterial,
   MaterialItem,
   GlossaryItem,
+  normalizeDraftNote,
 } from "@/lib/xhsWorkflow";
+import { scoreTopicCards } from "@/lib/topicScoring";
 
 interface ContentCardsRequest {
   count?: number;
@@ -76,16 +78,19 @@ export async function POST(request: NextRequest) {
     });
 
     const rawCards = Array.isArray(aiResult.result.cards) ? aiResult.result.cards : fallbackCards;
-    const cards = rawCards
+    const normalizedCards = rawCards
       .slice(0, targetCount)
       .map((card, index) => normalizeGeneratedContentCard(card, fallbackCards[index] || fallbackCards[0]));
+    const recentTopics = writeBack ? (await searchFeishuRecords("topic")).map(normalizeContentCard) : [];
+    const recentDrafts = writeBack ? (await searchFeishuRecords("draft")).map(normalizeDraftNote) : [];
+    const cards = scoreTopicCards(normalizedCards, { recentTopics, recentDrafts });
 
     let writeResult: unknown = null;
     let skippedExisting = 0;
     let updatedExisting = 0;
     let updatedMaterials = 0;
     if (writeBack) {
-      const existingTopics = filterUsableContentCards((await searchFeishuRecords("topic")).map(normalizeContentCard));
+      const existingTopics = filterUsableContentCards(recentTopics);
       const existingTopicIds = new Set(existingTopics.map((topic) => topic.topicId).filter(Boolean));
       const cardsToCreate = cards.filter(
         (card) => !existingTopicIds.has(card.topicId) && !findExistingTopicForCard(card, existingTopics)

@@ -1,4 +1,5 @@
 import { FeishuRecord, fieldToNumber, fieldToText } from "./feishu";
+import { deriveStrategyForCard, firstThreeLines, inferAssetType } from "./contentStrategy";
 
 export interface MaterialItem {
   recordId: string;
@@ -32,6 +33,49 @@ export interface CoverMetadata {
   coverStatus?: string;
 }
 
+export type ContentLane =
+  | "work-situation"
+  | "learning-growth"
+  | "ai-radar"
+  | "cashflow"
+  | "safety-pitfall"
+  | "life-family";
+
+export type ReferencePool =
+  | "trend-radar"
+  | "tool-hands-on"
+  | "workflow-system"
+  | "learning-path";
+
+export type ViralTitleStructure =
+  | "pain-solved"
+  | "before-after"
+  | "ordinary-growth"
+  | "workflow-reveal"
+  | "result-demo"
+  | "curiosity-opportunity";
+
+export type ViralBodyStructure =
+  | "story-method-asset"
+  | "mistake-reframe-action"
+  | "before-after-proof"
+  | "trend-why-now-so-what";
+
+export type HookType = "scene" | "contrast" | "result" | "question" | "awkward-moment";
+
+export type AssetType = "prompt" | "checklist" | "table-fields" | "judgment-questions" | "mini-practice";
+
+export type SimilarityRisk = "low" | "medium" | "high";
+
+export interface StrategyMetadata {
+  contentLane?: ContentLane;
+  referencePool?: ReferencePool;
+  viralTitleStructure?: ViralTitleStructure;
+  viralBodyStructure?: ViralBodyStructure;
+  hookType?: HookType;
+  assetType?: AssetType;
+}
+
 export interface ContentCard extends CoverMetadata {
   recordId?: string;
   topicId: string;
@@ -53,6 +97,16 @@ export interface ContentCard extends CoverMetadata {
   daokuScore?: string;
   daokuHit?: string;
   daokuVerdict?: string;
+  selectionScore?: number;
+  selectionReason?: string;
+  avoidSimilarTo?: string[];
+  isManualPriority?: boolean;
+  contentLane?: ContentLane;
+  referencePool?: ReferencePool;
+  viralTitleStructure?: ViralTitleStructure;
+  viralBodyStructure?: ViralBodyStructure;
+  hookType?: HookType;
+  assetType?: AssetType;
 }
 
 export interface DraftNote extends CoverMetadata {
@@ -66,6 +120,18 @@ export interface DraftNote extends CoverMetadata {
   tags: string[];
   commentPrompt: string;
   status: string;
+  qualityScoreBeforeWrite?: number;
+  qualityScoreAfterReview?: number;
+  qualityIssues?: string[];
+  openingHookPreview?: string;
+  collectibleAssetPreview?: string;
+  similarityRisk?: SimilarityRisk;
+  contentLane?: ContentLane;
+  referencePool?: ReferencePool;
+  viralTitleStructure?: ViralTitleStructure;
+  viralBodyStructure?: ViralBodyStructure;
+  hookType?: HookType;
+  assetType?: AssetType;
 }
 
 export interface ReviewMetric {
@@ -78,6 +144,12 @@ export interface ReviewMetric {
   shares: number;
   interactionRate: number;
   saveRate: number;
+  contentLane?: ContentLane;
+  referencePool?: ReferencePool;
+  viralTitleStructure?: ViralTitleStructure;
+  viralBodyStructure?: ViralBodyStructure;
+  hookType?: HookType;
+  assetType?: AssetType;
 }
 
 /** 复盘的「下次优化」动作，层级与发布前质检维度同构，让复盘建议能直接喂回质检关注点。 */
@@ -174,6 +246,29 @@ function normalizeCoverMetadata(fields: Record<string, unknown>): CoverMetadata 
   };
 }
 
+function splitLineList(text: string): string[] {
+  return text
+    .split(/\n|、/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function toOptionalEnum<T extends string>(value: string): T | undefined {
+  const normalized = value.trim();
+  return normalized ? (normalized as T) : undefined;
+}
+
+function normalizeStrategyMetadata(fields: Record<string, unknown>): StrategyMetadata {
+  return {
+    contentLane: toOptionalEnum<ContentLane>(fieldToText(fields["内容线"])),
+    referencePool: toOptionalEnum<ReferencePool>(fieldToText(fields["参考池"])),
+    viralTitleStructure: toOptionalEnum<ViralTitleStructure>(fieldToText(fields["标题结构"])),
+    viralBodyStructure: toOptionalEnum<ViralBodyStructure>(fieldToText(fields["正文结构类型"])),
+    hookType: toOptionalEnum<HookType>(fieldToText(fields["开头钩子类型"])),
+    assetType: toOptionalEnum<AssetType>(fieldToText(fields["资产类型"])),
+  };
+}
+
 export function hasGeneratedCover(item: CoverMetadata): boolean {
   if (item.coverStatus === "已生成") return true;
   return hasText([item.coverConfigJson || "", item.coverTitle || ""]);
@@ -183,6 +278,7 @@ export function normalizeContentCard(record: FeishuRecord): ContentCard {
   const fields = record.fields || {};
   const titleText = fieldToText(fields["标题候选"]);
   return {
+    ...normalizeStrategyMetadata(fields),
     ...normalizeCoverMetadata(fields),
     recordId: record.record_id,
     topicId: fieldToText(fields["选题ID"]) || record.record_id,
@@ -203,6 +299,10 @@ export function normalizeContentCard(record: FeishuRecord): ContentCard {
     daokuScore: fieldToText(fields["质量分"]),
     daokuHit: fieldToText(fields["命中道"]),
     daokuVerdict: fieldToText(fields["偏爆偏哑"]),
+    selectionScore: fieldToNumber(fields["生成前评分"]) || undefined,
+    selectionReason: fieldToText(fields["选中原因"]),
+    avoidSimilarTo: splitLineList(fieldToText(fields["避免重复主题"])),
+    isManualPriority: fieldToText(fields["是否手动优先"]) === "是",
   };
 }
 
@@ -228,6 +328,7 @@ export function filterUsableContentCards(items: ContentCard[]): ContentCard[] {
 export function normalizeDraftNote(record: FeishuRecord): DraftNote {
   const fields = record.fields || {};
   return {
+    ...normalizeStrategyMetadata(fields),
     ...normalizeCoverMetadata(fields),
     recordId: record.record_id,
     noteId: fieldToText(fields["笔记ID"]) || record.record_id,
@@ -239,6 +340,12 @@ export function normalizeDraftNote(record: FeishuRecord): DraftNote {
     tags: fieldToText(fields["话题标签"]).split(/\s+/).filter(Boolean),
     commentPrompt: fieldToText(fields["评论引导"]),
     status: fieldToText(fields["发布状态"]) || "待发布",
+    qualityScoreBeforeWrite: fieldToNumber(fields["写前评分"]) || undefined,
+    qualityScoreAfterReview: fieldToNumber(fields["审后评分"]) || undefined,
+    qualityIssues: splitLineList(fieldToText(fields["质检问题"])),
+    openingHookPreview: fieldToText(fields["前三行预览"]),
+    collectibleAssetPreview: fieldToText(fields["可收藏资产摘要"]),
+    similarityRisk: toOptionalEnum<SimilarityRisk>(fieldToText(fields["相似风险"])),
   };
 }
 
@@ -280,6 +387,7 @@ export function normalizeReviewMetric(record: FeishuRecord): ReviewMetric {
     shares,
     interactionRate: reads > 0 ? interactions / reads : 0,
     saveRate: reads > 0 ? saves / reads : 0,
+    ...normalizeStrategyMetadata(fields),
   };
 }
 
@@ -354,6 +462,8 @@ export function buildContentCardPrompt(materials: MaterialItem[], glossary: Glos
 8. 禁止使用“点赞收藏评论区扣1”“私发给你”“领取模板”“救你”“效率翻倍”“提效秘诀”“避坑90%”等引流话术。
 9. 可收藏资产要直接描述资产内容，例如“Agent 分工表字段：职责、输入、输出、验收口径”，不要做成诱导领取。
 10. 评论引导只做真实讨论问题，不做私域转化。
+11. 每张卡片都要补齐内容策略字段：内容线、参考池、标题结构、正文结构、开头钩子类型、资产类型。
+12. 标题必须从具体场景、痛点、尴尬、结果或好奇心切入，不能写成内部选题或抽象方法论。
 
 开发日报素材：
 ${compactMaterials(materials)}
@@ -378,7 +488,13 @@ ${compactGlossary(glossary)}
       "coverText": "封面大字，允许换行",
       "outline": ["开头", "案例", "方法", "结尾"],
       "commentPrompt": "二选一评论问题",
-      "estimatedSaveValue": 1
+      "estimatedSaveValue": 1,
+      "contentLane": "work-situation/learning-growth/ai-radar/cashflow/safety-pitfall/life-family",
+      "referencePool": "trend-radar/tool-hands-on/workflow-system/learning-path",
+      "viralTitleStructure": "pain-solved/before-after/ordinary-growth/workflow-reveal/result-demo/curiosity-opportunity",
+      "viralBodyStructure": "story-method-asset/mistake-reframe-action/before-after-proof/trend-why-now-so-what",
+      "hookType": "scene/contrast/result/question/awkward-moment",
+      "assetType": "prompt/checklist/table-fields/judgment-questions/mini-practice"
     }
   ]
 }`;
@@ -399,6 +515,9 @@ export function buildDraftPrompt(card: ContentCard): string {
 9. 写法要克制：少用感叹号、少用煽动式反问，保留真实上下文和可复用步骤。
 10. 不要把个人项目包装成团队成功学案例；素材没有团队背景时，使用“我这次/这个项目/这轮协作”。
 11. 正文必须简明，总字数不超过 200 个中文字符。
+12. 标题必须符合这条选题指定的标题结构，正文必须符合指定的正文结构。
+13. 前 3 行必须出现具体场景、反差或结果。
+14. 正文必须直接给出可收藏资产，不能只说“我整理了一个模板”。
 
 内容卡片：
 ${JSON.stringify(card, null, 2)}
@@ -556,7 +675,7 @@ export function createFallbackContentCards(
       .slice(-8)
       .toUpperCase();
 
-    return {
+    return deriveStrategyForCard({
       topicId: `TOPIC-${today}-${sourceSlug || String(index + 1).padStart(3, "0")}`,
       sourceMaterial: material.sourceId,
       relatedTerm: term,
@@ -578,7 +697,13 @@ export function createFallbackContentCards(
       commentPrompt: "你用 AI 写代码时，更卡在需求描述，还是验收改 bug？",
       estimatedSaveValue: 4,
       status: "待写",
-    };
+      contentLane: "work-situation",
+      referencePool: "workflow-system",
+      viralTitleStructure: "pain-solved",
+      viralBodyStructure: "story-method-asset",
+      hookType: "scene",
+      assetType: "prompt",
+    });
   });
 }
 
@@ -595,6 +720,16 @@ export function createFallbackDraft(card: ContentCard): DraftNote {
     tags: ["#AI编程", "#VibeCoding", "#Claude", "#Cursor", "#产品经理"],
     commentPrompt: card.commentPrompt,
     status: "待发布",
+    qualityScoreBeforeWrite: card.selectionScore,
+    openingHookPreview: firstThreeLines(`这次踩坑是：${card.painPoint}\n\n场景：${card.realCase}`),
+    collectibleAssetPreview: card.reusableAsset,
+    similarityRisk: "low",
+    contentLane: card.contentLane,
+    referencePool: card.referencePool,
+    viralTitleStructure: card.viralTitleStructure,
+    viralBodyStructure: card.viralBodyStructure,
+    hookType: card.hookType,
+    assetType: card.assetType,
   };
 }
 
@@ -751,7 +886,7 @@ export function normalizeGeneratedContentCard(card: Partial<ContentCard>, fallba
   const titleCandidates = unknownToTextList(card.titleCandidates, fallback.titleCandidates);
   const commentPrompt = unknownToText(card.commentPrompt, fallback.commentPrompt);
 
-  return {
+  return deriveStrategyForCard({
     topicId: unknownToText(card.topicId, fallback.topicId),
     sourceMaterial: unknownToText(card.sourceMaterial, fallback.sourceMaterial),
     relatedTerm: unknownToText(card.relatedTerm, fallback.relatedTerm),
@@ -767,20 +902,30 @@ export function normalizeGeneratedContentCard(card: Partial<ContentCard>, fallba
     commentPrompt: keepNonMarketingText(commentPrompt, fallback.commentPrompt),
     estimatedSaveValue: unknownToNumber(card.estimatedSaveValue, fallback.estimatedSaveValue),
     status: unknownToText(card.status, fallback.status || "待写"),
+    selectionScore: unknownToNumber(card.selectionScore, fallback.selectionScore || 0) || undefined,
+    selectionReason: unknownToText(card.selectionReason, fallback.selectionReason),
+    avoidSimilarTo: unknownToTextList(card.avoidSimilarTo, fallback.avoidSimilarTo || []),
+    isManualPriority: unknownToText(card.isManualPriority, fallback.isManualPriority ? "true" : "") === "true",
+    contentLane: toOptionalEnum<ContentLane>(unknownToText(card.contentLane, fallback.contentLane)),
+    referencePool: toOptionalEnum<ReferencePool>(unknownToText(card.referencePool, fallback.referencePool)),
+    viralTitleStructure: toOptionalEnum<ViralTitleStructure>(unknownToText(card.viralTitleStructure, fallback.viralTitleStructure)),
+    viralBodyStructure: toOptionalEnum<ViralBodyStructure>(unknownToText(card.viralBodyStructure, fallback.viralBodyStructure)),
+    hookType: toOptionalEnum<HookType>(unknownToText(card.hookType, fallback.hookType)),
+    assetType: toOptionalEnum<AssetType>(unknownToText(card.assetType, fallback.assetType)),
     coverTitle: unknownToText(card.coverTitle, fallback.coverTitle),
     coverSubtitle: unknownToText(card.coverSubtitle, fallback.coverSubtitle),
     coverStyle: unknownToText(card.coverStyle, fallback.coverStyle),
     coverPrimaryColor: unknownToText(card.coverPrimaryColor, fallback.coverPrimaryColor),
     coverConfigJson: unknownToText(card.coverConfigJson, fallback.coverConfigJson),
     coverStatus: unknownToText(card.coverStatus, fallback.coverStatus),
-  };
+  });
 }
 
 export function normalizeGeneratedDraft(draft: Partial<DraftNote>, fallback: DraftNote): DraftNote {
   const content = unknownToText(draft.content, fallback.content);
   const tags = unknownToTextList(draft.tags, fallback.tags);
 
-  return {
+  const normalized = {
     noteId: unknownToText(draft.noteId, fallback.noteId),
     topicId: unknownToText(draft.topicId, fallback.topicId),
     title: keepNonMarketingText(unknownToText(draft.title, fallback.title), fallback.title),
@@ -790,12 +935,33 @@ export function normalizeGeneratedDraft(draft: Partial<DraftNote>, fallback: Dra
     tags,
     commentPrompt: keepNonMarketingText(unknownToText(draft.commentPrompt, fallback.commentPrompt), fallback.commentPrompt),
     status: unknownToText(draft.status, fallback.status || "待发布"),
+    qualityScoreBeforeWrite: unknownToNumber(draft.qualityScoreBeforeWrite, fallback.qualityScoreBeforeWrite || 0) || undefined,
+    qualityScoreAfterReview: unknownToNumber(draft.qualityScoreAfterReview, fallback.qualityScoreAfterReview || 0) || undefined,
+    qualityIssues: unknownToTextList(draft.qualityIssues, fallback.qualityIssues || []),
+    openingHookPreview: unknownToText(draft.openingHookPreview, fallback.openingHookPreview),
+    collectibleAssetPreview: unknownToText(
+      draft.collectibleAssetPreview,
+      fallback.collectibleAssetPreview || unknownToText(draft.content, "").slice(0, 48)
+    ),
+    similarityRisk: toOptionalEnum<SimilarityRisk>(unknownToText(draft.similarityRisk, fallback.similarityRisk)),
+    contentLane: toOptionalEnum<ContentLane>(unknownToText(draft.contentLane, fallback.contentLane)),
+    referencePool: toOptionalEnum<ReferencePool>(unknownToText(draft.referencePool, fallback.referencePool)),
+    viralTitleStructure: toOptionalEnum<ViralTitleStructure>(unknownToText(draft.viralTitleStructure, fallback.viralTitleStructure)),
+    viralBodyStructure: toOptionalEnum<ViralBodyStructure>(unknownToText(draft.viralBodyStructure, fallback.viralBodyStructure)),
+    hookType: toOptionalEnum<HookType>(unknownToText(draft.hookType, fallback.hookType)),
+    assetType: toOptionalEnum<AssetType>(unknownToText(draft.assetType, fallback.assetType)),
     coverTitle: unknownToText(draft.coverTitle, fallback.coverTitle),
     coverSubtitle: unknownToText(draft.coverSubtitle, fallback.coverSubtitle),
     coverStyle: unknownToText(draft.coverStyle, fallback.coverStyle),
     coverPrimaryColor: unknownToText(draft.coverPrimaryColor, fallback.coverPrimaryColor),
     coverConfigJson: unknownToText(draft.coverConfigJson, fallback.coverConfigJson),
     coverStatus: unknownToText(draft.coverStatus, fallback.coverStatus),
+  };
+
+  return {
+    ...normalized,
+    assetType: normalized.assetType || inferAssetType(normalized.collectibleAssetPreview || normalized.content),
+    openingHookPreview: normalized.openingHookPreview || firstThreeLines(normalized.content),
   };
 }
 
@@ -809,8 +975,18 @@ function appendCoverMetadataFields(fields: Record<string, unknown>, item: CoverM
   return fields;
 }
 
+function appendStrategyMetadataFields(fields: Record<string, unknown>, item: StrategyMetadata): Record<string, unknown> {
+  if (item.contentLane) fields["内容线"] = item.contentLane;
+  if (item.referencePool) fields["参考池"] = item.referencePool;
+  if (item.viralTitleStructure) fields["标题结构"] = item.viralTitleStructure;
+  if (item.viralBodyStructure) fields["正文结构类型"] = item.viralBodyStructure;
+  if (item.hookType) fields["开头钩子类型"] = item.hookType;
+  if (item.assetType) fields["资产类型"] = item.assetType;
+  return fields;
+}
+
 export function mapContentCardToFeishuFields(card: ContentCard): Record<string, unknown> {
-  return appendCoverMetadataFields({
+  return appendCoverMetadataFields(appendStrategyMetadataFields({
     "选题ID": card.topicId,
     "来源素材": card.sourceMaterial,
     "关联术语": card.relatedTerm,
@@ -829,7 +1005,11 @@ export function mapContentCardToFeishuFields(card: ContentCard): Record<string, 
     ...(card.daokuScore ? { "质量分": card.daokuScore } : {}),
     ...(card.daokuHit ? { "命中道": card.daokuHit } : {}),
     ...(card.daokuVerdict ? { "偏爆偏哑": card.daokuVerdict } : {}),
-  }, card);
+    ...(card.selectionScore !== undefined ? { "生成前评分": card.selectionScore } : {}),
+    ...(card.selectionReason ? { "选中原因": card.selectionReason } : {}),
+    ...(card.avoidSimilarTo?.length ? { "避免重复主题": card.avoidSimilarTo.join("\n") } : {}),
+    ...(card.isManualPriority ? { "是否手动优先": "是" } : {}),
+  }, card), card);
 }
 
 export function mapMaterialToFeishuFields(item: MaterialItem): Record<string, unknown> {
@@ -864,7 +1044,7 @@ export function mapGlossaryToFeishuFields(item: GlossaryItem): Record<string, un
 }
 
 export function mapDraftToFeishuFields(draft: DraftNote): Record<string, unknown> {
-  return appendCoverMetadataFields({
+  return appendCoverMetadataFields(appendStrategyMetadataFields({
     "笔记ID": draft.noteId,
     "选题ID": draft.topicId,
     "最终标题": draft.title,
@@ -874,7 +1054,13 @@ export function mapDraftToFeishuFields(draft: DraftNote): Record<string, unknown
     "话题标签": draft.tags.join(" "),
     "评论引导": draft.commentPrompt,
     "发布状态": draft.status || "待发布",
-  }, draft);
+    ...(draft.qualityScoreBeforeWrite !== undefined ? { "写前评分": draft.qualityScoreBeforeWrite } : {}),
+    ...(draft.qualityScoreAfterReview !== undefined ? { "审后评分": draft.qualityScoreAfterReview } : {}),
+    ...(draft.qualityIssues?.length ? { "质检问题": draft.qualityIssues.join("\n") } : {}),
+    ...(draft.openingHookPreview ? { "前三行预览": draft.openingHookPreview } : {}),
+    ...(draft.collectibleAssetPreview ? { "可收藏资产摘要": draft.collectibleAssetPreview } : {}),
+    ...(draft.similarityRisk ? { "相似风险": draft.similarityRisk } : {}),
+  }, draft), draft);
 }
 
 export function createReviewMetricFromDraft(draft: DraftNote): ReviewMetric {
@@ -888,12 +1074,18 @@ export function createReviewMetricFromDraft(draft: DraftNote): ReviewMetric {
     shares: 0,
     interactionRate: 0,
     saveRate: 0,
+    contentLane: draft.contentLane,
+    referencePool: draft.referencePool,
+    viralTitleStructure: draft.viralTitleStructure,
+    viralBodyStructure: draft.viralBodyStructure,
+    hookType: draft.hookType,
+    assetType: draft.assetType,
   };
 }
 
 export function mapReviewMetricToFeishuFields(metric: ReviewMetric): Record<string, unknown> {
-  return {
+  return appendStrategyMetadataFields({
     "笔记ID": metric.noteId,
     "标题": metric.title,
-  };
+  }, metric);
 }

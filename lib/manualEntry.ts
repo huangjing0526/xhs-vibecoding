@@ -93,6 +93,14 @@ export function createManualTopic(input: ManualTopicInput): ContentCard {
     commentPrompt: "",
     estimatedSaveValue: 3,
     status: "待写",
+    contentLane: "work-situation",
+    referencePool: "workflow-system",
+    viralTitleStructure: "pain-solved",
+    viralBodyStructure: "story-method-asset",
+    hookType: "scene",
+    assetType: "checklist",
+    selectionReason: "手动新增选题",
+    isManualPriority: true,
   };
 }
 
@@ -136,5 +144,6 @@ export function createManualDraft(input: ManualDraftInput): DraftNote {
     tags: [],
     commentPrompt: "",
     status: "待发",
+    similarityRisk: "low",
   };
 }

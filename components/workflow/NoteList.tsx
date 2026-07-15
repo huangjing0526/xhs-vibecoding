@@ -38,6 +38,15 @@ function noteTitle(topic: ContentCard): string {
   return topic.titleCandidates[0] || topic.coreViewpoint || "未命名笔记";
 }
 
+function compactMeta(topic: ContentCard): string[] {
+  return [
+    topic.contentLane,
+    topic.referencePool,
+    topic.viralTitleStructure,
+    topic.assetType,
+  ].filter(Boolean) as string[];
+}
+
 export default function NoteList({
   notes,
   drafts,
@@ -142,6 +151,18 @@ export default function NoteList({
                   <span className="truncate text-sm font-semibold text-[#1D1D1F]">{noteTitle(topic)}</span>
                 </div>
                 <p className="mt-1 line-clamp-1 text-xs text-[#6E6E73]">{topic.painPoint || topic.coreViewpoint}</p>
+                {compactMeta(topic).length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {compactMeta(topic).map((item) => (
+                      <span
+                        key={`${topic.topicId}-${item}`}
+                        className="rounded-full bg-[#F5F5F7] px-2 py-0.5 text-[11px] font-semibold text-[#6E6E73]"
+                      >
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </button>
             );
           })

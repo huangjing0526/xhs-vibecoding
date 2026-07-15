@@ -1,3 +1,4 @@
+import { bodyMatchesStructure, countAbstractWords, firstThreeLines, hasCollectibleAsset, titleMatchesStructure } from "./contentStrategy";
 import type { ContentCard, DraftNote } from "./xhsWorkflow";
 
 /**
@@ -11,7 +12,18 @@ import type { ContentCard, DraftNote } from "./xhsWorkflow";
  */
 
 export type QualityVerdict = "pass" | "warn" | "fail";
-export type QualityDimension = "fact" | "hook" | "cover" | "tags" | "cta";
+export type QualityDimension =
+  | "fact"
+  | "hook"
+  | "cover"
+  | "tags"
+  | "cta"
+  | "title-structure"
+  | "body-structure"
+  | "opening"
+  | "asset"
+  | "abstraction"
+  | "similarity";
 /** 修复动作落到哪：跳已有抽屉/页面，或在质检面板内联编辑。 */
 export type QualityFixAction = "rewrite" | "cover" | "source" | "tags" | "cta" | "none";
 
@@ -51,6 +63,12 @@ const DIMENSION_LABEL: Record<QualityDimension, string> = {
   cover: "封面",
   tags: "标签",
   cta: "引导",
+  "title-structure": "标题结构",
+  "body-structure": "正文结构",
+  opening: "开头三行",
+  asset: "可收藏资产",
+  abstraction: "抽象词",
+  similarity: "撞题风险",
 };
 
 /** 私域转化黑名单：评论引导命中即判硬伤（违反「只做真实讨论」原则） */
@@ -263,6 +281,115 @@ function checkCta(draft: DraftNote): QualityIssue {
   return { ...base, verdict: "pass", message: "引导是真实讨论问题。", fixHint: "评论引导检查通过。" };
 }
 
+function checkTitleStructure(draft: DraftNote, topic: ContentCard | null): QualityIssue {
+  const structure = draft.viralTitleStructure || topic?.viralTitleStructure;
+  const base = {
+    dimension: "title-structure" as const,
+    label: DIMENSION_LABEL["title-structure"],
+    fixAction: "rewrite" as const,
+  };
+  if (!structure) {
+    return { ...base, verdict: "warn", message: "还没有指定标题结构。", fixHint: "先给这篇选一个明确的标题结构。" };
+  }
+  if (!titleMatchesStructure(draft.title, structure)) {
+    return {
+      ...base,
+      verdict: "fail",
+      message: `标题没有明显命中已选结构（${structure}）。`,
+      fixHint: "重写标题，让它更明确地体现痛点、前后对比、工作流或结果展示。",
+    };
+  }
+  return { ...base, verdict: "pass", message: "标题与已选结构一致。", fixHint: "标题结构检查通过。" };
+}
+
+function checkBodyStructure(draft: DraftNote, topic: ContentCard | null): QualityIssue {
+  const structure = draft.viralBodyStructure || topic?.viralBodyStructure;
+  const base = {
+    dimension: "body-structure" as const,
+    label: DIMENSION_LABEL["body-structure"],
+    fixAction: "rewrite" as const,
+  };
+  if (!structure) {
+    return { ...base, verdict: "warn", message: "还没有指定正文结构。", fixHint: "先补一条正文结构，再检查是否贴合。" };
+  }
+  if (!bodyMatchesStructure(draft, topic)) {
+    return {
+      ...base,
+      verdict: "fail",
+      message: `正文没有明显体现已选结构（${structure}）。`,
+      fixHint: "重写正文骨架，先把结构步骤写出来，再精简表述。",
+    };
+  }
+  return { ...base, verdict: "pass", message: "正文骨架与已选结构一致。", fixHint: "正文结构检查通过。" };
+}
+
+function checkOpening(draft: DraftNote): QualityIssue {
+  const base = { dimension: "opening" as const, label: DIMENSION_LABEL.opening, fixAction: "rewrite" as const };
+  const opening = firstThreeLines(draft.content);
+  if (!opening) {
+    return { ...base, verdict: "fail", message: "正文开头为空。", fixHint: "前 3 行先写场景、反差或结果。" };
+  }
+  const concreteSignals = /(开会|周报|面试|客户|同事|需求|场景|这次|以前|后来|结果|终于|返工|卡住|做完|下班前|\d)/;
+  if (!concreteSignals.test(opening)) {
+    return {
+      ...base,
+      verdict: "fail",
+      message: "前 3 行不够具体，更像抽象讲道理。",
+      fixHint: "开头直接写一个真实场景、前后对比或可见结果。",
+    };
+  }
+  return { ...base, verdict: "pass", message: "前 3 行有具体场景/反差/结果。", fixHint: "开头检查通过。" };
+}
+
+function checkAsset(draft: DraftNote, topic: ContentCard | null): QualityIssue {
+  const base = { dimension: "asset" as const, label: DIMENSION_LABEL.asset, fixAction: "rewrite" as const };
+  if (!hasCollectibleAsset(draft, topic)) {
+    return {
+      ...base,
+      verdict: "fail",
+      message: "这篇缺少可直接收藏的资产。",
+      fixHint: "补一个提示词、清单、表格字段、判断三问或小练习。",
+    };
+  }
+  return { ...base, verdict: "pass", message: "正文里有可收藏资产。", fixHint: "资产检查通过。" };
+}
+
+function checkAbstraction(draft: DraftNote): QualityIssue {
+  const base = { dimension: "abstraction" as const, label: DIMENSION_LABEL.abstraction, fixAction: "rewrite" as const };
+  const count = countAbstractWords(`${draft.title} ${draft.coverText}`);
+  if (count > 2) {
+    return {
+      ...base,
+      verdict: "warn",
+      message: `标题和封面里抽象词偏多（${count} 个）。`,
+      fixHint: "把“能力、方法、系统、流程”换成更具体的场景或结果。",
+    };
+  }
+  return { ...base, verdict: "pass", message: "标题和封面抽象词控制正常。", fixHint: "抽象词检查通过。" };
+}
+
+function checkSimilarity(draft: DraftNote, topic: ContentCard | null): QualityIssue {
+  const base = { dimension: "similarity" as const, label: DIMENSION_LABEL.similarity, fixAction: "rewrite" as const };
+  const risk = draft.similarityRisk || (topic?.avoidSimilarTo?.length ? "medium" : undefined);
+  if (risk === "high") {
+    return {
+      ...base,
+      verdict: "fail",
+      message: "这篇和近期题目撞得太近。",
+      fixHint: "换角度、换场景，或直接换题。",
+    };
+  }
+  if (risk === "medium") {
+    return {
+      ...base,
+      verdict: "warn",
+      message: "这篇和近期内容有一定相似风险。",
+      fixHint: "检查是否只是同一方法论的重写，尽量补新场景和新资产。",
+    };
+  }
+  return { ...base, verdict: "pass", message: "未见明显撞题风险。", fixHint: "相似度检查通过。" };
+}
+
 export function runQualityCheck(input: QualityCheckInput): QualityCheckResult {
   const { draft, topic, coverReady } = input;
 
@@ -282,6 +409,12 @@ export function runQualityCheck(input: QualityCheckInput): QualityCheckResult {
   const issues: QualityIssue[] = [
     checkFact(draft, topic),
     checkHook(draft),
+    checkTitleStructure(draft, topic),
+    checkBodyStructure(draft, topic),
+    checkOpening(draft),
+    checkAsset(draft, topic),
+    checkAbstraction(draft),
+    checkSimilarity(draft, topic),
     checkCover(draft, coverReady),
     checkTags(draft),
     checkCta(draft),
@@ -316,13 +449,13 @@ export function summarizeQuality(result: QualityCheckResult | null, hasDraft: bo
     return { tone: "muted", shortLabel: "待生成", summary: "先生成草稿，再做发布前质检。" };
   }
   if (result.passed) {
-    return { tone: "ok", shortLabel: "已通过", summary: "5 项发布前检查全部通过，可以发布。" };
+    return { tone: "ok", shortLabel: "已通过", summary: `${result.issues.length} 项发布前检查全部通过，可以发布。` };
   }
   if (result.hardFail) {
     return {
       tone: "fail",
       shortLabel: `${result.failCount} 项硬伤`,
-      summary: `事实一致 / 钩子 / 封面 / 标签 / 引导中有 ${result.failCount} 项不过，处理后才能发布。`,
+      summary: `当前 ${result.issues.length} 项检查里有 ${result.failCount} 项不过，处理后才能发布。`,
     };
   }
   return {

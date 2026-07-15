@@ -37,6 +37,20 @@ function truncate(text: string, maxLength = 90): string {
   return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
 }
 
+function strategyItems(topic: ContentCard, draft: DraftNote | null): Array<{ label: string; value: string }> {
+  const source = draft || topic;
+  return [
+    { label: "内容线", value: source.contentLane || "" },
+    { label: "参考池", value: source.referencePool || "" },
+    { label: "标题结构", value: source.viralTitleStructure || "" },
+    { label: "正文结构", value: source.viralBodyStructure || "" },
+    { label: "开头钩子", value: source.hookType || "" },
+    { label: "资产类型", value: source.assetType || "" },
+    { label: "生成前评分", value: topic.selectionScore !== undefined ? String(topic.selectionScore) : "" },
+    { label: "相似风险", value: draft?.similarityRisk || "" },
+  ].filter((item) => item.value);
+}
+
 function Section({
   title,
   status,
@@ -133,6 +147,21 @@ export default function NoteInspector({
 
       <Section title="素材" action={<LinkButton label="去素材库" onClick={onOpenLibrary} />}>
         <p className="text-xs leading-5 text-[#6E6E73]">{sourceSummary ? truncate(sourceSummary, 120) : "未关联素材"}</p>
+      </Section>
+
+      <Section title="策略">
+        {strategyItems(topic, draft).length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {strategyItems(topic, draft).map((item) => (
+              <div key={item.label} className="rounded-md bg-[#F5F5F7] px-2.5 py-1">
+                <div className="text-[11px] font-bold text-[#A1A1A6]">{item.label}</div>
+                <div className="mt-0.5 text-xs font-semibold text-[#1D1D1F]">{item.value}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-[#A1A1A6]">这篇还没有策略字段，可在飞书表补齐后同步。</p>
+        )}
       </Section>
 
       <Section
