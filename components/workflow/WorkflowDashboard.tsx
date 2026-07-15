@@ -16,6 +16,7 @@ import NoteList from "@/components/workflow/NoteList";
 import NoteEditor from "@/components/workflow/NoteEditor";
 import NoteInspector from "@/components/workflow/NoteInspector";
 import QualityGate from "@/components/workflow/QualityGate";
+import WatermarkStudio from "@/components/workflow/WatermarkStudio";
 import {
   getUsableDrafts,
   getUsableTopics,
@@ -101,11 +102,12 @@ const AREAS: Record<WorkbenchAreaId, AreaDef> = {
   rewrite: { group: "制作工具", label: "更像爆款", subtitle: "对标道库改写，贴近爆款结构。" },
   blogger: { group: "制作工具", label: "对标拆解", subtitle: "拆解对标博主，沉淀可复用的道库。" },
   quality: { group: "制作工具", label: "质检发布", subtitle: "发布前规则质检与兜底修复。" },
+  watermark: { group: "制作工具", label: "视频去水印", subtitle: "去掉 AI 生成视频的水印（豆包 / Gemini 等）。" },
 };
 
 // 侧栏两级导航，从 AREAS 派生：AREA_ORDER 是 Record 键的完整列表，
 // 新增区 id 时类型层会强制补 AREAS，从而保证它一定有导航入口。
-const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "review", "cover", "video", "rewrite", "blogger", "quality"];
+const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "review", "cover", "video", "rewrite", "blogger", "quality", "watermark"];
 const GROUP_ORDER: AreaGroup[] = ["内容流程", "制作工具"];
 const NAV_GROUPS: WorkbenchNavGroup[] = GROUP_ORDER.map((title) => ({
   title,
@@ -1196,6 +1198,12 @@ export default function WorkflowDashboard() {
               selectedDistillation={bloggerDistillation}
               onDistillationChange={setBloggerDistillation}
             />
+          </ToolPage>
+        )}
+
+        {area === "watermark" && (
+          <ToolPage area="watermark" onGoWorkbench={() => setArea("workbench")}>
+            <WatermarkStudio />
           </ToolPage>
         )}
 

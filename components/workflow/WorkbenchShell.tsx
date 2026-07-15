@@ -13,7 +13,8 @@ export type WorkbenchAreaId =
   | "video"
   | "rewrite"
   | "blogger"
-  | "quality";
+  | "quality"
+  | "watermark";
 
 export interface WorkbenchNavItem {
   id: WorkbenchAreaId;

@@ -56,6 +56,12 @@ const PATHS: Record<WorkbenchAreaId, ReactElement> = {
       <path d="m9 12 2 2 4-4" />
     </>
   ),
+  watermark: (
+    <>
+      <path d="M12 3c2.5 3.5 5 6 5 9.5a5 5 0 1 1-10 0C7 9 9.5 6.5 12 3z" />
+      <line x1="4" y1="20" x2="20" y2="4" />
+    </>
+  ),
 };
 
 export default function NavIcon({ id, size = 17 }: NavIconProps) {
