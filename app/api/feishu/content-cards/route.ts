@@ -18,6 +18,7 @@ import {
   MaterialItem,
   GlossaryItem,
   normalizeDraftNote,
+  MATERIAL_STATUS,
 } from "@/lib/xhsWorkflow";
 import { scoreTopicCards } from "@/lib/topicScoring";
 
@@ -53,7 +54,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await readJsonBody<ContentCardsRequest>(request, "contentCards.readJson");
     const count = body.count || 5;
-    const status = body.status || "待提炼";
+    const status = body.status || MATERIAL_STATUS.pending;
     const writeBack = body.writeBack !== false;
 
     const sourceMaterials =
@@ -129,7 +130,9 @@ export async function POST(request: NextRequest) {
       for (const material of materials) {
         if (!material.recordId || updatedMaterialRecordIds.has(material.recordId)) continue;
         updatedMaterialRecordIds.add(material.recordId);
-        materialUpdateResults.push(await updateFeishuRecord("material", material.recordId, { "状态": "已提炼" }));
+        materialUpdateResults.push(
+          await updateFeishuRecord("material", material.recordId, { "状态": MATERIAL_STATUS.extracted })
+        );
       }
       updatedMaterials = materialUpdateResults.length;
       writeResult = { created: createResult, updated: updateResults, materials: materialUpdateResults };

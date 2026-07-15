@@ -1,4 +1,11 @@
-import type { ContentCard, DraftNote, MaterialItem } from "./xhsWorkflow";
+import {
+  DRAFT_STATUS,
+  MATERIAL_STATUS,
+  TOPIC_STATUS,
+  type ContentCard,
+  type DraftNote,
+  type MaterialItem,
+} from "./xhsWorkflow";
 
 /**
  * 手动新增工厂：每一步都允许用户手动建一条，而不是必须从飞书/本地文档/上游自动生成导入。
@@ -43,7 +50,7 @@ export function createManualMaterial(input: ManualMaterialInput): MaterialItem {
     pitfall: input.pitfall?.trim() || "",
     method: input.method.trim(),
     relatedTerm: input.relatedTerm?.trim() || "",
-    status: "待提炼",
+    status: MATERIAL_STATUS.pending,
   };
 }
 
@@ -92,7 +99,7 @@ export function createManualTopic(input: ManualTopicInput): ContentCard {
     outline: [],
     commentPrompt: "",
     estimatedSaveValue: 3,
-    status: "待写",
+    status: TOPIC_STATUS.pending,
     contentLane: "work-situation",
     referencePool: "workflow-system",
     viralTitleStructure: "pain-solved",
@@ -143,7 +150,7 @@ export function createManualDraft(input: ManualDraftInput): DraftNote {
     imageSuggestions: input.imageSuggestions?.trim() || "",
     tags: [],
     commentPrompt: "",
-    status: "待发",
+    status: DRAFT_STATUS.pending,
     similarityRisk: "low",
   };
 }

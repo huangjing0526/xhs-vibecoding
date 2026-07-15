@@ -7,11 +7,16 @@
  *   node scripts/daoku/gen-write.mjs draft    <file.json> [--dry-run]
  *
  * 输入 JSON：数组 [{fields:{...飞书列名...}}]，或 {records:[...]} 包一层。
- * 字段列名以 lib/xhsWorkflow.ts 的 mapXxxToFeishuFields 为单一来源，由 Claude 生成时对齐。
+ * 字段列名与状态值均以 lib/xhsWorkflow.ts 为单一来源（mapXxxToFeishuFields / MATERIAL_STATUS
+ * 等常量），由 Claude 生成时对齐。本脚本是 .mjs 且要能脱离 dev server 独立跑，引不了那边的
+ * TS 常量，因此这里的对应字面量必须手工同步——改动那些常量时一并搜这个目录。
  * 去重键：material=素材ID / topic=内容签名(标题+痛点+资产+来源) / draft=笔记ID。
  */
 import { readFileSync } from "node:fs";
 import { searchRecords, createRecords, updateRecord, fieldToText } from "./_feishu.mjs";
+
+/** 对应 lib/xhsWorkflow.ts 的 MATERIAL_STATUS.extracted。 */
+const MATERIAL_STATUS_EXTRACTED = "已提炼";
 
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
@@ -110,8 +115,9 @@ if (table === "topic" && markMaterials) {
   let marked = 0;
   for (const m of materials) {
     const sid = norm(fieldToText(m.fields?.["素材ID"]));
-    if (sid && usedSourceIds.has(sid) && fieldToText(m.fields?.["状态"]) !== "已提炼") {
-      await updateRecord("material", m.record_id, { 状态: "已提炼" });
+    // "已提炼" 必须等于 lib/xhsWorkflow.ts 的 MATERIAL_STATUS.extracted，见文件头。
+    if (sid && usedSourceIds.has(sid) && fieldToText(m.fields?.["状态"]) !== MATERIAL_STATUS_EXTRACTED) {
+      await updateRecord("material", m.record_id, { 状态: MATERIAL_STATUS_EXTRACTED });
       marked++;
     }
   }

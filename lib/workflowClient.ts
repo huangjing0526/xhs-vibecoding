@@ -6,13 +6,15 @@ import type {
   ImageAssetKind,
   ImageWorkflowSourceInput,
 } from "@/lib/imageWorkflow";
-import type {
-  ContentCard,
-  DraftNote,
-  GlossaryItem,
-  MaterialItem,
-  ReviewMetric,
-  ReviewResult,
+import {
+  MATERIAL_STATUS,
+  TOPIC_STATUS,
+  type ContentCard,
+  type DraftNote,
+  type GlossaryItem,
+  type MaterialItem,
+  type ReviewMetric,
+  type ReviewResult,
 } from "@/lib/xhsWorkflow";
 import type { LocalDocCategory, LocalDocFileSummary } from "@/lib/localDocs";
 import type { ExtractedClue } from "@/lib/clueIntake";
@@ -221,7 +223,7 @@ export async function generateContentCards(options?: {
       method: "POST",
       body: JSON.stringify({
         count: options?.count ?? 3,
-        status: options?.status ?? "待提炼",
+        status: options?.status ?? MATERIAL_STATUS.pending,
         writeBack: options?.writeBack ?? true,
         materials: options?.materials,
         glossary: options?.glossary,
@@ -243,7 +245,7 @@ export async function generateDrafts(options?: {
       method: "POST",
       body: JSON.stringify({
         count: options?.count ?? 1,
-        status: options?.status ?? "待写",
+        status: options?.status ?? TOPIC_STATUS.pending,
         writeBack: options?.writeBack ?? true,
         cards: options?.cards,
       }),

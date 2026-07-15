@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { readdir, readFile, stat } from "fs/promises";
 import path from "path";
-import type { GlossaryItem, MaterialItem } from "@/lib/xhsWorkflow";
+import { MATERIAL_STATUS, type GlossaryItem, type MaterialItem } from "@/lib/xhsWorkflow";
 
 export type LocalDocCategory = "daily" | "issues" | "glossary" | "standards";
 
@@ -128,7 +128,7 @@ function makeMaterial(params: {
     pitfall: params.pitfall || "",
     method: params.method || "",
     relatedTerm: params.relatedTerm || "",
-    status: "待提炼",
+    status: MATERIAL_STATUS.pending,
   };
 }
 

@@ -11,7 +11,7 @@ import {
   type RewriteResult,
   type RewriteTarget,
 } from "@/lib/rewriteWorkflow";
-import type { ContentCard, DraftNote } from "@/lib/xhsWorkflow";
+import { DRAFT_STATUS, type ContentCard, type DraftNote } from "@/lib/xhsWorkflow";
 
 interface RewriteStudioProps {
   selectedTopic: ContentCard | null;
@@ -71,7 +71,7 @@ export default function RewriteStudio({
       imageSuggestions: selectedTopic?.reusableAsset || "",
       tags: [],
       commentPrompt: selectedTopic?.commentPrompt || "",
-      status: "待发布",
+      status: DRAFT_STATUS.pending,
     };
 
     onApplyToDraft({

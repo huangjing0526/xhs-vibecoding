@@ -7,6 +7,7 @@ import {
   mapDraftToFeishuFields,
   mapReviewMetricToFeishuFields,
   normalizeReviewMetric,
+  DRAFT_STATUS,
 } from "@/lib/xhsWorkflow";
 
 interface PublishDraftRequest {
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
       return apiBadRequest("缺少草稿内容");
     }
 
-    const publishedDraft: DraftNote = { ...draft, status: "已发布" };
+    const publishedDraft: DraftNote = { ...draft, status: DRAFT_STATUS.published };
     const reviewMetric = createReviewMetricFromDraft(publishedDraft);
     let draftWriteResult: unknown = null;
     let reviewWriteResult: unknown = null;

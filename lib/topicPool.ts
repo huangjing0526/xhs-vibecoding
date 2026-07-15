@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { readFile } from "fs/promises";
 import path from "path";
-import type { ContentCard } from "@/lib/xhsWorkflow";
+import { TOPIC_STATUS, type ContentCard } from "@/lib/xhsWorkflow";
 
 /**
  * 选题池对接：把个人内容库 `选题池.md` 里「待发酵 / 可启动」分区的提炼选题，
@@ -107,7 +107,7 @@ function buildSeed(params: {
     outline: [],
     commentPrompt: "",
     estimatedSaveValue: 3,
-    status: "待写",
+    status: TOPIC_STATUS.pending,
     contentLane: "work-situation",
     referencePool: "workflow-system",
     viralTitleStructure: "workflow-reveal",

@@ -52,6 +52,8 @@ import {
   type DraftNote,
   type MaterialItem,
   type ReviewResult,
+  MATERIAL_STATUS,
+  TOPIC_STATUS,
 } from "@/lib/xhsWorkflow";
 import {
   generateContentCards,
@@ -333,7 +335,7 @@ function mergeTopicGroup(topics: ContentCard[]): ContentCard {
     outline: outlines.length > 0 ? outlines : primary.outline,
     commentPrompt: primary.commentPrompt || topics.find((topic) => topic.commentPrompt)?.commentPrompt || "",
     estimatedSaveValue: Math.max(...topics.map((topic) => topic.estimatedSaveValue || 0), primary.estimatedSaveValue || 3),
-    status: topics.some((topic) => topic.status === "待写") ? "待写" : primary.status,
+    status: topics.some((topic) => topic.status === TOPIC_STATUS.pending) ? TOPIC_STATUS.pending : primary.status,
   };
 }
 
@@ -419,8 +421,8 @@ function SourceWorkspace({
   onImported,
 }: SourceWorkspaceProps) {
   const [materialFilter, setMaterialFilter] = useState<MaterialViewFilter>("all");
-  const pendingMaterials = materials.filter((item) => item.status === "待提炼");
-  const processedMaterials = materials.filter((item) => item.status !== "待提炼");
+  const pendingMaterials = materials.filter((item) => item.status === MATERIAL_STATUS.pending);
+  const processedMaterials = materials.filter((item) => item.status !== MATERIAL_STATUS.pending);
   const visibleMaterials =
     materialFilter === "pending"
       ? pendingMaterials
@@ -569,7 +571,7 @@ export default function WorkflowDashboard() {
   const [addingTopic, setAddingTopic] = useState(false);
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("demo");
   const [bootstrapConfig, setBootstrapConfig] = useState<WorkflowBootstrapResult["config"] | null>(null);
-  const hasPendingMaterials = snapshot.materials.some((item) => item.status === "待提炼");
+  const hasPendingMaterials = snapshot.materials.some((item) => item.status === MATERIAL_STATUS.pending);
   const isFeishuReady = workflowMode === "connected" && Boolean(bootstrapConfig?.feishuReady);
   const localDocsSourceDir = bootstrapConfig?.localDocsSourceDir || "";
   const topicPoolDir = bootstrapConfig?.topicPoolDir || "";
@@ -718,7 +720,7 @@ export default function WorkflowDashboard() {
   const handleSelectPendingMaterials = useCallback(() => {
     setSelectedMaterialIds(
       snapshot.materials
-        .filter((item) => item.status === "待提炼")
+        .filter((item) => item.status === MATERIAL_STATUS.pending)
         .slice(0, 6)
         .map((item) => item.recordId)
     );
@@ -919,7 +921,7 @@ export default function WorkflowDashboard() {
       const shouldWriteBack = workflowMode === "connected";
       const result = await generateContentCards({
         count: selectedMaterials.length,
-        status: "待提炼",
+        status: MATERIAL_STATUS.pending,
         writeBack: shouldWriteBack,
         materials: selectedMaterials,
         glossary: snapshot.glossary,
@@ -950,10 +952,10 @@ export default function WorkflowDashboard() {
     setNotice({ type: "info", message: "正在生成小红书草稿" });
     try {
       const shouldWriteBack = workflowMode === "connected";
-      const fallbackCard = usableTopics.find((topic) => topic.status === "待写") || usableTopics[0];
+      const fallbackCard = usableTopics.find((topic) => topic.status === TOPIC_STATUS.pending) || usableTopics[0];
       const result = await generateDrafts({
         count: 1,
-        status: "待写",
+        status: TOPIC_STATUS.pending,
         writeBack: shouldWriteBack,
         cards: selectedTopic ? [selectedTopic] : fallbackCard ? [fallbackCard] : undefined,
       });

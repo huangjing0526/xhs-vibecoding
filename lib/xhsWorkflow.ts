@@ -1,6 +1,30 @@
 import { FeishuRecord, fieldToNumber, fieldToText } from "./feishu";
 import { deriveStrategyForCard, firstThreeLines, inferAssetType } from "./contentStrategy";
 
+/**
+ * 各实体 status 字段的规范值。
+ *
+ * 类型仍是 string 而非这些常量的联合：飞书表可由人直接编辑，读到的值不受代码约束，
+ * 收成封闭类型就得对未知值回落或断言——前者会静默改写人填的数据，后者是类型撒谎。
+ * 这里只保证代码自己写入与比较时用同一份值。
+ *
+ * 注意与 NoteList 的 NoteStatus 区分：那个是由「选题 + 草稿」算出来的 UI 概念，
+ * 取值（待写/待发/已发）不是任何实体的持久化字段。
+ */
+export const MATERIAL_STATUS = {
+  pending: "待提炼",
+  extracted: "已提炼",
+} as const;
+
+export const TOPIC_STATUS = {
+  pending: "待写",
+} as const;
+
+export const DRAFT_STATUS = {
+  pending: "待发布",
+  published: "已发布",
+} as const;
+
 export interface MaterialItem {
   recordId: string;
   sourceId: string;
@@ -295,7 +319,7 @@ export function normalizeContentCard(record: FeishuRecord): ContentCard {
     outline: fieldToText(fields["正文结构"]).split(/\n/).map((item) => item.trim()).filter(Boolean),
     commentPrompt: fieldToText(fields["评论引导"]),
     estimatedSaveValue: fieldToNumber(fields["预计收藏价值"]) || 3,
-    status: fieldToText(fields["状态"]) || "待写",
+    status: fieldToText(fields["状态"]) || TOPIC_STATUS.pending,
     daokuScore: fieldToText(fields["质量分"]),
     daokuHit: fieldToText(fields["命中道"]),
     daokuVerdict: fieldToText(fields["偏爆偏哑"]),
@@ -339,7 +363,7 @@ export function normalizeDraftNote(record: FeishuRecord): DraftNote {
     imageSuggestions: fieldToText(fields["配图建议"]),
     tags: fieldToText(fields["话题标签"]).split(/\s+/).filter(Boolean),
     commentPrompt: fieldToText(fields["评论引导"]),
-    status: fieldToText(fields["发布状态"]) || "待发布",
+    status: fieldToText(fields["发布状态"]) || DRAFT_STATUS.pending,
     qualityScoreBeforeWrite: fieldToNumber(fields["写前评分"]) || undefined,
     qualityScoreAfterReview: fieldToNumber(fields["审后评分"]) || undefined,
     qualityIssues: splitLineList(fieldToText(fields["质检问题"])),
@@ -365,7 +389,7 @@ export function filterUsableDrafts(items: DraftNote[]): DraftNote[] {
 }
 
 export function isPublishedDraft(item: DraftNote): boolean {
-  return item.status === "已发布";
+  return item.status === DRAFT_STATUS.published;
 }
 
 export function normalizeReviewMetric(record: FeishuRecord): ReviewMetric {
@@ -696,7 +720,7 @@ export function createFallbackContentCards(
       ],
       commentPrompt: "你用 AI 写代码时，更卡在需求描述，还是验收改 bug？",
       estimatedSaveValue: 4,
-      status: "待写",
+      status: TOPIC_STATUS.pending,
       contentLane: "work-situation",
       referencePool: "workflow-system",
       viralTitleStructure: "pain-solved",
@@ -719,7 +743,7 @@ export function createFallbackDraft(card: ContentCard): DraftNote {
     imageSuggestions: "",
     tags: ["#AI编程", "#VibeCoding", "#Claude", "#Cursor", "#产品经理"],
     commentPrompt: card.commentPrompt,
-    status: "待发布",
+    status: DRAFT_STATUS.pending,
     qualityScoreBeforeWrite: card.selectionScore,
     openingHookPreview: firstThreeLines(`这次踩坑是：${card.painPoint}\n\n场景：${card.realCase}`),
     collectibleAssetPreview: card.reusableAsset,
@@ -901,7 +925,7 @@ export function normalizeGeneratedContentCard(card: Partial<ContentCard>, fallba
     outline: unknownToTextList(card.outline, fallback.outline),
     commentPrompt: keepNonMarketingText(commentPrompt, fallback.commentPrompt),
     estimatedSaveValue: unknownToNumber(card.estimatedSaveValue, fallback.estimatedSaveValue),
-    status: unknownToText(card.status, fallback.status || "待写"),
+    status: unknownToText(card.status, fallback.status || TOPIC_STATUS.pending),
     selectionScore: unknownToNumber(card.selectionScore, fallback.selectionScore || 0) || undefined,
     selectionReason: unknownToText(card.selectionReason, fallback.selectionReason),
     avoidSimilarTo: unknownToTextList(card.avoidSimilarTo, fallback.avoidSimilarTo || []),
@@ -934,7 +958,7 @@ export function normalizeGeneratedDraft(draft: Partial<DraftNote>, fallback: Dra
     imageSuggestions: unknownToText(draft.imageSuggestions, fallback.imageSuggestions),
     tags,
     commentPrompt: keepNonMarketingText(unknownToText(draft.commentPrompt, fallback.commentPrompt), fallback.commentPrompt),
-    status: unknownToText(draft.status, fallback.status || "待发布"),
+    status: unknownToText(draft.status, fallback.status || DRAFT_STATUS.pending),
     qualityScoreBeforeWrite: unknownToNumber(draft.qualityScoreBeforeWrite, fallback.qualityScoreBeforeWrite || 0) || undefined,
     qualityScoreAfterReview: unknownToNumber(draft.qualityScoreAfterReview, fallback.qualityScoreAfterReview || 0) || undefined,
     qualityIssues: unknownToTextList(draft.qualityIssues, fallback.qualityIssues || []),
@@ -1001,7 +1025,7 @@ export function mapContentCardToFeishuFields(card: ContentCard): Record<string, 
     "正文结构": card.outline.join("\n"),
     "评论引导": card.commentPrompt,
     "预计收藏价值": card.estimatedSaveValue,
-    "状态": card.status || "待写",
+    "状态": card.status || TOPIC_STATUS.pending,
     ...(card.daokuScore ? { "质量分": card.daokuScore } : {}),
     ...(card.daokuHit ? { "命中道": card.daokuHit } : {}),
     ...(card.daokuVerdict ? { "偏爆偏哑": card.daokuVerdict } : {}),
@@ -1021,7 +1045,7 @@ export function mapMaterialToFeishuFields(item: MaterialItem): Record<string, un
     "踩坑点": item.pitfall,
     "可复用方法": item.method,
     "关联术语": item.relatedTerm,
-    "状态": item.status || "待提炼",
+    "状态": item.status || MATERIAL_STATUS.pending,
   };
 
   const dateValue = dateTextToFeishuTimestamp(item.date);
@@ -1053,7 +1077,7 @@ export function mapDraftToFeishuFields(draft: DraftNote): Record<string, unknown
     "配图建议": draft.imageSuggestions,
     "话题标签": draft.tags.join(" "),
     "评论引导": draft.commentPrompt,
-    "发布状态": draft.status || "待发布",
+    "发布状态": draft.status || DRAFT_STATUS.pending,
     ...(draft.qualityScoreBeforeWrite !== undefined ? { "写前评分": draft.qualityScoreBeforeWrite } : {}),
     ...(draft.qualityScoreAfterReview !== undefined ? { "审后评分": draft.qualityScoreAfterReview } : {}),
     ...(draft.qualityIssues?.length ? { "质检问题": draft.qualityIssues.join("\n") } : {}),

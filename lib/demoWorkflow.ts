@@ -1,3 +1,4 @@
+import { DRAFT_STATUS, MATERIAL_STATUS, TOPIC_STATUS } from "@/lib/xhsWorkflow";
 import type { WorkflowSnapshot } from "@/lib/workflowClient";
 
 export const DEMO_SELECTED_MATERIAL_IDS = [
@@ -18,7 +19,7 @@ export const DEMO_SNAPSHOT: WorkflowSnapshot = {
       pitfall: "AI 容易只看当前文件，忽略租户、权限、字段显隐这些业务约束。",
       method: "开工前先让 Agent 输出影响范围清单：页面、接口、数据表、权限、测试点。",
       relatedTerm: "Agent 协作",
-      status: "待提炼",
+      status: MATERIAL_STATUS.pending,
     },
     {
       recordId: "demo-material-02",
@@ -30,7 +31,7 @@ export const DEMO_SNAPSHOT: WorkflowSnapshot = {
       pitfall: "只记录结果，不记录决策原因，下一轮协作很难接上。",
       method: "Handoff 固定写当前状态、已验证命令、未完成风险、下一步动作。",
       relatedTerm: "Handoff",
-      status: "待提炼",
+      status: MATERIAL_STATUS.pending,
     },
     {
       recordId: "demo-material-03",
@@ -42,7 +43,7 @@ export const DEMO_SNAPSHOT: WorkflowSnapshot = {
       pitfall: "只看代码 diff 不看真实页面，容易漏掉布局溢出和状态跳动。",
       method: "固定跑 tsc、lint/build，再用浏览器检查首屏、滚动、关键按钮状态。",
       relatedTerm: "验证闭环",
-      status: "待提炼",
+      status: MATERIAL_STATUS.pending,
     },
     {
       recordId: "demo-material-04",
@@ -54,7 +55,7 @@ export const DEMO_SNAPSHOT: WorkflowSnapshot = {
       pitfall: "只调颜色，不调信息层级，封面会像普通截图。",
       method: "先选情绪方向，再锁定主标题、副标题、色块比例和留白。",
       relatedTerm: "封面配方",
-      status: "待提炼",
+      status: MATERIAL_STATUS.pending,
     },
     {
       recordId: "demo-material-05",
@@ -66,7 +67,7 @@ export const DEMO_SNAPSHOT: WorkflowSnapshot = {
       pitfall: "只看阅读量，不看收藏率和评论断点，会误判内容价值。",
       method: "用阅读量看点击，用收藏率看价值，用评论看表达是否清楚。",
       relatedTerm: "数据回流",
-      status: "待提炼",
+      status: MATERIAL_STATUS.pending,
     },
   ],
   glossary: [
@@ -118,7 +119,7 @@ export const DEMO_SNAPSHOT: WorkflowSnapshot = {
       outline: ["常见误区", "真实踩坑", "Agent 分工", "可复用清单", "评论互动"],
       commentPrompt: "你用 AI 写代码时，更卡在需求描述，还是验收改 bug？",
       estimatedSaveValue: 5,
-      status: "待写",
+      status: TOPIC_STATUS.pending,
     },
     {
       topicId: "DEMO-TOPIC-VALIDATION",
@@ -139,7 +140,7 @@ export const DEMO_SNAPSHOT: WorkflowSnapshot = {
       outline: ["为什么只看 diff 不够", "四步验证", "常见漏点", "可复制模板"],
       commentPrompt: "你最常漏掉构建检查，还是浏览器预览？",
       estimatedSaveValue: 4,
-      status: "待写",
+      status: TOPIC_STATUS.pending,
     },
   ],
   drafts: [
@@ -153,7 +154,7 @@ export const DEMO_SNAPSHOT: WorkflowSnapshot = {
       imageSuggestions: "首图放大字；第二张放 5 问清单；第三张放 Agent 分工示意。",
       tags: ["#AI编程", "#VibeCoding", "#Agent", "#Cursor", "#产品经理"],
       commentPrompt: "你用 AI 写代码时，更卡在需求描述，还是验收改 bug？",
-      status: "待发布",
+      status: DRAFT_STATUS.pending,
     },
   ],
   metrics: [
@@ -226,7 +227,7 @@ export function createMarkdownDemoSnapshot(markdown: string): WorkflowSnapshot {
         pitfall: "内容里有真实经历，但还没有提炼成明确读者痛点。",
         method: "把经历改成：场景、卡点、做法、可收藏清单、评论问题。",
         relatedTerm: "AI Coding 复盘",
-        status: "待提炼",
+        status: MATERIAL_STATUS.pending,
       },
     ],
     glossary: DEMO_SNAPSHOT.glossary,
@@ -250,7 +251,7 @@ export function createMarkdownDemoSnapshot(markdown: string): WorkflowSnapshot {
         outline: ["用一句话说痛点", "讲真实场景", "拆解做法", "给可收藏清单", "抛出评论问题"],
         commentPrompt: "你写 AI 实践笔记时，更卡在标题，还是正文结构？",
         estimatedSaveValue: 4,
-        status: "待写",
+        status: TOPIC_STATUS.pending,
       },
     ],
     drafts: [
@@ -263,7 +264,7 @@ export function createMarkdownDemoSnapshot(markdown: string): WorkflowSnapshot {
         imageSuggestions: "首图放封面大字；第二张放 5 段结构；第三张放可收藏清单。",
         tags: ["#AI编程", "#VibeCoding", "#小红书运营", "#内容复盘"],
         commentPrompt: "你写 AI 实践笔记时，更卡在标题，还是正文结构？",
-        status: "待发布",
+        status: DRAFT_STATUS.pending,
       },
     ],
     metrics: DEMO_SNAPSHOT.metrics,

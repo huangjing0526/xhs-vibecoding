@@ -13,6 +13,7 @@ import {
   normalizeGeneratedDraft,
   normalizeContentCard,
   normalizeDraftNote,
+  TOPIC_STATUS,
 } from "@/lib/xhsWorkflow";
 import { firstThreeLines, hasCollectibleAsset } from "@/lib/contentStrategy";
 import { scoreTopicCards } from "@/lib/topicScoring";
@@ -28,7 +29,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await readJsonBody<DraftsRequest>(request, "drafts.readJson");
     const count = body.count || 3;
-    const status = body.status || "待写";
+    const status = body.status || TOPIC_STATUS.pending;
     const writeBack = body.writeBack !== false;
     const sourceCards =
       body.cards ||

@@ -200,7 +200,7 @@ interface PublishTarget {
 - `lib/qualityCheck.ts:75` 的引流黑名单含 `公众号`——跨平台敌意规则，per-target 黑名单是必需品不是优化。
 - `estimatedSaveValue` / `saveRate` / `可收藏资产` / `AssetType` / `checkAsset` 整条链路围绕「收藏」设计，是小红书专属，需降级进 `xhs-post` 档案。
 - `interactionRate = (likes+saves+comments+shares)/reads`（`xhsWorkflow.ts:378`）假设五个指标都存在，需由档案声明可用指标。
-- `status: string` 无枚举，~30 处字面量比较，已有 bug：`lib/manualEntry.ts:146` 写 `待发`，其余写 `待发布`。
+- ~~`status: string` 无枚举，字面量散落各处，已有 bug：`lib/manualEntry.ts:146` 写 `待发`，其余写 `待发布`~~ → **已收口**（Phase 2a）：42 处字面量收进 `MATERIAL_STATUS` / `TOPIC_STATUS` / `DRAFT_STATUS`，bug 已修。类型仍是 `string`，理由见 Phase 2a。
 - `components/workflow/WorkflowDashboard.tsx` 1598 行 / 25 个 useState，是所有状态的持有者。不先拆，6 个目标的分支会全砸进这一个文件。
 - `lib/topicPool.ts` / `lib/localDocs.ts` 用 `fs`/`path`，在 Cloudflare Workers 上跑不了，而 `wrangler.toml` 指向 Workers。**此矛盾现已存在，本次改造不涉及**。
 - `searchFeishuRecords` 的 `filter` 参数从未被使用，每次读全表。
@@ -290,13 +290,35 @@ VideoPlan 单独建表而不是塞进选题表字段，避免重蹈 `封面配�
 
 ### Phase 2 · 加目标维度
 
-最重的一步之一。
+最重的一步之一，拆成 5 小步，每步可独立提交、独立验证。
 
-- `lib/xhsWorkflow.ts` → `lib/contentWorkflow.ts`，实体加 target
-- `status` 收枚举，修 `manualEntry.ts:146` 的 bug
-- 飞书加列，笔记ID 加后缀
-- 同步 `scripts/*.mjs` 四份硬编码
-- **拆 `WorkflowDashboard.tsx` 状态**
+#### Phase 2a · status 收口 ✅
+
+42 处字面量（11 个文件）→ `MATERIAL_STATUS` / `TOPIC_STATUS` / `DRAFT_STATUS`（`lib/xhsWorkflow.ts`）。修掉 `manualEntry.ts:146` 写 `待发` 的 bug——手工建的草稿从此不会被 `sync?status=待发布` 漏掉。
+
+**类型仍是 `string`，不收成封闭联合。** 飞书表可由人直接编辑，`normalize*` 读到的值不受代码约束。更根本的是 `DraftNote` 一个类型服务两个方向：`normalizeDraftNote` 从人填的单元格构造它（必须接受任意字符串），`mapDraftToFeishuFields` 消费它写回（才需要封闭）。不把 5 个实体各拆成读/写变体就封不了写侧——为静态防住三个 `createManual*` 工厂里的一类笔误，代价不成比例。常量只保证代码自己写入与比较时用同一份值。
+
+`TOPIC_STATUS` 只有一个成员是诚实的：代码只做 material→`已提炼`、draft→`已发布` 两种流转，从不把选题移出 `待写`。这反映状态机的真实空缺，不是常量写漏。
+
+有意保留的字面量（不是漏网）：`topicPool.ts:22` 是 markdown 章节关键词、`NoteList.tsx` 的 `NoteStatus` 是 UI 派生概念、`WorkflowDashboard:481` 与 `NoteInspector:226` 是展示文案。
+
+`scripts/daoku/gen-write.mjs` 无法引 TS 常量（.mjs，且要能脱离 dev server 独立跑），已就地建常量并在文件头写明手工同步义务。
+
+#### Phase 2b · 拆 `WorkflowDashboard.tsx` 状态
+
+纯前端重构，不改数据模型。必须在 2c 之前——否则 6 个目标的分支会全砸进这 1598 行 / 25 个 useState。
+
+#### Phase 2c · 加 target 维度
+
+实体加 target、飞书加列、笔记ID 加目标后缀（见 4.4）。风险最高。
+
+#### Phase 2d · 同步 `scripts/*.mjs`
+
+依赖 2c 定下的字段名。
+
+#### Phase 2e · `lib/xhsWorkflow.ts` → `lib/contentWorkflow.ts`
+
+**故意放最后。** 在内容仍 100% 小红书时改名，等于给文件挂一块比实质大的招牌。
 
 ### Phase 3 · 管线参数化
 
