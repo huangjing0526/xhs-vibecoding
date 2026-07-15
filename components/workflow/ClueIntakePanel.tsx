@@ -3,12 +3,11 @@
 import { useState } from "react";
 import { extractClues } from "@/lib/workflowClient";
 import type { ExtractedClue } from "@/lib/clueIntake";
-
-type NoticeType = "success" | "error" | "info";
+import type { Notice } from "./types";
 
 interface ClueIntakePanelProps {
   onClues: (candidates: ExtractedClue[], sourceLabel: string) => void;
-  onNotice: (notice: { type: NoticeType; message: string }) => void;
+  onNotice: (notice: Notice) => void;
 }
 
 const URL_PATTERN = /^https?:\/\/\S+$/i;

@@ -2,9 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import EntityList, { type EntityColumn } from "@/components/workflow/EntityList";
 import CoverStudio from "@/components/workflow/CoverStudio";
-import LocalDocsSyncPanel from "@/components/workflow/LocalDocsSyncPanel";
 import TopicPoolImportPanel from "@/components/workflow/TopicPoolImportPanel";
 import ClueIntakePanel from "@/components/workflow/ClueIntakePanel";
 import ReviewDashboard from "@/components/workflow/ReviewDashboard";
@@ -18,6 +16,13 @@ import NoteList from "@/components/workflow/NoteList";
 import NoteEditor from "@/components/workflow/NoteEditor";
 import NoteInspector from "@/components/workflow/NoteInspector";
 import QualityGate from "@/components/workflow/QualityGate";
+import {
+  getUsableDrafts,
+  getUsableTopics,
+  isSameDraft,
+  isSameTopic,
+  mergeByKey,
+} from "@/lib/snapshotMerge";
 import { runQualityCheck } from "@/lib/qualityCheck";
 import ManualEntryForm, { type ManualField } from "@/components/workflow/ManualEntryForm";
 import {
@@ -45,8 +50,6 @@ import {
 } from "@/lib/imageWorkflow";
 import { createMarkdownDemoSnapshot, DEMO_SELECTED_MATERIAL_IDS, DEMO_SNAPSHOT } from "@/lib/demoWorkflow";
 import {
-  hasContentCardContent,
-  hasDraftContent,
   isPublishedDraft,
   type ContentCard,
   type DraftNote,
@@ -74,6 +77,8 @@ import {
   type WorkflowSnapshot,
 } from "@/lib/workflowClient";
 import type { VideoPlan } from "@/lib/videoWorkflow";
+import SourceWorkspace from "./SourceWorkspace";
+import type { Notice } from "./types";
 
 // 对标博主道库选项：源自模块常量，全程不变，提到组件外避免每次渲染重建
 const DAOKU_OPTIONS = DEMO_BLOGGER_PROFILES.map((profile) => ({ bloggerId: profile.id, name: profile.name }));
@@ -212,13 +217,6 @@ const EMPTY_SNAPSHOT: WorkflowSnapshot = {
   metrics: [],
 };
 
-type NoticeType = "success" | "error" | "info";
-
-interface Notice {
-  type: NoticeType;
-  message: string;
-}
-
 function topicToCoverInput(topic: ContentCard) {
   return {
     topicId: topic.topicId,
@@ -231,6 +229,11 @@ function topicToCoverInput(topic: ContentCard) {
   };
 }
 
+/**
+ * 与 lib/coverWorkflow.ts 的同名函数**映射不同**：这里把 imageSuggestions 塞进 reusableAsset，
+ * 那边放进 imageSuggestions。而 pickStyle 读的正是 reusableAsset，两者会选出不同的封面风格
+ * （coverWorkflow 的 isImageSuggestion 防御就是为这个映射准备的）。合并前先确认要哪种行为。
+ */
 function draftToCoverInput(draft: DraftNote) {
   return {
     noteId: draft.noteId,
@@ -253,278 +256,6 @@ function applyCoverMetadata<T extends ContentCard | DraftNote>(item: T, plan: Co
     coverStatus: "已生成",
   };
 }
-
-function isSameDraft(left: DraftNote, right: DraftNote): boolean {
-  return Boolean(
-    (left.noteId && left.noteId === right.noteId) ||
-      (left.recordId && right.recordId && left.recordId === right.recordId)
-  );
-}
-
-function isSameTopic(left: ContentCard, right: ContentCard): boolean {
-  return Boolean(
-    (left.topicId && left.topicId === right.topicId) ||
-      (left.recordId && right.recordId && left.recordId === right.recordId)
-  );
-}
-
-function mergeByKey<T>(current: T[], incoming: T[], getKey: (item: T) => string): T[] {
-  const next = new Map(current.map((item) => [getKey(item), item]));
-  incoming.forEach((item) => next.set(getKey(item), item));
-  return Array.from(next.values());
-}
-
-function dedupeByKey<T>(items: T[], getKey: (item: T) => string): T[] {
-  const map = new Map<string, T>();
-  items.forEach((item) => {
-    const key = getKey(item);
-    if (key) map.set(key, item);
-  });
-  return Array.from(map.values());
-}
-
-function normalizeMergeText(text: string): string {
-  return text.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function getTopicMergeKey(topic: ContentCard): string {
-  const title = topic.titleCandidates[0] || topic.coreViewpoint;
-  return [
-    normalizeMergeText(title),
-    normalizeMergeText(topic.painPoint),
-    normalizeMergeText(topic.targetReader),
-  ].join("|");
-}
-
-function splitMultiValue(text: string): string[] {
-  return text
-    .split(/\n|\/|、|，/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function uniqueValues(values: string[]): string[] {
-  return Array.from(new Set(values.map((item) => item.trim()).filter(Boolean)));
-}
-
-function joinMergedText(values: string[]): string {
-  return uniqueValues(values).join("\n");
-}
-
-function joinMergedTerms(values: string[]): string {
-  return uniqueValues(values.flatMap(splitMultiValue)).join(" / ");
-}
-
-function mergeTopicGroup(topics: ContentCard[]): ContentCard {
-  const [primary] = topics;
-  const titleCandidates = uniqueValues(topics.flatMap((topic) => topic.titleCandidates));
-  const sourceMaterials = topics.map((topic) => topic.sourceMaterial);
-  const realCases = topics.map((topic) => topic.realCase);
-  const reusableAssets = topics.map((topic) => topic.reusableAsset);
-  const outlines = uniqueValues(topics.flatMap((topic) => topic.outline));
-
-  return {
-    ...primary,
-    recordId: topics.length === 1 ? primary.recordId : undefined,
-    sourceMaterial: joinMergedText(sourceMaterials),
-    relatedTerm: joinMergedTerms(topics.map((topic) => topic.relatedTerm)),
-    realCase: joinMergedText(realCases),
-    reusableAsset: joinMergedText(reusableAssets),
-    titleCandidates,
-    coverText: primary.coverText || topics.find((topic) => topic.coverText)?.coverText || "",
-    outline: outlines.length > 0 ? outlines : primary.outline,
-    commentPrompt: primary.commentPrompt || topics.find((topic) => topic.commentPrompt)?.commentPrompt || "",
-    estimatedSaveValue: Math.max(...topics.map((topic) => topic.estimatedSaveValue || 0), primary.estimatedSaveValue || 3),
-    status: topics.some((topic) => topic.status === TOPIC_STATUS.pending) ? TOPIC_STATUS.pending : primary.status,
-  };
-}
-
-function hasSharedTopicSource(topics: ContentCard[], topic: ContentCard): boolean {
-  const currentSources = splitMultiValue(topic.sourceMaterial);
-  if (currentSources.length === 0) return false;
-
-  const existingSources = new Set(topics.flatMap((item) => splitMultiValue(item.sourceMaterial)));
-  return currentSources.some((source) => existingSources.has(source));
-}
-
-function hasSharedRealCase(topics: ContentCard[], topic: ContentCard): boolean {
-  const currentCase = normalizeMergeText(topic.realCase);
-  return Boolean(currentCase && topics.some((item) => normalizeMergeText(item.realCase) === currentCase));
-}
-
-function canMergeTopicIntoGroup(topics: ContentCard[], topic: ContentCard): boolean {
-  const [primary] = topics;
-  if (!primary || getTopicMergeKey(primary) !== getTopicMergeKey(topic)) return false;
-
-  return hasSharedTopicSource(topics, topic) || hasSharedRealCase(topics, topic);
-}
-
-function mergeRelatedTopics(topics: ContentCard[]): ContentCard[] {
-  const groups: ContentCard[][] = [];
-
-  topics.forEach((topic) => {
-    const existingGroup = groups.find((group) => canMergeTopicIntoGroup(group, topic));
-    if (existingGroup) existingGroup.push(topic);
-    else groups.push([topic]);
-  });
-
-  return groups.map(mergeTopicGroup);
-}
-
-function getUsableTopics(topics: ContentCard[]): ContentCard[] {
-  const uniqueTopics = dedupeByKey(topics.filter(hasContentCardContent), (topic) => topic.topicId || topic.recordId || "");
-  return mergeRelatedTopics(uniqueTopics).sort((left, right) => (right.selectionScore || 0) - (left.selectionScore || 0));
-}
-
-function getUsableDrafts(drafts: DraftNote[]): DraftNote[] {
-  return dedupeByKey(drafts.filter(hasDraftContent), (draft) => draft.noteId || draft.recordId || "").sort(
-    (left, right) => (right.qualityScoreBeforeWrite || 0) - (left.qualityScoreBeforeWrite || 0)
-  );
-}
-
-function clip(text: string | undefined, maxLength = 92): string {
-  if (!text) return "未填写";
-  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
-}
-
-interface SourceWorkspaceProps {
-  materials: WorkflowSnapshot["materials"];
-  selectedMaterialIds: string[];
-  localDocsSourceDir: string;
-  isFeishuReady: boolean;
-  onToggleMaterial: (materialId: string) => void;
-  onSelectPendingMaterials: () => void;
-  onClearSelectedMaterials: () => void;
-  onAdd: () => void;
-  onEditMaterial: (item: MaterialItem) => void;
-  onDeleteMaterial: (materialId: string) => void;
-  onBatchDeleteMaterials: (materialIds: string[]) => void;
-  onNotice: (notice: Notice) => void;
-  onImported: () => Promise<void>;
-}
-
-type MaterialViewFilter = "all" | "pending" | "processed";
-
-function SourceWorkspace({
-  materials,
-  selectedMaterialIds,
-  localDocsSourceDir,
-  isFeishuReady,
-  onToggleMaterial,
-  onSelectPendingMaterials,
-  onClearSelectedMaterials,
-  onAdd,
-  onEditMaterial,
-  onDeleteMaterial,
-  onBatchDeleteMaterials,
-  onNotice,
-  onImported,
-}: SourceWorkspaceProps) {
-  const [materialFilter, setMaterialFilter] = useState<MaterialViewFilter>("all");
-  const pendingMaterials = materials.filter((item) => item.status === MATERIAL_STATUS.pending);
-  const processedMaterials = materials.filter((item) => item.status !== MATERIAL_STATUS.pending);
-  const visibleMaterials =
-    materialFilter === "pending"
-      ? pendingMaterials
-      : materialFilter === "processed"
-        ? processedMaterials
-        : materials;
-
-  const materialColumns: EntityColumn<MaterialItem>[] = [
-    {
-      key: "source",
-      label: "来源",
-      width: "140px",
-      render: (item) => (
-        <div className="min-w-0">
-          <div className="text-xs font-bold text-stone-400">{item.sourceId}</div>
-          <div className="mt-1.5 inline-flex bg-stone-100 px-2 py-0.5 text-xs font-semibold text-stone-600">
-            {item.status || "素材"}
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: "event",
-      label: "核心事件",
-      render: (item) => (
-        <div className="text-sm font-black leading-6 text-stone-950">{clip(item.event || item.summary, 82)}</div>
-      ),
-    },
-    {
-      key: "method",
-      label: "可复用方法",
-      render: (item) => (
-        <div className="text-sm font-semibold leading-6 text-stone-600">{clip(item.method || item.pitfall, 92)}</div>
-      ),
-    },
-  ];
-
-  return (
-    <div className="space-y-3">
-      <LocalDocsSyncPanel
-        defaultSourceDir={localDocsSourceDir}
-        isFeishuReady={isFeishuReady}
-        onNotice={onNotice}
-        onImported={onImported}
-      />
-
-      <EntityList
-        items={visibleMaterials}
-        getRowId={(item) => item.recordId}
-        columns={materialColumns}
-        selectedIds={selectedMaterialIds}
-        onToggleRow={onToggleMaterial}
-        onRowClick={(item) => onToggleMaterial(item.recordId)}
-        filters={[
-          { id: "all", label: "全部", count: materials.length },
-          { id: "pending", label: "待提炼", count: pendingMaterials.length },
-          { id: "processed", label: "已处理", count: processedMaterials.length },
-        ]}
-        activeFilter={materialFilter}
-        onFilterChange={(id) => setMaterialFilter(id as MaterialViewFilter)}
-        onEdit={onEditMaterial}
-        onDelete={(item) => onDeleteMaterial(item.recordId)}
-        deleteConfirm={(item) => {
-          const label = clip(item.event || item.summary, 40);
-          return isFeishuReady
-            ? `确定永久删除这条素材吗？\n「${label}」\n会从飞书素材表彻底删除，不可恢复。`
-            : `确定移除这条素材吗？\n「${label}」`;
-        }}
-        onBatchDelete={onBatchDeleteMaterials}
-        batchDeleteConfirm={(count) =>
-          isFeishuReady
-            ? `确定永久删除选中的 ${count} 条素材吗？会从飞书素材表彻底删除，不可恢复。`
-            : `确定移除选中的 ${count} 条素材吗？`
-        }
-        emptyText="当前筛选下暂无素材"
-        onAdd={onAdd}
-        addLabel="+ 新增素材"
-        toolbarExtra={
-          <>
-            <button
-              type="button"
-              onClick={onSelectPendingMaterials}
-              disabled={pendingMaterials.length === 0}
-              className="border border-stone-300 bg-white px-3 py-1.5 text-sm font-black text-stone-700 transition-colors hover:border-stone-950 hover:text-stone-950 disabled:cursor-not-allowed disabled:border-stone-200 disabled:text-stone-300"
-            >
-              选前 6 条
-            </button>
-            <button
-              type="button"
-              onClick={onClearSelectedMaterials}
-              disabled={selectedMaterialIds.length === 0}
-              className="border border-stone-300 bg-white px-3 py-1.5 text-sm font-black text-stone-600 transition-colors hover:border-rose-600 hover:text-rose-600 disabled:cursor-not-allowed disabled:border-stone-200 disabled:text-stone-300"
-            >
-              清空
-            </button>
-          </>
-        }
-      />
-    </div>
-  );
-}
-
 
 export default function WorkflowDashboard() {
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot>(EMPTY_SNAPSHOT);
@@ -691,7 +422,6 @@ export default function WorkflowDashboard() {
     setContentImagePlan(null);
     setContentImageDataUrl("");
   }, []);
-
 
   const handleBindDaoku = useCallback((topicId: string, bloggerId: string) => {
     setTopicDaokuMap((current) => ({ ...current, [topicId]: bloggerId }));

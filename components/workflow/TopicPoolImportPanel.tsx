@@ -2,13 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { importTopicPool, type TopicPoolImportResult } from "@/lib/workflowClient";
-
-type NoticeType = "success" | "error" | "info";
+import type { Notice } from "./types";
 
 interface TopicPoolImportPanelProps {
   defaultSourceDir?: string;
   isFeishuReady: boolean;
-  onNotice: (notice: { type: NoticeType; message: string }) => void;
+  onNotice: (notice: Notice) => void;
   onImported: () => Promise<void>;
 }
 

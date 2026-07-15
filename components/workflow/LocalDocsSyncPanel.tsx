@@ -3,13 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { LocalDocCategory } from "@/lib/localDocs";
 import { scanLocalDocs, syncLocalDocs, type LocalDocsScanResult, type LocalDocsSyncResult } from "@/lib/workflowClient";
-
-type NoticeType = "success" | "error" | "info";
+import type { Notice } from "./types";
 
 interface LocalDocsSyncPanelProps {
   defaultSourceDir?: string;
   isFeishuReady: boolean;
-  onNotice: (notice: { type: NoticeType; message: string }) => void;
+  onNotice: (notice: Notice) => void;
   onImported: () => Promise<void>;
 }
 
