@@ -4,7 +4,14 @@ import {
   CoverTemplateId,
   getCoverTemplate,
 } from "./cover";
+import type { AspectId } from "./targets";
 import { ContentCard, DraftNote } from "./xhsWorkflow";
+
+/** 同时写在 prompt 文案里，两处必须一致。 */
+const COVER_TITLE_MAX_CHARS = 24;
+
+/** 超长标题按每行此长度切两行。 */
+const COVER_TITLE_LINE_CHARS = 11;
 
 export type CoverStyle = "痛点型" | "清单型" | "反差型" | "案例型";
 
@@ -94,21 +101,21 @@ export function draftToCoverInput(draft: DraftNote): CoverInput {
   };
 }
 
-export function buildCoverPlanPrompt(input: CoverInput): string {
+export function buildCoverPlanPrompt(input: CoverInput, coverAspect: AspectId): string {
   return `你是小红书 AI Coding 账号的封面主编。
 
 账号定位：
 给产品经理、独立开发者、AI Coding 新手看的真实 AI 编程实战复盘。
 
 任务：
-根据内容信息生成小红书 3:4 首图封面方案。
+根据内容信息生成小红书 ${coverAspect} 首图封面方案。
 
 封面原则：
 1. 第一眼必须看懂痛点或收益。
 2. 字数要短，允许 2-3 行换行。
 3. 不要营销腔，不要空泛鸡汤。
 4. 风格从「痛点型、清单型、反差型、案例型」中选一个。
-5. 标题不要超过 24 个中文字符。
+5. 标题不要超过 ${COVER_TITLE_MAX_CHARS} 个中文字符。
 
 内容信息：
 ${JSON.stringify(input, null, 2)}
@@ -155,11 +162,11 @@ function trimCoverTitle(text: string): string {
   if (!clean) return "AI 编程\n先别急着写代码";
   if (clean.includes("\n")) return clean;
   if (clean.length <= 12) return clean;
-  if (clean.length <= 24) {
+  if (clean.length <= COVER_TITLE_MAX_CHARS) {
     const midpoint = Math.ceil(clean.length / 2);
     return `${clean.slice(0, midpoint)}\n${clean.slice(midpoint)}`;
   }
-  return `${clean.slice(0, 11)}\n${clean.slice(11, 22)}`;
+  return `${clean.slice(0, COVER_TITLE_LINE_CHARS)}\n${clean.slice(COVER_TITLE_LINE_CHARS, COVER_TITLE_LINE_CHARS * 2)}`;
 }
 
 function compactText(text: string | undefined, maxLength: number): string {

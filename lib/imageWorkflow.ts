@@ -1,4 +1,9 @@
+import type { AspectId } from "./targets";
 import type { ContentCard, DraftNote } from "./xhsWorkflow";
+
+/** 以下两个上限同时写在 prompt 文案里，两处必须一致。 */
+const NODE_TEXT_MAX_CHARS = 18;
+const MAX_CALLOUTS = 3;
 
 export type ImageAssetKind = "cover" | "content";
 export type ImageSourceType = "topic" | "draft" | "manual";
@@ -202,20 +207,21 @@ export function contentCardToImageSourceInput(card: ContentCard): ImageWorkflowS
 
 export function buildContentImagePrompt(
   input: ImageWorkflowSourceInput,
-  templateType: ContentImageTemplateType
+  templateType: ContentImageTemplateType,
+  contentAspect: AspectId
 ): string {
   const template = getContentImageTemplate(templateType);
   return `你是小红书 AI Coding 账号的内容配图设计师。
 
 任务：
-基于笔记内容生成一张 3:4 内容配图方案。图片类型是「${template.name}」，用途是放在小红书笔记正文内，帮助读者收藏和理解，不是封面图。
+基于笔记内容生成一张 ${contentAspect} 内容配图方案。图片类型是「${template.name}」，用途是放在小红书笔记正文内，帮助读者收藏和理解，不是封面图。
 
 图片要求：
 1. 内容必须来自输入，不要编造不存在的数据、工具效果、团队规模或收益。
-2. 文案短，适合图片阅读；每个节点不超过 18 个中文字符。
+2. 文案短，适合图片阅读；每个节点不超过 ${NODE_TEXT_MAX_CHARS} 个中文字符。
 3. 优先表达流程、结构、清单、对比或步骤，不要写营销引导。
 4. 输出要可被前端渲染成图，所以 blocks 和 connections 必须清晰。
-5. callouts 最多 3 条，写成可收藏提醒。
+5. callouts 最多 ${MAX_CALLOUTS} 条，写成可收藏提醒。
 
 输入：
 ${JSON.stringify(input, null, 2)}
@@ -300,7 +306,7 @@ export function createFallbackContentImagePlan(
   const segments = splitContentSegments(input).slice(0, 5);
   const blocks = segments.map((segment, index) => ({
     id: `n${index + 1}`,
-    title: clipText(segment, 18) || `步骤 ${index + 1}`,
+    title: clipText(segment, NODE_TEXT_MAX_CHARS) || `步骤 ${index + 1}`,
     detail:
       index === 0
         ? clipText(input.painPoint || input.coreViewpoint || segment, 34)
@@ -447,7 +453,10 @@ export function normalizeContentImagePlan(
     summary: clipText(unknownToText(value.summary, fallback.summary), 72),
     blocks,
     connections: normalizeConnections(value.connections, blocks),
-    callouts: unknownToList(value.callouts, fallback.callouts).map((item) => clipText(item, 32)).filter(Boolean).slice(0, 3),
+    callouts: unknownToList(value.callouts, fallback.callouts)
+      .map((item) => clipText(item, 32))
+      .filter(Boolean)
+      .slice(0, MAX_CALLOUTS),
     palette,
     reason: unknownToText(value.reason, fallback.reason),
   };

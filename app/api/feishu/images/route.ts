@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk, readJsonBody } from "../_utils";
 import { generateWorkflowJson } from "@/lib/workflowAi";
+import { DEFAULT_TARGET_ID, assetAspect } from "@/lib/targets";
 import {
   buildContentImagePrompt,
   createFallbackContentImagePlan,
@@ -33,7 +34,11 @@ export async function POST(request: NextRequest) {
     const fallbackPlan = createFallbackContentImagePlan(body.input, body.templateType);
     const aiResult = await generateWorkflowJson<Partial<ContentImagePlan>>({
       action: "images.generateContentPlan",
-      prompt: buildContentImagePrompt(body.input, fallbackPlan.templateType),
+      prompt: buildContentImagePrompt(
+        body.input,
+        fallbackPlan.templateType,
+        assetAspect(DEFAULT_TARGET_ID, "content")
+      ),
       fallback: fallbackPlan,
       maxTokens: 2200,
     });

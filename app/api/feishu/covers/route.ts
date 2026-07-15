@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { apiError, apiOk, readJsonBody } from "../_utils";
 import { fieldToText, getFeishuRecord, updateFeishuRecord, WorkflowTableName } from "@/lib/feishu";
 import { generateWorkflowJson } from "@/lib/workflowAi";
+import { DEFAULT_TARGET_ID, assetAspect } from "@/lib/targets";
 import {
   buildCoverPlanPrompt,
   contentCardToCoverInput,
@@ -92,7 +93,7 @@ export async function POST(request: NextRequest) {
 
     const aiResult = await generateWorkflowJson<CoverPlan>({
       action: "covers.generatePlan",
-      prompt: buildCoverPlanPrompt(input),
+      prompt: buildCoverPlanPrompt(input, assetAspect(DEFAULT_TARGET_ID, "cover")),
       fallback: fallbackPlan,
       maxTokens: 1800,
     });

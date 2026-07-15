@@ -1,8 +1,10 @@
 /**
  * 发布目标的素材尺寸。
  *
- * 覆盖画布的宽高，不覆盖画布内的布局坐标——lib/cover.ts 与 lib/imageWorkflow.ts
+ * 只覆盖画布宽高，不覆盖画布内的布局坐标——lib/cover.ts 与 lib/imageWorkflow.ts
  * 的 draw* 仍以 1080 宽为基准写死排版（见改造方案 Phase 3）。
+ *
+ * 读者只应在 app 层：lib/ 里的模块从调用方接收解析好的尺寸或比例，不反向查注册表。
  */
 
 export type TargetId = "xhs-post";
@@ -26,8 +28,12 @@ const TARGET_ASSETS: Record<TargetId, Record<AssetKind, AspectId>> = {
  */
 export const DEFAULT_TARGET_ID: TargetId = "xhs-post";
 
+export function assetAspect(id: TargetId, kind: AssetKind): AspectId {
+  return TARGET_ASSETS[id][kind];
+}
+
 export function assetPx(id: TargetId, kind: AssetKind): readonly [number, number] {
-  return ASPECT_PX[TARGET_ASSETS[id][kind]];
+  return ASPECT_PX[assetAspect(id, kind)];
 }
 
 /** 预览框用的 CSS aspect-ratio，由像素尺寸推导，杜绝预览与产物各自漂移。 */
