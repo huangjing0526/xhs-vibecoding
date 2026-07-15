@@ -3,7 +3,9 @@ import type { ContentCard, DraftNote } from "./xhsWorkflow";
 
 /** 以下两个上限同时写在 prompt 文案里，两处必须一致。 */
 const NODE_TEXT_MAX_CHARS = 18;
-const MAX_CALLOUTS = 3;
+
+/** 页脚把 callouts 拼成一段话、折成两行，多出来的既画不出也没有别的去处。 */
+const MAX_CALLOUTS = 2;
 
 export type ImageAssetKind = "cover" | "content";
 export type ImageSourceType = "topic" | "draft" | "manual";
@@ -663,7 +665,7 @@ function drawSteps(ctx: CanvasRenderingContext2D, plan: ContentImagePlan, width:
 
 function drawContentImageFooter(ctx: CanvasRenderingContext2D, plan: ContentImagePlan, width: number, height: number): void {
   const { palette } = plan;
-  const callouts = plan.callouts.slice(0, 2);
+  const callouts = plan.callouts.slice(0, MAX_CALLOUTS);
   const footerY = height - 206;
   ctx.fillStyle = hexToRgba(palette.surface, 0.9);
   ctx.beginPath();

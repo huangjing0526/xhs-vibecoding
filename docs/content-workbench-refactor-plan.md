@@ -143,13 +143,15 @@ interface PublishTarget {
 
 ### 4.1 关键常量被复制了 3–4 份，且互相矛盾
 
-| 常量 | 份数 | 位置 |
-| --- | --- | --- |
-| 3:4 / 1080×1440 | 4 | `lib/cover.ts:207`、`lib/imageWorkflow.ts:465`、`app/api/cover/route.tsx:62,161` |
-| 飞书中文字段名 | 4 | `lib/xhsWorkflow.ts`、`lib/coverWorkflow.ts:282`、`app/api/feishu/covers/route.ts`、`scripts/*.mjs` |
-| AI provider 探测 | 3 | `lib/workflowAi.ts:27`、`app/api/generate/route.ts:23`、`app/api/workflow/bootstrap/route.ts:14` |
+> 本节记录 2026-07-15 初次分析时的状态；行号为当时值，部分已被 Phase 0/1 改变，见「现状」列。
 
-三份 provider 探测的优先级各不相同（`/api/generate` 甚至没有 Gemini）。
+| 常量 | 当时份数 | 当时位置 | 现状 |
+| --- | --- | --- | --- |
+| 3:4 / 1080×1440 | 4 | `lib/cover.ts`、`lib/imageWorkflow.ts`、`app/api/cover/route.tsx`（satori 调用与 `CoverComponent` 各一份） | **已收口**至 `lib/targets.ts`（Phase 1） |
+| 飞书中文字段名 | 4 | `lib/xhsWorkflow.ts`、`lib/coverWorkflow.ts`、`app/api/feishu/covers/route.ts`、`scripts/*.mjs` | 未动，Phase 2 处理 |
+| AI provider 探测 | 3 | `lib/workflowAi.ts:27`、`app/api/generate/route.ts`、`app/api/workflow/bootstrap/route.ts:14` | 降为 **2 份**——`/api/generate` 已随老系统删除（Phase 0）；`bootstrap` 的副本仍在 |
+
+三份 provider 探测的优先级当时各不相同（`/api/generate` 甚至没有 Gemini）。现存两份均为 gemini 优先，但仍是两份，`bootstrap` 的 `getAIProvider()` 需与 `lib/workflowAi.ts` 手工保持同步。
 
 `scripts/*.mjs` 是第 4 份 schema 副本，且**不共享 `lib/` 代码**（TS + `@/` 别名，需要 tsx 才能引），改字段名必须手工同步。
 
@@ -263,7 +265,13 @@ VideoPlan 单独建表而不是塞进选题表字段，避免重蹈 `封面配�
 
 纯重构，行为不变。
 
-**计划变更（执行时）**：原定「`qualityCheck.ts` 先接，最安全的试验田」。该判断失效——`lib/qualityCheck.ts` 是并发会话正在扩写的文件（新增 6 个质检维度），改它等于在他人未提交的 WIP 上叠加。改为先接几何：`lib/cover.ts`、`lib/imageWorkflow.ts`、`app/api/cover/route.tsx`、`CoverEditor`、`CoverStudio` 均不在并发改动清单内，零冲突，同样是纯重构，且有真实消费方验证抽象。质检接入顺延至并发会话落地后。
+**计划变更（执行时）**：原定「`qualityCheck.ts` 先接，最安全的试验田」，实际改为先接几何（`lib/cover.ts`、`lib/imageWorkflow.ts`、`app/api/cover/route.tsx`、`CoverEditor`、`CoverStudio`）。质检接入顺延至 Phase 2。
+
+> **勘误（2026-07-15）**：改序的理由是错的。当时依据「`git status` 有未提交改动」推断出「并发会话正在扩写 `qualityCheck.ts`」，并据此重排 Phase 1、推迟 Phase 2。该推断从未被验证，且是错的——那批改动的文件 mtime 停在 2026-06-24，是搁置三周的自有 WIP（已提交为 `812f9a1`），无任何并发写入。一次 `stat` 即可证伪。
+>
+> 教训：把未验证的推断当事实反复引用，比一次判断失误代价更大——它会污染其后所有基于它的决策。涉及「谁在改这个文件」时，用 mtime / worktree / reflog 求证，不要从 `git status` 有输出就外推。
+>
+> 先做几何这个结果本身仍然正确（几何本就该在 prompt 收口之前完成），只是当时是被一个幻觉推着做对的。
 
 **已落地**：
 
@@ -292,9 +300,41 @@ VideoPlan 单独建表而不是塞进选题表字段，避免重蹈 `封面配�
 
 ### Phase 3 · 管线参数化
 
-- 几何收单一来源：`lib/cover.ts`、`lib/imageWorkflow.ts`、`app/api/cover/route.tsx`
-- prompt 从档案组装：各 `build*Prompt`
-- `limitDraftContent` 的 200 改读 `target.fields.body.range`
+**3a 已完成**（提前到 Phase 2 之前执行，见上方勘误）：
+
+- 几何收单一来源 → Phase 1
+- `buildCoverPlanPrompt` / `buildContentImagePrompt` 的比例由路由解析后传入，不再是 prompt 里的字面量
+- prompt 与代码各写一份的上限收成常量：`COVER_TITLE_MAX_CHARS`、`NODE_TEXT_MAX_CHARS`、`MAX_CALLOUTS`
+
+**3a 确立的界线**：
+
+> 推导那些必须与代码保持同步的机器事实（比例、上限），不要参数化人早晚要整段重写的散文（人设）。
+
+曾把 prompt 里的「小红书」抽成 `platformLabel(target)` 变量，已撤销。那句话是 `放在${platform}笔记正文内，帮助读者收藏和理解`——换抖音即为「放在抖音笔记正文内…帮助读者收藏」，而抖音没有笔记正文，「收藏」又是本文档 4.6 已标记为小红书专属、待降级的指标。整句在第二个目标落地时必须重写，抽出的变量随之作废。代价不在那几行，而在于让后续读者误以为 prompt 已经目标化——实际只有平台名这一个碎片动了，且是其中最不重要的部分。
+
+**3b 待办**：
+
+- 其余 prompt 仍硬编码「小红书」：`lib/videoWorkflow.ts:150`、`lib/daoku.ts:85`、`lib/clueIntake.ts:133`
+- `limitDraftContent` 的 200 改读目标档案（依赖 Phase 2 的字段约束落地）
+- 账号定位「给产品经理、独立开发者、AI Coding 新手看的真实 AI 编程实战复盘。」共 3 份（`xhsWorkflow.ts` ×2、`coverWorkflow.ts` ×1）。属账号级配置而非目标级配置，不应进目标档案，需要单独的归宿。
+
+### Phase 3 附带发现的 bug（prompt 与代码各说各话）
+
+根因不是几个孤立数字，而是**缺一层契约**：prompt、兜底构造、normalize、渲染器四层各自定义上限，无单一来源。
+
+**已修**：`MAX_CALLOUTS` 3 → 2。兜底构造与渲染器早已按 2 办事（页脚把 callouts 拼成一段话、`wrapText(..., 2)` 折两行，第 3 条既画不出也无别的消费方——`/api/feishu/images` 的 `writeBack` 恒为 false），只有 prompt 与 normalize 写着 3。对齐后模型不再白写第 3 条，渲染像素零变化（已验证页脚文字逐字节相同）。
+
+**未修**（修复会改变输出，属 Phase 3b）：
+
+| 位置 | prompt 告诉模型 | 代码实际执行 |
+| --- | --- | --- |
+| `lib/coverWorkflow.ts:118` ↔ `:273` | 封面标题 ≤ 24 字 | **AI 路径完全不执行**——`coverPlanToCoverConfig` 原样透传 `plan.title`；`trimCoverTitle` 只在兜底路径生效 |
+| `app/api/feishu/covers/route.ts:103` | — | `{ ...fallbackPlan, ...aiResult.result }` 裸展开，对模型输出零校验。对比 images 路径有 `normalizeContentImagePlan`。`CoverPlan` 只是 TS 接口，`generateWorkflowJson<CoverPlan>` 是类型断言而非校验 |
+| `lib/imageWorkflow.ts:223` ↔ `:394` | 节点标题 ≤ 18 字 | `normalizeBlocks` 截到 **22** |
+| `lib/imageWorkflow.ts` `:411` ↔ 各 `draw*` | 未提及 block 数 | normalize 留 6，`drawSteps` 只画 **4**、`drawFlowchart`/`drawTimeline` 画 5 |
+| `lib/imageWorkflow.ts:226` ↔ `:461` | 未提及 callout 长度 | 静默截 **32**（`:333` 兜底另用 **28**） |
+
+修 covers 的正解是补一个 `normalizeCoverPlan`，与「字段约束进目标档案」是同一件事，宜与 Phase 2 一并做。
 
 ### Phase 4 · 中文视频线 ⭐
 
