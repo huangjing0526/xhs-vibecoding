@@ -341,9 +341,11 @@ noteId 格式是 `makeNoteId` 的第二份定义（.mjs 引不了 TS）。`gen-w
 
 已验证：脚本独立解析通过，gen-pull 产出的 guide 含目标指引，带目标的 topic/draft JSON 走 gen-write dry-run 去重正确、字段透传。
 
-#### Phase 2e · `lib/xhsWorkflow.ts` → `lib/contentWorkflow.ts`
+#### Phase 2e · `lib/xhsWorkflow.ts` → `lib/contentWorkflow.ts` — ⏸ 推迟到 Phase 3 之后
 
-**故意放最后。** 在内容仍 100% 小红书时改名，等于给文件挂一块比实质大的招牌。
+**故意放最后，且从 Phase 2 尾部再往后挪。** 改名只有在文件实质配得上新名字时才诚实。目前 prompt 人设、道库、`limitDraftContent` 的 200 字上限都还是小红书专属——那些在 Phase 3（管线参数化 / 去小红书化）才处理。在那之前改名，是给一个实质仍 100% 小红书的文件挂「通用内容」招牌，与本方案反复强调的「名字不要比实质大」自相矛盾。故 2e 挪到 Phase 3 完成后执行。
+
+**Phase 2 数据模型部分（2a–2d）到此完整闭环**：status 收口、god component 拆分、target 维度落库、脚本管线同步，均已提交并各自端到端验证。
 
 #### 飞书 schema 修复（2c 期间发现并处理）
 
