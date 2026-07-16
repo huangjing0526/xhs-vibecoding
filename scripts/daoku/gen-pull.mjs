@@ -70,6 +70,7 @@ if (stage === "materials") {
     guide: {
       prompt单一来源: "lib/xhsWorkflow.ts buildContentCardPrompt（按它的内容原则+JSON格式生成）",
       语气分档: "lib/daoku.ts DAOKU_TONE",
+      目标清单: "每条选题必须带「目标清单」字段=打算投的发布目标（\\n 连接）。当前只有 xhs-post，就填 xhs-post。取值对齐 lib/targets.ts 的 TargetId。",
       写回: "gen-write topic <file.json>（按内容去重，可加 --mark-materials 把已用素材标已提炼）",
     },
   };
@@ -92,11 +93,14 @@ if (stage === "materials") {
       质量分: t(r, "质量分"),
       偏爆偏哑: t(r, "偏爆偏哑"),
       状态: t(r, "状态"),
+      目标清单: t(r, "目标清单"),
     })),
     existingNoteIds: drafts.map((r) => t(r, "笔记ID")).filter(Boolean),
     guide: {
       prompt单一来源: "lib/xhsWorkflow.ts buildDraftPrompt（正文≤200中文字符，无营销腔，给可收藏资产）",
       建议: "优先给偏爆/质量分高的选题起草；可叠 distill-blogger 审稿质检",
+      每篇一个目标: "为选题「目标清单」里的每个目标各起一篇草稿，草稿带「发布目标」字段=该目标。",
+      笔记ID格式: "笔记ID = NOTE-<YYYYMMDD>-<选题ID后3位>-<发布目标>，对齐 lib/xhsWorkflow.ts 的 makeNoteId。带目标后缀，否则同选题多目标的复盘会互相覆盖。",
       写回: "gen-write draft <file.json>（按笔记ID去重）",
     },
   };

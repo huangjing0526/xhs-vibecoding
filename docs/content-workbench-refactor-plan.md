@@ -328,9 +328,18 @@ VideoPlan 单独建表而不是塞进选题表字段，避免重蹈 `封面配�
 - `RewriteStudio.tsx` 的 `NOTE-${Date.now()}` 未走 `makeNoteId`（唯一但无后缀；因单条草稿无 fan-out，不串台）。
 - `makeNoteId` 的 `topicId.slice(-3)`：两条不同选题若同日期同目标且尾 3 字符相同仍会撞（既有问题，2c 未引入也未解决）。
 
-#### Phase 2d · 同步 `scripts/*.mjs`
+#### Phase 2d · 同步 `scripts/*.mjs` ✅
 
-依赖 2c 定下的字段名。
+改动集中在 `gen-pull.mjs`（给 Claude 的生成指引），因为 scripts 的写入是字段透传的——`gen-write` 把 Claude 产出的 `fields` 原样写飞书，不硬编字段名，所以新字段随 JSON 自动带上，无需改写入代码。
+
+- **topic 指引** 加「目标清单」产出字段：每条选题带打算投的目标（\n 连接），取值对齐 `lib/targets.ts` 的 TargetId，当前填 xhs-post。
+- **draft 阶段** 拉取的 topic 带上「目标清单」（否则 Claude 不知道投哪），guide 加「每篇一个目标」与「笔记ID格式 = `NOTE-<日期>-<选题ID后3>-<发布目标>`，对齐 `makeNoteId`」。
+
+**去重键对 target 天然正确，无需改**：draft 去重键是完整 noteId（含目标后缀），故 Phase 4 同选题的不同目标草稿不会误判重复；topic 去重是内容签名（不含目标），同一选题投多个目标仍算一条。`dedup-topics` / `write-scores` / `pull-topics` 不涉及 target。
+
+noteId 格式是 `makeNoteId` 的第二份定义（.mjs 引不了 TS）。`gen-write.mjs` 头部的「字段列名与状态值均以 lib/xhsWorkflow.ts 为单一来源、必须手工同步」已覆盖这一约束。
+
+已验证：脚本独立解析通过，gen-pull 产出的 guide 含目标指引，带目标的 topic/draft JSON 走 gen-write dry-run 去重正确、字段透传。
 
 #### Phase 2e · `lib/xhsWorkflow.ts` → `lib/contentWorkflow.ts`
 
