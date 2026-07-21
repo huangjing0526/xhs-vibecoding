@@ -11,6 +11,7 @@ interface ReviewDashboardProps {
   metrics: ReviewMetric[];
   review: ReviewResult | null;
   onGenerate: () => void;
+  onCancel: () => void;
   generating: boolean;
 }
 
@@ -28,7 +29,7 @@ function toPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-export default function ReviewDashboard({ metrics, review, onGenerate, generating }: ReviewDashboardProps) {
+export default function ReviewDashboard({ metrics, review, onGenerate, onCancel, generating }: ReviewDashboardProps) {
   const handleCarry = async (advice: string) => {
     try {
       await navigator.clipboard.writeText(advice);
@@ -165,15 +166,16 @@ export default function ReviewDashboard({ metrics, review, onGenerate, generatin
               title="把发布后的数据回填后，生成复盘结论"
               description={metrics.length === 0 ? "先发布一篇笔记才有数据可复盘。" : undefined}
               action={
-                <Button
-                  variant="ai"
-                  size="lg"
-                  onClick={onGenerate}
-                  loading={generating}
-                  disabled={metrics.length === 0}
-                >
-                  {generating ? "生成中" : "生成复盘"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button variant="ai" size="lg" onClick={onGenerate} loading={generating} disabled={metrics.length === 0}>
+                    {generating ? "生成中" : "生成复盘"}
+                  </Button>
+                  {generating && (
+                    <Button variant="ghost" size="lg" onClick={onCancel}>
+                      取消
+                    </Button>
+                  )}
+                </div>
               }
             />
           </div>

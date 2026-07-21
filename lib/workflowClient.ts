@@ -18,6 +18,7 @@ import {
 } from "@/lib/xhsWorkflow";
 import type { LocalDocCategory, LocalDocFileSummary } from "@/lib/localDocs";
 import type { ExtractedClue } from "@/lib/clueIntake";
+import type { InlineRewriteAction } from "@/lib/inlineRewrite";
 
 export interface WorkflowSnapshot {
   materials: MaterialItem[];
@@ -115,6 +116,11 @@ export interface LocalDocsSyncResult extends LocalDocsScanResult {
   importedGlossary: GlossaryItem[];
   skippedMaterials: number;
   skippedGlossary: number;
+}
+
+/** 用户主动取消（AbortController）不是错误，调用方据此静默收尾而非弹报错。 */
+export function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 async function parseApiResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
@@ -216,11 +222,13 @@ export async function generateContentCards(options?: {
   writeBack?: boolean;
   materials?: MaterialItem[];
   glossary?: GlossaryItem[];
+  signal?: AbortSignal;
 }): Promise<ContentCardsResult> {
   return workflowRequest<ContentCardsResult>(
     "/api/feishu/content-cards",
     {
       method: "POST",
+      signal: options?.signal,
       body: JSON.stringify({
         count: options?.count ?? 3,
         status: options?.status ?? MATERIAL_STATUS.pending,
@@ -238,11 +246,13 @@ export async function generateDrafts(options?: {
   status?: string;
   writeBack?: boolean;
   cards?: ContentCard[];
+  signal?: AbortSignal;
 }): Promise<DraftsResult> {
   return workflowRequest<DraftsResult>(
     "/api/feishu/drafts",
     {
       method: "POST",
+      signal: options?.signal,
       body: JSON.stringify({
         count: options?.count ?? 1,
         status: options?.status ?? TOPIC_STATUS.pending,
@@ -294,11 +304,13 @@ export async function generateCover(options: {
   recordId?: string;
   writeBack?: boolean;
   renderImage?: boolean;
+  signal?: AbortSignal;
 }): Promise<CoverResult> {
   return workflowRequest<CoverResult>(
     "/api/feishu/covers",
     {
       method: "POST",
+      signal: options.signal,
       body: JSON.stringify({
         input: options.input,
         sourceType: options.sourceType,
@@ -315,11 +327,13 @@ export async function generateImageAsset(options: {
   kind?: ImageAssetKind;
   input: ImageWorkflowSourceInput;
   templateType?: ContentImageTemplateType;
+  signal?: AbortSignal;
 }): Promise<ImageAssetResult> {
   return workflowRequest<ImageAssetResult>(
     "/api/feishu/images",
     {
       method: "POST",
+      signal: options.signal,
       body: JSON.stringify({
         kind: options.kind ?? "content",
         input: options.input,
@@ -333,11 +347,13 @@ export async function generateImageAsset(options: {
 export async function generateReview(options?: {
   writeBack?: boolean;
   metrics?: ReviewMetric[];
+  signal?: AbortSignal;
 }): Promise<ReviewGenerationResult> {
   return workflowRequest<ReviewGenerationResult>(
     "/api/feishu/review",
     {
       method: "POST",
+      signal: options?.signal,
       body: JSON.stringify({
         writeBack: options?.writeBack ?? true,
         metrics: options?.metrics,
@@ -422,5 +438,39 @@ export async function extractClues(options: { url?: string; rawText?: string }):
     "/api/feishu/clues",
     { method: "POST", body: JSON.stringify(options) },
     "线索提炼失败"
+  );
+}
+
+export interface InlineRewriteClientResult {
+  text: string;
+  usedFallback: boolean;
+  provider: string;
+}
+
+/** 编辑器里选中一段文字后的内联改写。 */
+export async function rewriteInline(options: {
+  selection: string;
+  action: InlineRewriteAction;
+  instruction?: string;
+  noteTitle?: string;
+  painPoint?: string;
+  bloggerId?: string;
+  signal?: AbortSignal;
+}): Promise<InlineRewriteClientResult> {
+  return workflowRequest<InlineRewriteClientResult>(
+    "/api/rewrite/inline",
+    {
+      method: "POST",
+      signal: options.signal,
+      body: JSON.stringify({
+        selection: options.selection,
+        action: options.action,
+        instruction: options.instruction,
+        noteTitle: options.noteTitle,
+        painPoint: options.painPoint,
+        bloggerId: options.bloggerId,
+      }),
+    },
+    "内联改写失败"
   );
 }

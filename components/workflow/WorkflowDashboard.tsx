@@ -2,11 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Download, FileText, Plus, Sparkles } from "lucide-react";
+import { Download, FileText, Plus, RefreshCw, Sparkles } from "lucide-react";
 import Button from "@/components/ui/Button";
 import CollapsiblePanel from "@/components/ui/CollapsiblePanel";
 import EmptyState from "@/components/ui/EmptyState";
 import PipelineRail, { type PipelineStep } from "@/components/ui/PipelineRail";
+import CommandPalette, { type Command } from "@/components/ui/CommandPalette";
+import NavIcon from "@/components/workflow/NavIcon";
+import { useAbortableTasks } from "@/components/workflow/useAbortableTasks";
 import CoverStudio from "@/components/workflow/CoverStudio";
 import TopicPoolImportPanel from "@/components/workflow/TopicPoolImportPanel";
 import ClueIntakePanel from "@/components/workflow/ClueIntakePanel";
@@ -21,7 +24,7 @@ import WorkbenchShell, {
   type WorkbenchNavItem,
 } from "@/components/workflow/WorkbenchShell";
 import PageHeader from "@/components/workflow/PageHeader";
-import NoteList from "@/components/workflow/NoteList";
+import NoteList, { getNoteStatus } from "@/components/workflow/NoteList";
 import NoteEditor from "@/components/workflow/NoteEditor";
 import NoteInspector from "@/components/workflow/NoteInspector";
 import QualityGate from "@/components/workflow/QualityGate";
@@ -44,6 +47,7 @@ import {
   type ManualTopicInput,
 } from "@/lib/manualEntry";
 import type { ExtractedClue } from "@/lib/clueIntake";
+import type { InlineRewriteAction } from "@/lib/inlineRewrite";
 import {
   DEMO_BLOGGER_PROFILES,
   getDistillationForBlogger,
@@ -76,9 +80,11 @@ import {
   generateReview,
   getWorkflowBootstrap,
   deleteRecord,
+  isAbortError,
   publishDraft,
   saveDraft,
   saveMaterial,
+  rewriteInline,
   saveTopic,
   syncWorkflowData,
   type DeletableKind,
@@ -306,6 +312,10 @@ export default function WorkflowDashboard() {
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
   const [isGeneratingContentImage, setIsGeneratingContentImage] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
+  const [isRewritingInline, setIsRewritingInline] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // AI 生成都可中途取消，key 与下面各 handler 一一对应
+  const tasks = useAbortableTasks();
   const [coverDataUrl, setCoverDataUrl] = useState("");
   const [contentImageDataUrl, setContentImageDataUrl] = useState("");
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
@@ -596,11 +606,9 @@ export default function WorkflowDashboard() {
         }
 
         setWorkflowMode("connected");
-        const data = await loadFeishuSnapshot();
-        // 已连飞书且已有素材的回头用户，直接落到素材步，不停在引导页
-        if (isActive && data && data.materials.length > 0) {
-          setArea("workbench");
-        }
+        // 落地页本来就是工作台（area 初始值），这里不再回设——否则会把用户
+        // 在启动期间点选的区悄悄弹回来。
+        await loadFeishuSnapshot();
       } catch (error) {
         if (!isActive) return;
         console.error("[WorkflowDashboard] 启动失败，切换 Demo", { action: "workflow.bootstrap", error });
@@ -670,6 +678,7 @@ export default function WorkflowDashboard() {
         writeBack: shouldWriteBack,
         materials: selectedMaterials,
         glossary: snapshot.glossary,
+        signal: tasks.start("topics"),
       });
       setSnapshot((current) => ({
         ...current,
@@ -686,11 +695,13 @@ export default function WorkflowDashboard() {
         await loadFeishuSnapshot();
       }
     } catch (error) {
-      setFriendlyError("topics.generate", error);
+      if (isAbortError(error)) setNotice({ type: "info", message: "已取消生成选题" });
+      else setFriendlyError("topics.generate", error);
     } finally {
+      tasks.finish("topics");
       setIsGeneratingTopics(false);
     }
-  }, [hasPendingMaterials, loadFeishuSnapshot, selectedMaterials, setFriendlyError, setNotice, snapshot.glossary, workflowMode]);
+  }, [hasPendingMaterials, loadFeishuSnapshot, selectedMaterials, setFriendlyError, setNotice, snapshot.glossary, tasks, workflowMode]);
 
   const handleGenerateDraft = useCallback(async () => {
     setIsGeneratingDrafts(true);
@@ -703,6 +714,7 @@ export default function WorkflowDashboard() {
         status: TOPIC_STATUS.pending,
         writeBack: shouldWriteBack,
         cards: selectedTopic ? [selectedTopic] : fallbackCard ? [fallbackCard] : undefined,
+        signal: tasks.start("drafts"),
       });
       setSnapshot((current) => ({
         ...current,
@@ -717,11 +729,42 @@ export default function WorkflowDashboard() {
         await loadFeishuSnapshot();
       }
     } catch (error) {
-      setFriendlyError("drafts.generate", error);
+      if (isAbortError(error)) setNotice({ type: "info", message: "已取消生成草稿" });
+      else setFriendlyError("drafts.generate", error);
     } finally {
+      tasks.finish("drafts");
       setIsGeneratingDrafts(false);
     }
-  }, [loadFeishuSnapshot, selectedTopic, setFriendlyError, setNotice, usableTopics, workflowMode]);
+  }, [loadFeishuSnapshot, selectedTopic, setFriendlyError, setNotice, tasks, usableTopics, workflowMode]);
+
+  // 编辑器选区改写：网络与取消统一收在 dashboard，NoteEditor 只管选区和替换
+  const handleInlineRewrite = useCallback(
+    async (payload: { selection: string; action: InlineRewriteAction; instruction?: string }) => {
+      setIsRewritingInline(true);
+      try {
+        const result = await rewriteInline({
+          ...payload,
+          noteTitle: selectedDraft?.title || selectedTopic?.titleCandidates[0],
+          painPoint: selectedTopic?.painPoint,
+          bloggerId: selectedTopic ? topicDaokuMap[selectedTopic.topicId] : undefined,
+          signal: tasks.start("inlineRewrite"),
+        });
+        setNotice({
+          type: result.usedFallback ? "info" : "success",
+          message: result.usedFallback ? "未配置 AI，已按规则兜底处理" : "已改写选中内容，可点「撤销改写」还原",
+        });
+        return result.text;
+      } catch (error) {
+        if (isAbortError(error)) setNotice({ type: "info", message: "已取消改写" });
+        else setFriendlyError("rewrite.inline", error);
+        return null;
+      } finally {
+        tasks.finish("inlineRewrite");
+        setIsRewritingInline(false);
+      }
+    },
+    [selectedDraft, selectedTopic, setFriendlyError, setNotice, tasks, topicDaokuMap]
+  );
 
   const handleSaveDraft = useCallback(async (draft: DraftNote) => {
     setIsSavingDraft(true);
@@ -798,21 +841,25 @@ export default function WorkflowDashboard() {
     setNotice({ type: "info", message: "正在生成封面方案" });
     try {
       const shouldWriteBack = workflowMode === "connected";
+      const signal = tasks.start("cover");
       const result = shouldWriteBack && sourceDraft?.recordId
         ? await generateCover({
             sourceType: "draft",
             recordId: sourceDraft.recordId,
             writeBack: true,
+            signal,
           })
         : shouldWriteBack && sourceTopic?.recordId
           ? await generateCover({
               sourceType: "topic",
               recordId: sourceTopic.recordId,
               writeBack: true,
+              signal,
             })
           : await generateCover({
               input: sourceDraft ? draftToCoverInput(sourceDraft) : topicToCoverInput(sourceTopic as ContentCard),
               writeBack: false,
+              signal,
             });
 
       setCoverPlan(result.plan);
@@ -838,11 +885,13 @@ export default function WorkflowDashboard() {
         await loadFeishuSnapshot();
       }
     } catch (error) {
-      setFriendlyError("covers.generate", error);
+      if (isAbortError(error)) setNotice({ type: "info", message: "已取消生成封面" });
+      else setFriendlyError("covers.generate", error);
     } finally {
+      tasks.finish("cover");
       setIsGeneratingCover(false);
     }
-  }, [loadFeishuSnapshot, selectedDraft, selectedTopic, setFriendlyError, setNotice, workflowMode]);
+  }, [loadFeishuSnapshot, selectedDraft, selectedTopic, setFriendlyError, setNotice, tasks, workflowMode]);
 
   const handleGenerateContentImage = useCallback(async () => {
     const sourceDraft = selectedDraft;
@@ -863,6 +912,7 @@ export default function WorkflowDashboard() {
         kind: "content",
         input,
         templateType: contentImageTemplate,
+        signal: tasks.start("contentImage"),
       });
       setContentImagePlan(result.plan);
       setImageMode("content");
@@ -871,11 +921,13 @@ export default function WorkflowDashboard() {
         message: result.usedFallback ? "已用规则生成内容配图" : "内容配图已生成",
       });
     } catch (error) {
-      setFriendlyError("images.generateContent", error);
+      if (isAbortError(error)) setNotice({ type: "info", message: "已取消生成配图" });
+      else setFriendlyError("images.generateContent", error);
     } finally {
+      tasks.finish("contentImage");
       setIsGeneratingContentImage(false);
     }
-  }, [contentImageTemplate, selectedDraft, selectedTopic, setFriendlyError, setNotice]);
+  }, [contentImageTemplate, selectedDraft, selectedTopic, setFriendlyError, setNotice, tasks]);
 
   const handleGenerateReview = useCallback(async () => {
     setIsReviewing(true);
@@ -885,6 +937,7 @@ export default function WorkflowDashboard() {
       const result = await generateReview({
         writeBack: shouldWriteBack,
         metrics: shouldWriteBack ? undefined : publishedMetrics,
+        signal: tasks.start("review"),
       });
       setReview(result.review);
       setNotice({
@@ -895,11 +948,13 @@ export default function WorkflowDashboard() {
         await loadFeishuSnapshot();
       }
     } catch (error) {
-      setFriendlyError("review.generate", error);
+      if (isAbortError(error)) setNotice({ type: "info", message: "已取消生成复盘" });
+      else setFriendlyError("review.generate", error);
     } finally {
+      tasks.finish("review");
       setIsReviewing(false);
     }
-  }, [loadFeishuSnapshot, publishedMetrics, setFriendlyError, setNotice, workflowMode]);
+  }, [loadFeishuSnapshot, publishedMetrics, setFriendlyError, setNotice, tasks, workflowMode]);
 
   const handleDownloadCover = useCallback(() => {
     if (!coverDataUrl) {
@@ -967,8 +1022,90 @@ export default function WorkflowDashboard() {
     ];
   }, [selectedTopic, selectedDraft, coverDataUrl, qualityResult]);
 
+  // ⌘K 命令表：分区跳转 + 笔记切换 + 高频动作，全部收在一个入口
+  const commands: Command[] = useMemo(() => {
+    const areaCommands: Command[] = AREA_ORDER.map((id) => ({
+      id: `area-${id}`,
+      group: "跳转",
+      label: AREAS[id].label,
+      hint: AREAS[id].hint,
+      keywords: AREAS[id].subtitle,
+      icon: <NavIcon id={id} size={15} />,
+      run: () => setArea(id),
+    }));
+
+    const noteCommands: Command[] = usableTopics.slice(0, 30).map((topic) => ({
+      id: `note-${topic.topicId || topic.recordId}`,
+      group: "笔记",
+      label: topic.titleCandidates[0] || topic.coreViewpoint || "未命名笔记",
+      hint: getNoteStatus(topic, usableDrafts),
+      keywords: topic.painPoint,
+      icon: <FileText size={15} />,
+      run: () => {
+        handleSelectNote(topic);
+        setArea("workbench");
+      },
+    }));
+
+    const actionCommands: Command[] = [
+      {
+        id: "action-new-note",
+        group: "动作",
+        label: "新建笔记",
+        icon: <Plus size={15} />,
+        run: () => setAddingTopic(true),
+      },
+      {
+        id: "action-sync",
+        group: "动作",
+        label: workflowMode === "demo" ? "重载 Demo" : "同步飞书",
+        icon: <RefreshCw size={15} />,
+        run: loadSnapshot,
+      },
+      {
+        id: "action-generate-draft",
+        group: "动作",
+        label: "生成草稿",
+        hint: selectedTopic ? undefined : "先选一篇笔记",
+        icon: <Sparkles size={15} />,
+        run: () => {
+          if (!selectedTopic) {
+            setNotice({ type: "error", message: "先选一篇笔记再生成草稿" });
+            setArea("workbench");
+            return;
+          }
+          setArea("workbench");
+          handleGenerateDraft();
+        },
+      },
+      {
+        id: "action-generate-cover",
+        group: "动作",
+        label: "生成封面方案",
+        icon: <Sparkles size={15} />,
+        run: () => {
+          setArea("cover");
+          handleGenerateCover();
+        },
+      },
+    ];
+
+    return [...areaCommands, ...noteCommands, ...actionCommands];
+  }, [
+    handleGenerateCover,
+    handleGenerateDraft,
+    handleSelectNote,
+    loadSnapshot,
+    selectedTopic,
+    setNotice,
+    usableDrafts,
+    usableTopics,
+    workflowMode,
+  ]);
+
   return (
     <>
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} />
       <WorkbenchShell
         leadItems={NAV_LEAD_ITEMS}
         groups={NAV_GROUPS}
@@ -979,6 +1116,7 @@ export default function WorkflowDashboard() {
         syncing={isSyncing}
         syncLabel={workflowMode === "demo" ? "重载 Demo" : "同步飞书"}
         onSync={loadSnapshot}
+        onOpenCommandPalette={() => setPaletteOpen(true)}
       >
         {area === "workbench" && (
           <div className="flex h-full flex-col">
@@ -1027,6 +1165,10 @@ export default function WorkflowDashboard() {
                   isGenerating={isGeneratingDrafts}
                   isSaving={isSavingDraft}
                   onGenerateDraft={handleGenerateDraft}
+                  onCancelGenerate={() => tasks.cancel("drafts")}
+                  onInlineRewrite={handleInlineRewrite}
+                  onCancelInlineRewrite={() => tasks.cancel("inlineRewrite")}
+                  isRewriting={isRewritingInline}
                   onSaveDraft={handleSaveDraft}
                   onOpenRewrite={() => setArea("rewrite")}
                 />
@@ -1066,16 +1208,23 @@ export default function WorkflowDashboard() {
               title={AREAS.library.label}
               subtitle={AREAS.library.subtitle}
               action={
-                <Button
-                  variant="ai"
-                  size="lg"
-                  onClick={handleGenerateTopics}
-                  disabled={selectedMaterials.length === 0}
-                  loading={isGeneratingTopics}
-                  icon={<Sparkles size={16} />}
-                >
-                  {isGeneratingTopics ? "生成中" : `生成选题（${selectedMaterials.length}）`}
-                </Button>
+                <div className="flex items-center gap-2">
+                  {isGeneratingTopics && (
+                    <Button variant="ghost" size="lg" onClick={() => tasks.cancel("topics")}>
+                      取消
+                    </Button>
+                  )}
+                  <Button
+                    variant="ai"
+                    size="lg"
+                    onClick={handleGenerateTopics}
+                    disabled={selectedMaterials.length === 0}
+                    loading={isGeneratingTopics}
+                    icon={<Sparkles size={16} />}
+                  >
+                    {isGeneratingTopics ? "生成中" : `生成选题（${selectedMaterials.length}）`}
+                  </Button>
+                </div>
               }
             />
             <div className="space-y-3">
@@ -1129,6 +1278,7 @@ export default function WorkflowDashboard() {
               metrics={publishedMetrics}
               review={review}
               onGenerate={handleGenerateReview}
+              onCancel={() => tasks.cancel("review")}
               generating={isReviewing}
             />
           </ToolScroll>
@@ -1152,6 +1302,10 @@ export default function WorkflowDashboard() {
                 isGeneratingContentImage={isGeneratingContentImage}
                 onGenerateCover={handleGenerateCover}
                 onGenerateContentImage={handleGenerateContentImage}
+                onCancelGenerate={() => {
+                  tasks.cancel("cover");
+                  tasks.cancel("contentImage");
+                }}
                 onSelectTopic={handleSelectTopic}
                 onSelectDraft={handleSelectDraft}
                 onConfigChange={setCoverConfig}

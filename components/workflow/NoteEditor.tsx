@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, Sparkles } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Badge from "@/components/ui/Badge";
 import EmptyState from "@/components/ui/EmptyState";
 import Skeleton, { SkeletonText } from "@/components/ui/Skeleton";
 import { Field, Input, Textarea } from "@/components/ui/Field";
+import InlineRewriteBar from "@/components/workflow/InlineRewriteBar";
+import type { InlineRewriteAction } from "@/lib/inlineRewrite";
 import type { ContentCard, DraftNote } from "@/lib/xhsWorkflow";
 
 interface NoteEditorProps {
@@ -16,8 +18,17 @@ interface NoteEditorProps {
   isGenerating: boolean;
   isSaving: boolean;
   onGenerateDraft: () => void;
+  onCancelGenerate: () => void;
   onSaveDraft: (draft: DraftNote) => void;
   onOpenRewrite: () => void;
+  /** 内联改写：返回改好的片段，返回 null 表示失败或被取消 */
+  onInlineRewrite: (payload: {
+    selection: string;
+    action: InlineRewriteAction;
+    instruction?: string;
+  }) => Promise<string | null>;
+  onCancelInlineRewrite: () => void;
+  isRewriting: boolean;
 }
 
 /**
@@ -31,18 +42,87 @@ export default function NoteEditor({
   isGenerating,
   isSaving,
   onGenerateDraft,
+  onCancelGenerate,
   onSaveDraft,
   onOpenRewrite,
+  onInlineRewrite,
+  onCancelInlineRewrite,
+  isRewriting,
 }: NoteEditorProps) {
   const [form, setForm] = useState<DraftNote | null>(selectedDraft);
+  const contentRef = useRef<HTMLTextAreaElement>(null);
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
+  const [barOpen, setBarOpen] = useState(false);
+  // 改写前的正文快照 + 当时的选区，供「撤销改写」一键还原到改之前的状态
+  const [undoSnapshot, setUndoSnapshot] = useState<{ content: string; start: number; end: number } | null>(null);
+  // 正文被程序改写后要把选区落回 DOM，否则 textarea 的高亮和条上的字数会对不上
+  const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null);
 
   useEffect(() => {
     setForm(selectedDraft);
+    setBarOpen(false);
+    setUndoSnapshot(null);
   }, [selectedDraft]);
 
   const updateField = (field: "title" | "coverText" | "content", value: string) => {
     setForm((current) => (current ? { ...current, [field]: value } : current));
   };
+
+  useEffect(() => {
+    const pending = pendingSelectionRef.current;
+    if (!pending || !contentRef.current) return;
+    pendingSelectionRef.current = null;
+    contentRef.current.focus();
+    contentRef.current.setSelectionRange(pending.start, pending.end);
+  }, [form?.content]);
+
+  // 选区变化就记下来；一旦真的选中了内容，改写条自动滑入
+  const syncSelection = useCallback(() => {
+    const element = contentRef.current;
+    if (!element) return;
+    const next = { start: element.selectionStart, end: element.selectionEnd };
+    setSelection(next);
+    if (next.end > next.start) setBarOpen(true);
+  }, []);
+
+  const handleRewrite = useCallback(
+    async (action: InlineRewriteAction, instruction?: string) => {
+      const original = form?.content;
+      if (!original) return;
+      const { start, end } = selection;
+      const picked = original.slice(start, end);
+      if (!picked.trim()) return;
+
+      const rewritten = await onInlineRewrite({ selection: picked, action, instruction });
+      if (rewritten === null) return;
+
+      setUndoSnapshot({ content: original, start, end });
+      updateField("content", original.slice(0, start) + rewritten + original.slice(end));
+      // 改完把选区收敛到新片段上，方便连续改
+      const next = { start, end: start + rewritten.length };
+      setSelection(next);
+      pendingSelectionRef.current = next;
+    },
+    [form?.content, onInlineRewrite, selection]
+  );
+
+  const handleUndo = useCallback(() => {
+    if (!undoSnapshot) return;
+    updateField("content", undoSnapshot.content);
+    // 选区一并还原，否则接着点改写会改到错位的片段上
+    const restored = { start: undoSnapshot.start, end: undoSnapshot.end };
+    setSelection(restored);
+    pendingSelectionRef.current = restored;
+    setUndoSnapshot(null);
+  }, [undoSnapshot]);
+
+  const handleDismissBar = useCallback(() => {
+    setBarOpen(false);
+    setUndoSnapshot(null);
+  }, []);
+
+  const selectionLength = selection.end - selection.start;
+  const showRewriteBar = barOpen && (selectionLength > 0 || undoSnapshot !== null || isRewriting);
 
   if (!selectedTopic) {
     return (
@@ -74,7 +154,12 @@ export default function NoteEditor({
               <div className="mt-6">
                 <SkeletonText lines={6} />
               </div>
-              <p className="mt-6 text-xs font-semibold text-brand-500">正在写这一篇…</p>
+              <div className="mt-6 flex items-center justify-between">
+                <p className="text-xs font-semibold text-brand-500">正在写这一篇…</p>
+                <Button size="sm" variant="ghost" onClick={onCancelGenerate}>
+                  取消
+                </Button>
+              </div>
             </div>
           ) : (
             <EmptyState
@@ -111,8 +196,12 @@ export default function NoteEditor({
               <div className="mt-4">
                 <Field label="正文">
                   <Textarea
+                    ref={contentRef}
                     value={form.content}
                     onChange={(event) => updateField("content", event.target.value)}
+                    onSelect={syncSelection}
+                    onKeyUp={syncSelection}
+                    onMouseUp={syncSelection}
                     rows={18}
                     placeholder="正文…"
                   />
@@ -121,18 +210,35 @@ export default function NoteEditor({
             </div>
           </div>
 
+          {showRewriteBar && (
+            <InlineRewriteBar
+              selectionLength={selectionLength}
+              running={isRewriting}
+              canUndo={undoSnapshot !== null}
+              onRun={handleRewrite}
+              onCancel={onCancelInlineRewrite}
+              onUndo={handleUndo}
+              onDismiss={handleDismissBar}
+            />
+          )}
+
           <div className="flex shrink-0 items-center gap-2 border-t border-line bg-surface px-5 py-3">
             <span className="font-rounded text-xs tabular-nums text-faint">{form.content.length} 字</span>
             <div className="ml-auto flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={onGenerateDraft}
-                loading={isGenerating}
-                icon={<RefreshCw size={13} strokeWidth={2.4} />}
-              >
-                {isGenerating ? "生成中" : "重新生成"}
-              </Button>
+              {isGenerating ? (
+                <Button size="sm" variant="ghost" onClick={onCancelGenerate}>
+                  取消生成
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={onGenerateDraft}
+                  icon={<RefreshCw size={13} strokeWidth={2.4} />}
+                >
+                  重新生成
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="secondary"

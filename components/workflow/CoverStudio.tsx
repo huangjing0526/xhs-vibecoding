@@ -45,6 +45,7 @@ interface CoverStudioProps {
   isGeneratingContentImage: boolean;
   onGenerateCover: () => void;
   onGenerateContentImage: () => void;
+  onCancelGenerate: () => void;
   onSelectTopic: (topic: ContentCard) => void;
   onSelectDraft: (draft: DraftNote) => void;
   onConfigChange: (config: CoverConfig) => void;
@@ -324,6 +325,7 @@ export default function CoverStudio({
   isGeneratingContentImage,
   onGenerateCover,
   onGenerateContentImage,
+  onCancelGenerate,
   onSelectTopic,
   onSelectDraft,
   onConfigChange,
@@ -433,6 +435,11 @@ export default function CoverStudio({
               ? isGenerating ? "生成中" : "生成封面方案"
               : isGeneratingContentImage ? "生成中" : "生成内容图"}
           </Button>
+          {(isGenerating || isGeneratingContentImage) && (
+            <Button variant="ghost" onClick={onCancelGenerate}>
+              取消
+            </Button>
+          )}
         </div>
       </div>
 

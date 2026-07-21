@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, type ReactNode } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 import VibeNoteLogo from "@/components/VibeNoteLogo";
 import NavIcon from "@/components/workflow/NavIcon";
 import Button from "@/components/ui/Button";
@@ -41,6 +41,7 @@ interface WorkbenchShellProps {
   syncing: boolean;
   syncLabel: string;
   onSync: () => void;
+  onOpenCommandPalette: () => void;
   children: ReactNode;
 }
 
@@ -90,6 +91,7 @@ export default function WorkbenchShell({
   syncing,
   syncLabel,
   onSync,
+  onOpenCommandPalette,
   children,
 }: WorkbenchShellProps) {
   const isConnected = workflowMode === "connected";
@@ -109,7 +111,17 @@ export default function WorkbenchShell({
           </span>
         </div>
 
-        <nav className="mt-2 flex-1 overflow-y-auto pb-2" aria-label="工作区">
+        <button
+          type="button"
+          onClick={onOpenCommandPalette}
+          className="mt-2 flex w-full items-center gap-2 rounded-2xl border border-line bg-surface/70 px-3 py-2 text-left transition-colors hover:border-brand-300 hover:bg-surface"
+        >
+          <Search size={14} className="shrink-0 text-faint" />
+          <span className="flex-1 text-[13px] font-semibold text-faint">搜索或执行</span>
+          <kbd className="shrink-0 rounded-md bg-soft px-1.5 py-0.5 font-mono text-[10px] font-bold text-faint">⌘K</kbd>
+        </button>
+
+        <nav className="mt-3 flex-1 overflow-y-auto pb-2" aria-label="工作区">
           <div className="mb-5 space-y-1">
             {leadItems.map((item) => (
               <NavButton key={item.id} item={item} active={area === item.id} onSelect={onAreaChange} />
