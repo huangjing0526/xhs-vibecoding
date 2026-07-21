@@ -2,6 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { Clapperboard, Copy, Download, Sparkles } from "lucide-react";
+import Button from "@/components/ui/Button";
+import Callout from "@/components/ui/Callout";
+import EmptyState from "@/components/ui/EmptyState";
 import SegmentedControl from "./SegmentedControl";
 import type { BloggerDistillation } from "@/lib/bloggerWorkflow";
 import {
@@ -122,11 +126,11 @@ export default function VideoStudio({
 
   return (
     <section className="space-y-4">
-      <div className="rounded-lg border border-[#E5E5EA] bg-white p-4">
+      <div className="rounded-3xl border border-line bg-surface p-5 shadow-card">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <h3 className="text-base font-semibold text-[#1D1D1F]">视频参数</h3>
-            <p className="mt-1 text-sm text-[#6E6E73]">先「生成视频方案」出脚本/分镜/字幕，再「渲染成片」用本地 Remotion + edge-tts 配音出 mp4。</p>
+            <h3 className="text-[15px] font-bold text-ink">视频参数</h3>
+            <p className="mt-1 text-sm leading-6 text-muted">先「生成视频脚本」出脚本/分镜/字幕，再「渲染成片」用本地 Remotion + edge-tts 配音出 mp4。</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <SegmentedControl
@@ -162,54 +166,51 @@ export default function VideoStudio({
                 { value: "fast", label: "快" },
               ]}
             />
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={!input}
-              className="rounded-lg bg-[#FF2442] px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(255,36,66,0.18)] disabled:cursor-not-allowed disabled:bg-[#E5E5EA] disabled:text-[#A1A1A6] disabled:shadow-none"
-            >
-              生成视频方案
-            </button>
-            <button
-              type="button"
+            <Button variant="ai" onClick={handleGenerate} disabled={!input} icon={<Sparkles size={15} />}>
+              生成视频脚本
+            </Button>
+            <Button
+              variant="primary"
               onClick={handleRender}
-              disabled={!plan || renderStatus === "rendering"}
-              className="rounded-lg border border-[#1D1D1F] bg-[#1D1D1F] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:border-[#E5E5EA] disabled:bg-[#E5E5EA] disabled:text-[#A1A1A6]"
+              disabled={!plan}
+              loading={renderStatus === "rendering"}
+              icon={<Clapperboard size={15} />}
             >
-              {renderStatus === "rendering" ? "渲染中..." : "渲染成片"}
-            </button>
+              {renderStatus === "rendering" ? "渲染中" : "渲染成片"}
+            </Button>
           </div>
         </div>
-        <p className="mt-3 text-xs text-[#A1A1A6]">
-          渲染成片需先在 <code className="rounded bg-[#F5F5F7] px-1">services/video-renderer</code> 启动本地渲染服务（Remotion + edge-tts 配音）。
+        <p className="mt-3 text-xs leading-5 text-faint">
+          渲染成片需先在 <code className="rounded-md bg-soft px-1.5 py-0.5 font-mono">services/video-renderer</code> 启动本地渲染服务（Remotion + edge-tts 配音）。
         </p>
       </div>
 
       {(renderStatus !== "idle" || renderResult) && (
-        <div className="rounded-lg border border-[#E5E5EA] bg-white p-4">
+        <div className="rounded-3xl border border-line bg-surface p-5 shadow-card">
           <div className="flex items-center justify-between">
-            <h3 className="text-base font-semibold text-[#1D1D1F]">成片预览</h3>
+            <h3 className="text-[15px] font-bold text-ink">成片预览</h3>
             {renderResult && (
               <a
                 href={renderResult.videoUrl}
                 download
-                className="rounded-md border border-[#D2D2D7] px-3 py-1.5 text-xs font-semibold text-[#1D1D1F]"
+                className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line-strong bg-surface px-3 text-xs font-bold text-ink transition-colors hover:border-brand-300 hover:bg-brand-50"
               >
+                <Download size={13} />
                 下载 mp4
               </a>
             )}
           </div>
 
           {renderStatus === "rendering" && (
-            <div className="mt-3 flex min-h-[180px] items-center justify-center rounded-lg border border-dashed border-[#D2D2D7] text-sm text-[#6E6E73]">
+            <div className="mt-3 flex min-h-[180px] items-center justify-center rounded-2xl border border-dashed border-line-strong text-sm text-muted">
               正在配音 + 渲染，首次会先打包 Remotion 工程，请稍候…
             </div>
           )}
 
           {renderStatus === "error" && (
-            <div className="mt-3 rounded-lg border border-[#F3C9CF] bg-[#FFF1F3] p-3 text-sm leading-6 text-[#B91C2B]">
+            <Callout tone="warn" className="mt-3">
               {renderError}
-            </div>
+            </Callout>
           )}
 
           {renderResult && renderStatus === "done" && (
@@ -218,9 +219,9 @@ export default function VideoStudio({
                 key={renderResult.videoUrl}
                 src={renderResult.videoUrl}
                 controls
-                className="mx-auto max-h-[640px] rounded-lg border border-[#E5E5EA] bg-black"
+                className="mx-auto max-h-[640px] rounded-2xl border border-line bg-black"
               />
-              <p className="mt-2 text-center text-xs text-[#A1A1A6]">
+              <p className="mt-2 text-center text-xs text-faint">
                 时长约 {Math.round(renderResult.durationSec)}s · {renderResult.videoUrl}
               </p>
             </div>
@@ -229,75 +230,71 @@ export default function VideoStudio({
       )}
 
       <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="rounded-lg border border-[#E5E5EA] bg-white p-4">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#A1A1A6]">Video Plan</div>
-          <h3 className="mt-2 text-xl font-semibold text-[#1D1D1F]">
+        <aside className="rounded-3xl border border-line bg-surface p-5 shadow-card">
+          <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">视频方案</div>
+          <h3 className="mt-2 font-rounded text-xl font-bold text-ink">
             {plan ? formatLabel(plan.format) : "待生成方案"}
           </h3>
-          <div className="mt-4 space-y-2 text-sm text-[#6E6E73]">
-            <div className="rounded-lg bg-[#F5F5F7] px-3 py-2">Hook</div>
-            <div className="rounded-lg bg-[#F5F5F7] px-3 py-2">口播稿</div>
-            <div className="rounded-lg bg-[#F5F5F7] px-3 py-2">分镜</div>
-            <div className="rounded-lg bg-[#F5F5F7] px-3 py-2">字幕</div>
-            <div className="rounded-lg bg-[#F5F5F7] px-3 py-2">Prompt</div>
+          <div className="mt-4 space-y-2 text-sm text-muted">
+            <div className="rounded-xl bg-soft px-3 py-2">开头钩子</div>
+            <div className="rounded-xl bg-soft px-3 py-2">口播稿</div>
+            <div className="rounded-xl bg-soft px-3 py-2">分镜</div>
+            <div className="rounded-xl bg-soft px-3 py-2">字幕</div>
+            <div className="rounded-xl bg-soft px-3 py-2">生成 Prompt</div>
           </div>
         </aside>
 
-        <section className="rounded-lg border border-[#E5E5EA] bg-white p-4">
+        <section className="rounded-3xl border border-line bg-surface p-5 shadow-card">
           {plan ? (
             <div className="space-y-4">
-              <div className="rounded-lg bg-[#FFF1F3] p-4">
-                <div className="text-xs font-semibold text-[#FF2442]">Hook</div>
-                <p className="mt-2 text-lg font-semibold leading-7 text-[#1D1D1F]">{plan.hook}</p>
+              <div className="rounded-2xl bg-brand-50 p-4">
+                <div className="text-xs font-bold text-brand-600">开头钩子</div>
+                <p className="mt-2 text-lg font-bold leading-7 text-ink">{plan.hook}</p>
               </div>
 
-              <div className="rounded-lg border border-[#E5E5EA] p-4">
+              <div className="rounded-2xl border border-line p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <h4 className="text-sm font-semibold text-[#1D1D1F]">口播稿</h4>
-                  <button
-                    type="button"
-                    onClick={() => handleCopy("口播稿", plan.voiceover)}
-                    className="rounded-md border border-[#D2D2D7] px-3 py-1.5 text-xs font-semibold text-[#1D1D1F]"
-                  >
+                  <h4 className="text-sm font-bold text-ink">口播稿</h4>
+                  <Button size="sm" variant="secondary" onClick={() => handleCopy("口播稿", plan.voiceover)} icon={<Copy size={13} />}>
                     复制
-                  </button>
+                  </Button>
                 </div>
-                <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-[#1D1D1F]">{plan.voiceover}</p>
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-ink">{plan.voiceover}</p>
               </div>
 
-              <div className="rounded-lg border border-[#E5E5EA] p-4">
-                <h4 className="text-sm font-semibold text-[#1D1D1F]">分镜脚本</h4>
-                <div className="mt-3 divide-y divide-[#E5E5EA]">
+              <div className="rounded-2xl border border-line p-4">
+                <h4 className="text-sm font-bold text-ink">分镜脚本</h4>
+                <div className="mt-3 divide-y divide-line">
                   {plan.scenes.map((scene) => (
                     <div key={scene.order} className="grid gap-3 py-3 md:grid-cols-[64px_1fr_1fr_88px]">
-                      <div className="text-sm font-semibold tabular-nums text-[#FF2442]">0{scene.order}</div>
-                      <div className="text-sm leading-6 text-[#1D1D1F]">{scene.visual}</div>
-                      <div className="text-sm leading-6 text-[#6E6E73]">{scene.subtitle}</div>
-                      <div className="text-sm font-semibold text-[#A1A1A6]">{scene.durationHint}</div>
+                      <div className="font-rounded text-sm font-bold tabular-nums text-brand-500">0{scene.order}</div>
+                      <div className="text-sm leading-6 text-ink">{scene.visual}</div>
+                      <div className="text-sm leading-6 text-muted">{scene.subtitle}</div>
+                      <div className="text-sm font-semibold text-faint">{scene.durationHint}</div>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="rounded-lg border border-[#E5E5EA] p-4">
+              <div className="rounded-2xl border border-line p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <h4 className="text-sm font-semibold text-[#1D1D1F]">视频生成 Prompt</h4>
-                  <button
-                    type="button"
-                    onClick={() => handleCopy("Prompt", plan.generationPrompt)}
-                    className="rounded-md border border-[#D2D2D7] px-3 py-1.5 text-xs font-semibold text-[#1D1D1F]"
-                  >
+                  <h4 className="text-sm font-bold text-ink">视频生成 Prompt</h4>
+                  <Button size="sm" variant="secondary" onClick={() => handleCopy("Prompt", plan.generationPrompt)} icon={<Copy size={13} />}>
                     复制
-                  </button>
+                  </Button>
                 </div>
-                <pre className="mt-3 whitespace-pre-wrap rounded-lg bg-[#F5F5F7] p-3 text-sm leading-7 text-[#1D1D1F]">
+                <pre className="mt-3 whitespace-pre-wrap rounded-2xl bg-soft p-4 font-mono text-xs leading-6 text-ink">
                   {plan.generationPrompt}
                 </pre>
               </div>
             </div>
           ) : (
-            <div className="flex min-h-[520px] items-center justify-center rounded-lg border border-dashed border-[#D2D2D7] text-center text-sm leading-6 text-[#6E6E73]">
-              {input ? "点击「生成视频方案」输出脚本和 Prompt。" : "先选择选题或草稿。"}
+            <div className="min-h-[520px]">
+              <EmptyState
+                icon={<Clapperboard size={22} />}
+                title={input ? "还没有视频方案" : "先选择选题或草稿"}
+                description={input ? "点上方「生成视频脚本」，输出钩子、口播稿、分镜与生成 Prompt。" : undefined}
+              />
             </div>
           )}
         </section>

@@ -1,6 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import Button from "@/components/ui/Button";
+import Callout from "@/components/ui/Callout";
+import CollapsiblePanel from "@/components/ui/CollapsiblePanel";
+import { Field, Textarea } from "@/components/ui/Field";
 import { extractClues } from "@/lib/workflowClient";
 import type { ExtractedClue } from "@/lib/clueIntake";
 import type { Notice } from "./types";
@@ -56,68 +60,49 @@ export default function ClueIntakePanel({ onClues, onNotice }: ClueIntakePanelPr
   };
 
   return (
-    <details className="group border border-stone-300 bg-white">
-      <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-2.5 transition-colors hover:bg-stone-50">
-        <div className="flex items-center gap-3">
-          <span className="text-stone-400 transition-transform group-open:rotate-90">▸</span>
-          <div>
-            <div className="text-xs font-black uppercase tracking-wider text-stone-400">Clue Intake</div>
-            <div className="text-sm font-black text-stone-950">从 X / GitHub 线索采集</div>
-          </div>
-        </div>
-        <span className="text-xs text-stone-500">粘贴链接联网抓取，或直接贴原文</span>
-      </summary>
-
-      <div className="border-t border-stone-200 p-4">
-        <label className="block text-xs font-bold text-stone-500">线索链接或原文</label>
-        <textarea
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          rows={3}
-          placeholder="贴一条 X 帖子 / GitHub 仓库或 Issue 链接（自动联网抓取），或直接粘贴正文"
-          className="mt-2 w-full resize-none border border-stone-300 bg-[#f8f6f1] px-3 py-2 text-sm font-semibold text-stone-900 outline-none focus:border-stone-950"
-        />
-        <p className="mt-2 text-xs leading-5 text-stone-500">
-          GitHub 走公开 API 取仓库描述 + README / Issue 正文；X 与普通网页直接抓取，抓不全时改为粘贴原文。提炼为待提炼素材，进入素材库后参与生成选题。
-        </p>
+    <CollapsiblePanel title="从 X / GitHub 线索采集" hint="粘贴链接联网抓取，或直接贴原文">
+      <div className="p-5">
+        <Field
+          label="线索链接或原文"
+          hint="GitHub 走公开 API 取仓库描述 + README / Issue 正文；X 与普通网页直接抓取，抓不全时改为粘贴原文。提炼结果进素材库后参与生成选题。"
+        >
+          <Textarea
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            rows={3}
+            placeholder="贴一条 X 帖子 / GitHub 仓库或 Issue 链接（自动联网抓取），或直接粘贴正文"
+          />
+        </Field>
         <div className="mt-3 flex gap-2">
-          <button
-            type="button"
-            onClick={handleExtract}
-            disabled={isExtracting || !input.trim()}
-            className="border border-stone-950 bg-white px-3 py-2 text-sm font-black text-stone-950 transition-colors hover:bg-stone-950 hover:text-white disabled:cursor-not-allowed disabled:border-stone-300 disabled:text-stone-400"
-          >
+          <Button variant="secondary" onClick={handleExtract} loading={isExtracting} disabled={!input.trim()}>
             {isExtracting ? "提炼中" : "提炼候选"}
-          </button>
-          <button
-            type="button"
-            onClick={handleAdd}
-            disabled={candidates.length === 0}
-            className="border border-rose-600 bg-rose-600 px-3 py-2 text-sm font-black text-white transition-colors hover:bg-stone-950 disabled:cursor-not-allowed disabled:border-stone-300 disabled:bg-stone-200 disabled:text-stone-500"
-          >
+          </Button>
+          <Button variant="primary" onClick={handleAdd} disabled={candidates.length === 0}>
             加入素材库（{candidates.length}）
-          </button>
+          </Button>
         </div>
       </div>
 
       {candidates.length > 0 && (
-        <div className="border-t border-stone-200 p-4">
-          <div className="text-xs font-bold text-stone-400">候选素材{sourceLabel && ` · 来源 ${sourceLabel}`}</div>
-          <ul className="mt-2 space-y-2">
+        <div className="border-t border-line bg-soft p-5">
+          <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">
+            候选素材{sourceLabel && ` · 来源 ${sourceLabel}`}
+          </div>
+          <ul className="mt-2.5 space-y-2">
             {candidates.map((clue, index) => (
-              <li key={`${clue.event}-${index}`} className="border border-stone-200 bg-[#f8f6f1] px-3 py-2">
-                <div className="text-sm font-bold leading-6 text-stone-900">{clue.event}</div>
-                <div className="mt-0.5 text-xs leading-5 text-stone-600">方法：{clue.method || "（待补）"}</div>
-                {clue.pitfall && <div className="mt-0.5 text-xs leading-5 text-stone-500">痛点：{clue.pitfall}</div>}
-                {clue.relatedTerm && <div className="mt-0.5 text-xs text-stone-400">术语：{clue.relatedTerm}</div>}
+              <li key={`${clue.event}-${index}`} className="rounded-2xl border border-line bg-surface px-4 py-3">
+                <div className="text-sm font-bold leading-6 text-ink">{clue.event}</div>
+                <div className="mt-0.5 text-xs leading-5 text-muted">方法：{clue.method || "（待补）"}</div>
+                {clue.pitfall && <div className="mt-0.5 text-xs leading-5 text-muted">痛点：{clue.pitfall}</div>}
+                {clue.relatedTerm && <div className="mt-0.5 text-xs text-faint">术语：{clue.relatedTerm}</div>}
               </li>
             ))}
           </ul>
-          <div className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">
+          <Callout tone="warn" className="mt-3">
             候选还没入库。点「加入素材库」后会作为待提炼素材进入素材库，可再编辑。
-          </div>
+          </Callout>
         </div>
       )}
-    </details>
+    </CollapsiblePanel>
   );
 }

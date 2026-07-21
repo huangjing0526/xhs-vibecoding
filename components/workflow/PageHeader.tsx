@@ -12,16 +12,15 @@ interface PageHeaderProps {
 }
 
 /**
- * 统一页头：给每个区一个清晰的视觉焦点（大标题 + 副标题 + 主操作），
- * 对标参考站把「一个主操作」放在最显眼位置的层级感。
+ * 统一页头：每个区一个清晰的视觉焦点——大标题 + 一句说明 + 唯一主操作。
  */
 export default function PageHeader({ title, subtitle, action, meta, variant = "page" }: PageHeaderProps) {
   if (variant === "bar") {
     return (
       <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <h1 className="shrink-0 text-base font-black tracking-tight text-[#111111]">{title}</h1>
-          {subtitle && <span className="truncate text-xs font-medium text-[#8B8983]">{subtitle}</span>}
+        <div className="flex min-w-0 items-baseline gap-2.5">
+          <h1 className="shrink-0 text-[15px] font-bold tracking-tight text-ink">{title}</h1>
+          {subtitle && <span className="truncate text-xs font-medium text-faint">{subtitle}</span>}
         </div>
         {action && <div className="shrink-0">{action}</div>}
       </div>
@@ -29,15 +28,15 @@ export default function PageHeader({ title, subtitle, action, meta, variant = "p
   }
 
   return (
-    <div className="mb-5">
+    <div className="mb-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-[26px] font-black leading-tight tracking-tight text-[#111111]">{title}</h1>
-          {subtitle && <p className="mt-1.5 text-sm leading-6 text-[#6E6E73]">{subtitle}</p>}
+          <h1 className="font-rounded text-[28px] font-bold leading-tight tracking-tight text-ink">{title}</h1>
+          {subtitle && <p className="mt-1.5 text-sm leading-6 text-muted">{subtitle}</p>}
         </div>
         {action && <div className="shrink-0">{action}</div>}
       </div>
-      {meta && <div className="mt-3">{meta}</div>}
+      {meta && <div className="mt-4">{meta}</div>}
     </div>
   );
 }

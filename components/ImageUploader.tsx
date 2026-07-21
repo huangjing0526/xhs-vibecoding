@@ -89,7 +89,7 @@ export default function ImageUploader({
           <img
             src={currentImage}
             alt="背景图预览"
-            className="w-full h-32 object-cover rounded-lg"
+            className="w-full h-32 object-cover rounded-2xl"
           />
           <button
             onClick={() => onImageSelect("")}
@@ -114,11 +114,11 @@ export default function ImageUploader({
           setIsDragging(false);
         }}
         className={`
-          relative border-2 border-dashed rounded-lg p-4 text-center
+          relative border-2 border-dashed rounded-2xl p-4 text-center
           transition-all duration-200 cursor-pointer
           ${
             isDragging
-              ? "border-xhs-red bg-red-50"
+              ? "border-brand-400 bg-brand-50"
               : "border-gray-300 hover:border-gray-400"
           }
         `}
@@ -156,13 +156,13 @@ export default function ImageUploader({
           value={imageUrl}
           onChange={(e) => setImageUrl(e.target.value)}
           placeholder="或粘贴图片URL..."
-          className="flex-1 px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-xhs-red focus:border-transparent"
+          className="flex-1 px-3 py-2 text-sm border rounded-2xl focus:ring-4 focus:ring-brand-500/10 focus:border-brand-300"
           onKeyDown={(e) => e.key === "Enter" && handleUrlSubmit()}
         />
         <button
           onClick={handleUrlSubmit}
           disabled={!imageUrl.trim()}
-          className="px-4 py-2 text-sm bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="px-4 py-2 text-sm bg-gray-100 rounded-2xl hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           确定
         </button>

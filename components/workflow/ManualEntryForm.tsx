@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Plus, X } from "lucide-react";
+import Button from "@/components/ui/Button";
+import { Input, Textarea } from "@/components/ui/Field";
 
 export interface ManualField {
   name: string;
@@ -11,7 +14,7 @@ export interface ManualField {
 }
 
 interface ManualEntryFormProps {
-  /** 折叠按钮文案，例如「+ 手动新增素材」（受控/编辑模式下不渲染触发按钮） */
+  /** 折叠按钮文案，例如「手动新增素材」（受控/编辑模式下不渲染触发按钮） */
   triggerLabel?: string;
   /** 表单标题 */
   title: string;
@@ -77,62 +80,52 @@ export default function ManualEntryForm({
           setValues({});
           setOpen(true);
         }}
-        className="rounded-lg border border-dashed border-[#C7C7CC] bg-white px-4 py-2.5 text-sm font-semibold text-[#6E6E73] transition-colors hover:border-[#FF2442] hover:text-[#FF2442]"
+        className="inline-flex items-center gap-1.5 rounded-2xl border border-dashed border-line-strong bg-surface px-4 py-2.5 text-sm font-bold text-muted transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-600"
       >
+        <Plus size={15} strokeWidth={2.4} />
         {triggerLabel}
       </button>
     );
   }
 
   const formBody = (
-    <section className="rounded-lg border border-[#E5E5EA] bg-white p-4">
+    <section className="rounded-3xl border border-line bg-surface p-5 shadow-raised">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-[#1D1D1F]">{title}</h3>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="text-xs font-semibold text-[#A1A1A6] hover:text-[#1D1D1F]"
-        >
-          收起
-        </button>
+        <h3 className="text-[15px] font-bold text-ink">{title}</h3>
+        <Button size="sm" variant="ghost" onClick={() => setOpen(false)} icon={<X size={14} strokeWidth={2.4} />}>
+          关闭
+        </Button>
       </div>
 
-      <div className="mt-3 space-y-3">
+      <div className="mt-4 space-y-3.5">
         {fields.map((field) => (
           <label key={field.name} className="block">
-            <span className="text-xs font-semibold text-[#6E6E73]">
+            <span className="mb-1.5 block text-xs font-bold text-muted">
               {field.label}
-              {field.required && <span className="ml-0.5 text-[#FF2442]">*</span>}
+              {field.required && <span className="ml-0.5 text-danger">*</span>}
             </span>
             {field.multiline ? (
-              <textarea
+              <Textarea
                 value={values[field.name] || ""}
                 onChange={(event) => setValues((prev) => ({ ...prev, [field.name]: event.target.value }))}
                 rows={4}
                 placeholder={field.placeholder}
-                className="mt-1 w-full resize-y rounded-md border border-[#D2D2D7] bg-white px-3 py-2 text-sm leading-6 text-[#1D1D1F] outline-none focus:border-[#1D1D1F]"
               />
             ) : (
-              <input
+              <Input
                 value={values[field.name] || ""}
                 onChange={(event) => setValues((prev) => ({ ...prev, [field.name]: event.target.value }))}
                 placeholder={field.placeholder}
-                className="mt-1 w-full rounded-md border border-[#D2D2D7] bg-white px-3 py-2 text-sm text-[#1D1D1F] outline-none focus:border-[#1D1D1F]"
               />
             )}
           </label>
         ))}
       </div>
 
-      <div className="mt-4 flex justify-end">
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={missingRequired}
-          className="rounded-lg bg-[#1D1D1F] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#000] disabled:cursor-not-allowed disabled:bg-[#E5E5EA] disabled:text-[#A1A1A6]"
-        >
+      <div className="mt-5 flex justify-end">
+        <Button variant="primary" size="lg" onClick={handleSubmit} disabled={missingRequired}>
           {submitLabel}
-        </button>
+        </Button>
       </div>
     </section>
   );
@@ -140,7 +133,7 @@ export default function ManualEntryForm({
   if (asModal) {
     return (
       <div
-        className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/40 p-4 sm:items-center"
+        className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-ink/40 p-4 backdrop-blur-sm sm:items-center"
         onClick={() => setOpen(false)}
       >
         <div className="w-full max-w-lg" onClick={(event) => event.stopPropagation()}>

@@ -17,11 +17,11 @@ export default function RootLayout({
       <body className="antialiased">
         {children}
         <Toaster
-          position="bottom-right"
+          position="top-right"
           richColors
           closeButton
           toastOptions={{
-            className: "!border !border-stone-300 !font-semibold",
+            className: "!rounded-2xl !border !border-line !font-semibold !shadow-raised",
           }}
         />
       </body>

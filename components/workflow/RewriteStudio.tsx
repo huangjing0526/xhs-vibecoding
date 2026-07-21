@@ -1,6 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Sparkles } from "lucide-react";
+import Button from "@/components/ui/Button";
+import Callout from "@/components/ui/Callout";
+import EmptyState from "@/components/ui/EmptyState";
 import SegmentedControl from "./SegmentedControl";
 import type { BloggerDistillation } from "@/lib/bloggerWorkflow";
 import {
@@ -86,11 +90,11 @@ export default function RewriteStudio({
 
   return (
     <section className="space-y-4">
-      <div className="rounded-lg border border-[#E5E5EA] bg-white p-4">
+      <div className="rounded-3xl border border-line bg-surface p-5 shadow-card">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <h3 className="text-base font-semibold text-[#1D1D1F]">改写控制</h3>
-            <p className="mt-1 text-sm text-[#6E6E73]">
+            <h3 className="text-[15px] font-bold text-ink">改写控制</h3>
+            <p className="mt-1 text-sm text-muted">
               当前参考：{bloggerDistillation ? "已选择博主道库" : "默认道库"}。
             </p>
           </div>
@@ -118,41 +122,31 @@ export default function RewriteStudio({
                 { value: "deep", label: "重构" },
               ]}
             />
-            <button
-              type="button"
-              onClick={handleRewrite}
-              disabled={!input}
-              className="rounded-lg bg-[#FF2442] px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(255,36,66,0.18)] disabled:cursor-not-allowed disabled:bg-[#E5E5EA] disabled:text-[#A1A1A6] disabled:shadow-none"
-            >
+            <Button variant="ai" onClick={handleRewrite} disabled={!input} icon={<Sparkles size={15} />}>
               改写内容
-            </button>
+            </Button>
           </div>
         </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-        <section className="rounded-lg border border-[#E5E5EA] bg-white p-4">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#A1A1A6]">Original</div>
-          <h3 className="mt-2 text-xl font-semibold leading-7 text-[#1D1D1F]">{getSourceTitle(selectedTopic, selectedDraft)}</h3>
-          <div className="mt-4 whitespace-pre-wrap rounded-lg bg-[#F5F5F7] p-4 text-sm leading-7 text-[#1D1D1F]">
+        <section className="rounded-3xl border border-line bg-surface p-5 shadow-card">
+          <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">改写前</div>
+          <h3 className="mt-2 text-xl font-bold leading-7 text-ink">{getSourceTitle(selectedTopic, selectedDraft)}</h3>
+          <div className="mt-4 whitespace-pre-wrap rounded-2xl bg-soft p-4 text-sm leading-7 text-ink">
             {getSourceBody(selectedTopic, selectedDraft)}
           </div>
         </section>
 
-        <section className="rounded-lg border border-[#E5E5EA] bg-white p-4">
+        <section className="rounded-3xl border border-line bg-surface p-5 shadow-card">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#A1A1A6]">Rewrite</div>
-              <h3 className="mt-2 text-xl font-semibold text-[#1D1D1F]">改写结果</h3>
+              <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">改写后</div>
+              <h3 className="mt-2 text-xl font-bold text-ink">改写结果</h3>
             </div>
-            <button
-              type="button"
-              onClick={handleApply}
-              disabled={!result}
-              className="rounded-lg border border-[#D2D2D7] bg-white px-4 py-2 text-sm font-semibold text-[#1D1D1F] hover:bg-[#F5F5F7] disabled:cursor-not-allowed disabled:text-[#A1A1A6]"
-            >
+            <Button variant="secondary" onClick={handleApply} disabled={!result}>
               应用到草稿
-            </button>
+            </Button>
           </div>
 
           {result ? (
@@ -162,42 +156,46 @@ export default function RewriteStudio({
                   <button
                     key={title}
                     type="button"
-                    className="block w-full rounded-lg border border-[#E5E5EA] bg-[#FBFBFD] px-3 py-2 text-left text-sm font-semibold leading-6 text-[#1D1D1F] hover:border-[#FF2442]"
+                    className="block w-full rounded-2xl border border-line bg-soft px-3.5 py-2.5 text-left text-sm font-semibold leading-6 text-ink transition-colors hover:border-brand-300 hover:bg-brand-50"
                   >
-                    <span className="mr-2 text-xs font-semibold text-[#FF2442]">0{index + 1}</span>
+                    <span className="mr-2 font-rounded text-xs font-bold text-brand-500">0{index + 1}</span>
                     {title}
                   </button>
                 ))}
               </div>
-              <div className="whitespace-pre-wrap rounded-lg bg-[#F5F5F7] p-4 text-sm leading-7 text-[#1D1D1F]">
+              <div className="whitespace-pre-wrap rounded-2xl bg-soft p-4 text-sm leading-7 text-ink">
                 {result.content}
               </div>
               <div className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-lg bg-[#FFF1F3] p-3">
-                  <div className="text-xs font-semibold text-[#FF2442]">命中道</div>
-                  <p className="mt-2 text-sm leading-6 text-[#1D1D1F]">{result.hitDao}</p>
+                <div className="rounded-2xl bg-brand-50 p-4">
+                  <div className="text-xs font-bold text-brand-600">命中道</div>
+                  <p className="mt-2 text-sm leading-6 text-ink">{result.hitDao}</p>
                 </div>
-                <div className="rounded-lg border border-[#E5E5EA] p-3">
-                  <div className="text-xs font-semibold text-[#6E6E73]">结构建议</div>
-                  <ul className="mt-2 space-y-1 text-sm leading-6 text-[#1D1D1F]">
+                <div className="rounded-2xl border border-line p-4">
+                  <div className="text-xs font-bold text-muted">结构建议</div>
+                  <ul className="mt-2 space-y-1 text-sm leading-6 text-ink">
                     {result.structureNotes.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
                   </ul>
                 </div>
               </div>
-              <div className="rounded-lg border border-[#F6D8A8] bg-[#FFF8EB] p-3">
-                <div className="text-xs font-semibold text-[#B7791F]">风险提示</div>
-                <ul className="mt-2 space-y-1 text-sm leading-6 text-[#1D1D1F]">
+              <Callout tone="warn">
+                <div className="font-bold">风险提示</div>
+                <ul className="mt-1.5 space-y-1 font-medium">
                   {result.risks.map((risk) => (
                     <li key={risk}>{risk}</li>
                   ))}
                 </ul>
-              </div>
+              </Callout>
             </div>
           ) : (
-            <div className="mt-4 flex min-h-[420px] items-center justify-center rounded-lg border border-dashed border-[#D2D2D7] text-sm text-[#6E6E73]">
-              {input ? "点击「改写内容」生成第一版结果。" : "先选择选题或草稿。"}
+            <div className="mt-4 min-h-[420px]">
+              <EmptyState
+                icon={<Sparkles size={22} />}
+                title={input ? "还没有改写结果" : "先选择选题或草稿"}
+                description={input ? "点右上「改写内容」，按当前道库生成第一版。" : undefined}
+              />
             </div>
           )}
         </section>

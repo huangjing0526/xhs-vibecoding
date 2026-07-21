@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import { Sparkles } from "lucide-react";
+import Button from "@/components/ui/Button";
 import CoverEditor from "@/components/CoverEditor";
 import { DEFAULT_TARGET_ID, assetPx, assetRatioCss } from "@/lib/targets";
 import { DEFAULT_COVER_CONFIG, generateCoverDataUrl, type CoverConfig } from "@/lib/cover";
@@ -229,13 +231,13 @@ function CoverVersionThumbnail({ config }: { config: CoverConfig }) {
 
   return (
     <div
-      className="relative overflow-hidden border border-stone-300 bg-stone-100"
+      className="relative overflow-hidden rounded-xl border border-line bg-soft"
       style={{ aspectRatio: assetRatioCss(DEFAULT_TARGET_ID, "cover") }}
     >
       {previewUrl ? (
         <Image src={previewUrl} alt="封面缩略图" fill sizes="128px" className="object-cover" unoptimized />
       ) : (
-        <div className="flex h-full w-full items-center justify-center text-[11px] font-bold text-stone-400">
+        <div className="flex h-full w-full items-center justify-center text-[11px] font-bold text-faint">
           生成中
         </div>
       )}
@@ -287,16 +289,16 @@ function ContentImagePreview({
   }, [onGenerated, plan]);
 
   return (
-    <div className="border border-stone-300 bg-stone-50 p-4">
+    <div className="rounded-2xl border border-line bg-soft p-4">
       <div className="mx-auto max-w-[420px]">
         <div
-          className="relative overflow-hidden border border-stone-950 bg-white shadow-[10px_10px_0_#1c1917]"
+          className="relative overflow-hidden rounded-2xl border border-line bg-surface shadow-raised"
           style={{ aspectRatio: assetRatioCss(DEFAULT_TARGET_ID, "content") }}
         >
           {previewUrl ? (
             <Image src={previewUrl} alt="内容配图预览" fill sizes="420px" className="object-cover" unoptimized />
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-stone-500">
+            <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-faint">
               {plan ? "渲染中" : "等待生成"}
             </div>
           )}
@@ -394,16 +396,16 @@ export default function CoverStudio({
   }, [contentImageDataUrl]);
 
   return (
-    <section className="border border-stone-300 bg-white">
-      <div className="grid border-b border-stone-200 lg:grid-cols-[1fr_auto]">
+    <section className="overflow-hidden rounded-3xl border border-line bg-surface shadow-card">
+      <div className="grid border-b border-line lg:grid-cols-[1fr_auto]">
         <div className="px-4 py-3">
-          <h2 className="font-black text-stone-950">图片生成工作台</h2>
-          <p className="mt-1 text-xs text-stone-500">
+          <h2 className="font-bold text-ink">图片生成工作台</h2>
+          <p className="mt-1 text-xs text-faint">
             {imageMode === "cover" ? "封面图" : activeContentTemplate.name}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 border-t border-stone-200 px-4 py-3 lg:border-l lg:border-t-0">
-          <div className="grid grid-cols-2 border border-stone-300">
+        <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3 lg:border-l lg:border-t-0">
+          <div className="grid grid-cols-2 gap-1 rounded-2xl bg-soft p-1">
             {([
               { id: "cover", label: "封面图" },
               { id: "content", label: "内容配图" },
@@ -412,43 +414,42 @@ export default function CoverStudio({
                 key={mode.id}
                 type="button"
                 onClick={() => onImageModeChange(mode.id)}
-                className={`px-3 py-2 text-sm font-black transition-colors ${
-                  imageMode === mode.id
-                    ? "bg-stone-950 text-white"
-                    : "bg-white text-stone-700 hover:bg-stone-100"
+                className={`rounded-xl px-3.5 py-1.5 text-sm font-bold transition-all ${
+                  imageMode === mode.id ? "bg-surface text-ink shadow-card" : "text-muted hover:text-ink"
                 }`}
               >
                 {mode.label}
               </button>
             ))}
           </div>
-          <button
-            type="button"
+          <Button
+            variant="ai"
             onClick={imageMode === "cover" ? onGenerateCover : onGenerateContentImage}
-            disabled={(imageMode === "cover" ? isGenerating : isGeneratingContentImage) || !hasSource}
-            className="border border-teal-700 bg-teal-700 px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-stone-950 disabled:cursor-not-allowed disabled:border-stone-300 disabled:bg-stone-200 disabled:text-stone-500"
+            loading={imageMode === "cover" ? isGenerating : isGeneratingContentImage}
+            disabled={!hasSource}
+            icon={<Sparkles size={15} />}
           >
             {imageMode === "cover"
               ? isGenerating ? "生成中" : "生成封面方案"
               : isGeneratingContentImage ? "生成中" : "生成内容图"}
-          </button>
+          </Button>
         </div>
       </div>
 
-      <div className="grid border-b border-stone-200 bg-[#f8f6f1] lg:grid-cols-[1.2fr_0.9fr_0.9fr]">
-        <div className="border-b border-stone-200 p-4 lg:border-b-0 lg:border-r">
-          <div className="text-xs font-bold text-stone-400">当前内容</div>
-          <div className="mt-2 text-base font-black leading-6 text-stone-950">{sourceTitle}</div>
+      <div className="grid border-b border-line bg-soft lg:grid-cols-[1.2fr_0.9fr_0.9fr]">
+        <div className="border-b border-line p-4 lg:border-b-0 lg:border-r">
+          <div className="text-xs font-bold text-faint">当前内容</div>
+          <div className="mt-2 text-base font-bold leading-6 text-ink">{sourceTitle}</div>
         </div>
-        <div className="border-b border-stone-200 p-4 lg:border-b-0 lg:border-r">
-          <div className="text-xs font-bold text-rose-600">痛点</div>
-          <div className="mt-2 text-sm font-semibold leading-6 text-stone-700">
+        <div className="border-b border-line p-4 lg:border-b-0 lg:border-r">
+          <div className="text-xs font-bold text-brand-500">痛点</div>
+          <div className="mt-2 text-sm font-semibold leading-6 text-muted">
             {clip(sourceInput?.painPoint || imageSourceInput?.painPoint || selectedTopic?.painPoint)}
           </div>
         </div>
         <div className="p-4">
-          <div className="text-xs font-bold text-teal-700">{assetLabel}</div>
-          <div className="mt-2 text-sm font-semibold leading-6 text-stone-700">
+          <div className="text-xs font-bold text-ok">{assetLabel}</div>
+          <div className="mt-2 text-sm font-semibold leading-6 text-muted">
             {clip(assetText)}
           </div>
         </div>
@@ -457,15 +458,15 @@ export default function CoverStudio({
       {imageMode === "cover" ? (
         <>
           {coverVersions.length > 0 && (
-            <div className="border-b border-stone-200 bg-white">
-              <div className="grid gap-3 border-b border-stone-200 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+            <div className="border-b border-line bg-white">
+              <div className="grid gap-3 border-b border-line px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
                 <div>
-                  <h3 className="font-black text-stone-950">封面版本</h3>
-                  <p className="mt-1 text-xs text-stone-500">
+                  <h3 className="font-bold text-ink">封面版本</h3>
+                  <p className="mt-1 text-xs text-faint">
                     已保存 {coverVersions.length} 张
                   </p>
                 </div>
-                <div className="text-xs font-bold text-stone-500">
+                <div className="text-xs font-bold text-faint">
                   当前：{selectedVersionId ? activeCoverVersion?.status || "本地模板" : "未选择"}
                 </div>
               </div>
@@ -477,22 +478,20 @@ export default function CoverStudio({
                       key={version.id}
                       type="button"
                       onClick={() => handleSelectVersion(version)}
-                      className={`w-28 flex-none border p-2 text-left transition-colors sm:w-32 ${
+                      className={`w-28 flex-none rounded-2xl border p-2 text-left transition-colors sm:w-32 ${
                         isActive
-                          ? "border-stone-950 bg-stone-950 text-white"
-                          : "border-stone-200 bg-[#f8f6f1] text-stone-950 hover:border-stone-600"
+                          ? "border-brand-300 bg-brand-50 text-ink"
+                          : "border-line bg-soft text-ink hover:border-line-strong"
                       }`}
                     >
                       <CoverVersionThumbnail config={version.config} />
-                      <div className={`mt-2 text-[11px] font-black ${isActive ? "text-stone-300" : "text-stone-400"}`}>
+                      <div className="mt-2 text-[11px] font-bold text-faint">
                         {version.sourceType === "draft" ? "草稿封面" : "选题封面"}
                       </div>
-                      <div className="mt-1 line-clamp-2 min-h-9 whitespace-pre-wrap text-xs font-black leading-[18px]">
+                      <div className="mt-1 line-clamp-2 min-h-9 whitespace-pre-wrap text-xs font-bold leading-[18px]">
                         {version.title}
                       </div>
-                      <div className={`mt-2 flex items-center justify-between gap-2 text-[11px] font-bold ${
-                        isActive ? "text-stone-300" : "text-stone-500"
-                      }`}>
+                      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] font-bold text-faint">
                         <span>{version.style}</span>
                         {!version.hasStoredConfig && <span>模板</span>}
                       </div>
@@ -504,18 +503,18 @@ export default function CoverStudio({
           )}
 
           {visibleCoverPlan && (
-            <div className="grid border-b border-stone-200 bg-white md:grid-cols-[0.7fr_1fr_1.4fr]">
-              <div className="border-b border-stone-200 p-4 md:border-b-0 md:border-r">
-                <div className="text-xs font-bold text-stone-400">AI 方案</div>
-                <div className="mt-2 font-black text-stone-950">{visibleCoverPlan.style}</div>
+            <div className="grid border-b border-line bg-white md:grid-cols-[0.7fr_1fr_1.4fr]">
+              <div className="border-b border-line p-4 md:border-b-0 md:border-r">
+                <div className="text-xs font-bold text-faint">AI 方案</div>
+                <div className="mt-2 font-bold text-ink">{visibleCoverPlan.style}</div>
               </div>
-              <div className="border-b border-stone-200 p-4 md:border-b-0 md:border-r">
-                <div className="text-xs font-bold text-stone-400">建议大字</div>
-                <div className="mt-2 whitespace-pre-wrap font-black leading-6 text-stone-950">{visibleCoverPlan.title}</div>
+              <div className="border-b border-line p-4 md:border-b-0 md:border-r">
+                <div className="text-xs font-bold text-faint">建议大字</div>
+                <div className="mt-2 whitespace-pre-wrap font-bold leading-6 text-ink">{visibleCoverPlan.title}</div>
               </div>
               <div className="p-4">
-                <div className="text-xs font-bold text-stone-400">理由</div>
-                <div className="mt-2 text-sm leading-6 text-stone-700">{visibleCoverPlan.reason}</div>
+                <div className="text-xs font-bold text-faint">理由</div>
+                <div className="mt-2 text-sm leading-6 text-muted">{visibleCoverPlan.reason}</div>
               </div>
             </div>
           )}
@@ -533,10 +532,10 @@ export default function CoverStudio({
       ) : (
         <div className="grid gap-4 p-4 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="space-y-4">
-            <div className="border border-stone-300 bg-white">
-              <div className="border-b border-stone-200 px-4 py-3">
-                <h3 className="font-black text-stone-950">内容图类型</h3>
-                <p className="mt-1 text-xs text-stone-500">{activeContentTemplate.description}</p>
+            <div className="overflow-hidden rounded-3xl border border-line bg-surface">
+              <div className="border-b border-line px-4 py-3">
+                <h3 className="font-bold text-ink">内容图类型</h3>
+                <p className="mt-1 text-xs text-faint">{activeContentTemplate.description}</p>
               </div>
               <div className="grid gap-2 p-3 sm:grid-cols-2">
                 {CONTENT_IMAGE_TEMPLATES.map((template) => {
@@ -546,23 +545,23 @@ export default function CoverStudio({
                       key={template.id}
                       type="button"
                       onClick={() => onContentTemplateChange(template.id)}
-                      className={`border p-3 text-left transition-colors ${
+                      className={`rounded-2xl border p-3 text-left transition-colors ${
                         isActive
-                          ? "border-stone-950 bg-stone-950 text-white"
-                          : "border-stone-200 bg-white text-stone-950 hover:border-stone-500"
+                          ? "border-ink bg-ink text-white"
+                          : "border-line bg-white text-ink hover:border-line-strong"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-sm font-black">{template.name}</span>
+                        <span className="text-sm font-bold">{template.name}</span>
                         <span
-                          className="h-5 w-5 border"
+                          className="h-5 w-5 rounded-md border border-line"
                           style={{
                             backgroundColor: template.defaultPalette.background,
                             borderColor: template.defaultPalette.primary,
                           }}
                         />
                       </div>
-                      <div className={`mt-2 text-xs ${isActive ? "text-stone-300" : "text-stone-500"}`}>
+                      <div className={`mt-2 text-xs ${isActive ? "text-faint" : "text-faint"}`}>
                         {template.previewTone}
                       </div>
                     </button>
@@ -572,24 +571,24 @@ export default function CoverStudio({
             </div>
 
             {contentImagePlan && (
-              <div className="border border-stone-300 bg-white">
-                <div className="grid border-b border-stone-200 md:grid-cols-[0.8fr_1.2fr]">
-                  <div className="border-b border-stone-200 p-4 md:border-b-0 md:border-r">
-                    <div className="text-xs font-bold text-stone-400">图片方案</div>
-                    <div className="mt-2 font-black text-stone-950">{contentImagePlan.title}</div>
-                    <div className="mt-1 text-xs font-bold text-teal-700">{getContentImageTemplate(contentImagePlan.templateType).name}</div>
+              <div className="overflow-hidden rounded-3xl border border-line bg-surface">
+                <div className="grid border-b border-line md:grid-cols-[0.8fr_1.2fr]">
+                  <div className="border-b border-line p-4 md:border-b-0 md:border-r">
+                    <div className="text-xs font-bold text-faint">图片方案</div>
+                    <div className="mt-2 font-bold text-ink">{contentImagePlan.title}</div>
+                    <div className="mt-1 text-xs font-bold text-ok">{getContentImageTemplate(contentImagePlan.templateType).name}</div>
                   </div>
                   <div className="p-4">
-                    <div className="text-xs font-bold text-stone-400">摘要</div>
-                    <div className="mt-2 text-sm font-semibold leading-6 text-stone-700">{contentImagePlan.summary}</div>
+                    <div className="text-xs font-bold text-faint">摘要</div>
+                    <div className="mt-2 text-sm font-semibold leading-6 text-muted">{contentImagePlan.summary}</div>
                   </div>
                 </div>
                 <div className="grid gap-2 p-3 sm:grid-cols-2">
                   {contentImagePlan.blocks.slice(0, 6).map((block) => (
-                    <div key={block.id} className="border border-stone-200 bg-stone-50 p-3">
-                      <div className="text-xs font-bold text-stone-400">{block.meta || block.lane || block.id}</div>
-                      <div className="mt-1 text-sm font-black text-stone-950">{block.title}</div>
-                      <div className="mt-1 text-xs leading-5 text-stone-600">{block.detail}</div>
+                    <div key={block.id} className="rounded-2xl border border-line bg-soft p-3">
+                      <div className="text-xs font-bold text-faint">{block.meta || block.lane || block.id}</div>
+                      <div className="mt-1 text-sm font-bold text-ink">{block.title}</div>
+                      <div className="mt-1 text-xs leading-5 text-muted">{block.detail}</div>
                     </div>
                   ))}
                 </div>
@@ -600,15 +599,15 @@ export default function CoverStudio({
           <div className="space-y-3">
             <ContentImagePreview plan={contentImagePlan} onGenerated={onContentImageGenerated} />
             <div className="grid grid-cols-[1fr_auto] gap-3">
-              <div className="border border-stone-200 bg-white px-3 py-2">
-                <div className="text-xs font-bold text-stone-400">当前类型</div>
-                <div className="mt-1 text-sm font-black text-stone-950">{activeContentTemplate.name}</div>
+              <div className="rounded-2xl border border-line bg-surface px-3 py-2.5">
+                <div className="text-xs font-bold text-faint">当前类型</div>
+                <div className="mt-1 text-sm font-bold text-ink">{activeContentTemplate.name}</div>
               </div>
               <button
                 type="button"
                 onClick={handleDownloadContentImage}
                 disabled={!contentImageDataUrl}
-                className="border border-rose-600 bg-rose-600 px-4 py-2 text-sm font-black text-white transition-colors hover:bg-stone-950 disabled:cursor-not-allowed disabled:border-stone-300 disabled:bg-stone-200 disabled:text-stone-500"
+                className="h-9 shrink-0 rounded-xl bg-ink px-4 text-sm font-bold text-white transition-colors hover:bg-black disabled:cursor-not-allowed disabled:bg-sunken disabled:text-faint"
               >
                 下载
               </button>

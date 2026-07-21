@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { RefreshCw, Sparkles } from "lucide-react";
+import Button from "@/components/ui/Button";
+import Badge from "@/components/ui/Badge";
+import EmptyState from "@/components/ui/EmptyState";
+import Skeleton, { SkeletonText } from "@/components/ui/Skeleton";
+import { Field, Input, Textarea } from "@/components/ui/Field";
 import type { ContentCard, DraftNote } from "@/lib/xhsWorkflow";
 
 interface NoteEditorProps {
@@ -16,7 +22,7 @@ interface NoteEditorProps {
 
 /**
  * 中栏草稿编辑器：聚焦当前这一篇的写作。
- * 没草稿 → 一颗「生成草稿」；有草稿 → 标题/封面文案/正文可改，主按钮「保存」，旁挂「更像爆款」。
+ * 没草稿 → 一颗「生成草稿」；有草稿 → 标题/封面文案/正文可改，主按钮「保存」，旁挂「爆款优化」。
  */
 export default function NoteEditor({
   selectedTopic,
@@ -40,96 +46,104 @@ export default function NoteEditor({
 
   if (!selectedTopic) {
     return (
-      <div className="flex h-full items-center justify-center bg-[#F5F5F7] p-8 text-center">
-        <div>
-          <p className="text-sm font-semibold text-[#1D1D1F]">从左侧选一篇笔记开始</p>
-          <p className="mt-1 text-sm text-[#6E6E73]">或点左上「+ 新建」，也可去素材库从素材生成选题。</p>
-        </div>
+      <div className="flex h-full items-center justify-center bg-soft p-8">
+        <EmptyState
+          bare
+          icon={<Sparkles size={22} />}
+          title="从左侧选一篇笔记开始"
+          description="也可以点左上「新建」，或去素材库把攒下的素材提炼成选题。"
+        />
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col bg-[#F5F5F7]">
-      <div className="shrink-0 border-b border-[#E5E5EA] bg-white px-5 py-2.5">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0 truncate text-sm font-semibold text-[#6E6E73]">
-            {selectedTopic.titleCandidates[0] || selectedTopic.coreViewpoint}
-          </div>
-          {boundDaokuName && (
-            <span className="shrink-0 rounded-md bg-[#0A7F64]/10 px-2 py-0.5 text-xs font-semibold text-[#0A7F64]">
-              道库 · {boundDaokuName}
-            </span>
-          )}
+    <div className="flex h-full flex-col bg-soft">
+      {/* 标题已经在工作台页头显示，这里只在绑了道库时提示「按谁的结构在写」 */}
+      {boundDaokuName && (
+        <div className="flex shrink-0 items-center border-b border-line bg-surface px-5 py-2">
+          <Badge tone="ok">道库 · {boundDaokuName}</Badge>
         </div>
-      </div>
+      )}
 
       {!form ? (
-        <div className="flex flex-1 items-center justify-center p-8 text-center">
-          <div>
-            <p className="text-sm text-[#6E6E73]">这篇还没有草稿。一键生成后可直接改，或用「更像爆款」按对标博主打磨。</p>
-            <button
-              type="button"
-              onClick={onGenerateDraft}
-              disabled={isGenerating}
-              className="mt-3 rounded-lg bg-[#FF2442] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#E01E3A] disabled:cursor-not-allowed disabled:bg-[#E5E5EA] disabled:text-[#A1A1A6]"
-            >
-              {isGenerating ? "生成中…" : "生成草稿"}
-            </button>
-          </div>
+        <div className="flex flex-1 items-center justify-center p-8">
+          {isGenerating ? (
+            <div className="w-full max-w-2xl rounded-3xl border border-line bg-surface p-8 shadow-card">
+              <Skeleton className="h-7 w-3/5 rounded-xl" />
+              <div className="mt-6">
+                <SkeletonText lines={6} />
+              </div>
+              <p className="mt-6 text-xs font-semibold text-brand-500">正在写这一篇…</p>
+            </div>
+          ) : (
+            <EmptyState
+              bare
+              icon={<Sparkles size={22} />}
+              title="这篇还没有草稿"
+              description="一键生成后可直接改，也能用「爆款优化」按对标博主的结构打磨。"
+              action={
+                <Button variant="ai" size="lg" onClick={onGenerateDraft} icon={<Sparkles size={16} />}>
+                  生成草稿
+                </Button>
+              }
+            />
+          )}
         </div>
       ) : (
         <>
-          <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
-            <div className="mx-auto max-w-2xl space-y-3">
+          <div className="min-h-0 flex-1 overflow-auto px-5 py-6">
+            <div className="mx-auto max-w-2xl rounded-3xl border border-line bg-surface p-7 shadow-card">
               <input
                 value={form.title}
                 onChange={(event) => updateField("title", event.target.value)}
                 placeholder="标题"
-                className="w-full bg-transparent text-2xl font-bold text-[#1D1D1F] outline-none placeholder:text-[#C7C7CC]"
+                className="w-full bg-transparent text-2xl font-bold leading-snug text-ink outline-none placeholder:text-faint"
               />
-              <input
-                value={form.coverText}
-                onChange={(event) => updateField("coverText", event.target.value)}
-                placeholder="封面文案"
-                className="w-full rounded-md border border-[#E5E5EA] bg-white px-3 py-2 text-sm text-[#1D1D1F] outline-none focus:border-[#1D1D1F]"
-              />
-              <textarea
-                value={form.content}
-                onChange={(event) => updateField("content", event.target.value)}
-                rows={18}
-                placeholder="正文…"
-                className="w-full resize-none rounded-md border border-[#E5E5EA] bg-white px-3 py-3 text-sm leading-7 text-[#1D1D1F] outline-none focus:border-[#1D1D1F]"
-              />
+              <div className="my-5 h-px bg-line" />
+              <Field label="封面文案">
+                <Input
+                  value={form.coverText}
+                  onChange={(event) => updateField("coverText", event.target.value)}
+                  placeholder="一句话，写在封面上"
+                />
+              </Field>
+              <div className="mt-4">
+                <Field label="正文">
+                  <Textarea
+                    value={form.content}
+                    onChange={(event) => updateField("content", event.target.value)}
+                    rows={18}
+                    placeholder="正文…"
+                  />
+                </Field>
+              </div>
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2 border-t border-[#E5E5EA] bg-white px-5 py-2.5">
-            <span className="text-xs tabular-nums text-[#A1A1A6]">{form.content.length} 字</span>
+          <div className="flex shrink-0 items-center gap-2 border-t border-line bg-surface px-5 py-3">
+            <span className="font-rounded text-xs tabular-nums text-faint">{form.content.length} 字</span>
             <div className="ml-auto flex items-center gap-2">
-              <button
-                type="button"
+              <Button
+                size="sm"
+                variant="ghost"
                 onClick={onGenerateDraft}
-                disabled={isGenerating}
-                className="rounded-lg border border-[#D2D2D7] bg-white px-3 py-2 text-sm font-semibold text-[#1D1D1F] transition-colors hover:bg-[#F5F5F7] disabled:cursor-not-allowed disabled:text-[#A1A1A6]"
+                loading={isGenerating}
+                icon={<RefreshCw size={13} strokeWidth={2.4} />}
               >
-                {isGenerating ? "生成中…" : "重新生成"}
-              </button>
-              <button
-                type="button"
+                {isGenerating ? "生成中" : "重新生成"}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
                 onClick={onOpenRewrite}
-                className="rounded-lg border border-[#D2D2D7] bg-white px-3 py-2 text-sm font-semibold text-[#1D1D1F] transition-colors hover:bg-[#F5F5F7]"
+                icon={<Sparkles size={13} className="text-brand-500" />}
               >
-                更像爆款
-              </button>
-              <button
-                type="button"
-                onClick={() => form && onSaveDraft(form)}
-                disabled={isSaving}
-                className="rounded-lg bg-[#1D1D1F] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-black disabled:cursor-not-allowed disabled:bg-[#E5E5EA] disabled:text-[#A1A1A6]"
-              >
-                {isSaving ? "保存中…" : "保存"}
-              </button>
+                爆款优化
+              </Button>
+              <Button size="sm" variant="primary" onClick={() => form && onSaveDraft(form)} loading={isSaving}>
+                {isSaving ? "保存中" : "保存"}
+              </Button>
             </div>
           </div>
         </>

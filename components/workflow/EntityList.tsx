@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronRight, Plus } from "lucide-react";
+import Button from "@/components/ui/Button";
 
 /** 一列定义：可选固定列宽（CSS width，如 "120px"；省略=自适应剩余空间）。 */
 export interface EntityColumn<T> {
@@ -54,10 +56,13 @@ interface EntityListProps<T> {
   maxHeightClass?: string;
   /** 工具条右侧额外内容（如素材的「选前 6 条」「清空」）。 */
   toolbarExtra?: ReactNode;
-  /** 工具条右上「+ 新增」按钮：传入即渲染。 */
+  /** 工具条右上「新增」按钮：传入即渲染。 */
   onAdd?: () => void;
   addLabel?: string;
 }
+
+const CHECKBOX_CLASS =
+  "h-4 w-4 cursor-pointer rounded accent-brand-500 disabled:cursor-not-allowed disabled:opacity-40";
 
 /** 表头主复选框：支持「全选 / 半选(indeterminate) / 未选」三态。 */
 function HeaderCheckbox({
@@ -83,7 +88,7 @@ function HeaderCheckbox({
       disabled={disabled}
       onChange={onChange}
       aria-label={checked ? "取消全选" : "全选"}
-      className="h-4 w-4 cursor-pointer accent-rose-600 disabled:cursor-not-allowed"
+      className={CHECKBOX_CLASS}
     />
   );
 }
@@ -111,7 +116,7 @@ export default function EntityList<T>({
   maxHeightClass = "max-h-[calc(100vh-240px)] min-h-[420px]",
   toolbarExtra,
   onAdd,
-  addLabel = "+ 新增",
+  addLabel = "新增",
 }: EntityListProps<T>) {
   const [showArchived, setShowArchived] = useState(false);
   const hasActions = Boolean(onEdit || onDelete);
@@ -153,16 +158,14 @@ export default function EntityList<T>({
       <tr
         key={id}
         onClick={() => !archived && onRowClick?.(item)}
-        className={`border-b border-stone-100 transition-colors ${
-          onRowClick && !archived ? "cursor-pointer" : ""
-        } ${
+        className={`border-b border-line transition-colors ${onRowClick && !archived ? "cursor-pointer" : ""} ${
           archived
-            ? "bg-stone-50 text-stone-400"
+            ? "bg-soft text-faint"
             : isActive
-              ? "bg-rose-50"
+              ? "bg-brand-50"
               : isSelected
-                ? "bg-rose-50/50"
-                : "hover:bg-stone-50"
+                ? "bg-brand-50/60"
+                : "hover:bg-soft"
         }`}
       >
         <td className="w-10 px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
@@ -172,7 +175,7 @@ export default function EntityList<T>({
             disabled={!selectable}
             onChange={() => selectable && onToggleRow(id)}
             aria-label={isSelected ? "取消勾选" : "勾选"}
-            className="h-4 w-4 cursor-pointer accent-rose-600 disabled:cursor-not-allowed"
+            className={CHECKBOX_CLASS}
           />
         </td>
         {columns.map((column) => (
@@ -188,22 +191,14 @@ export default function EntityList<T>({
           <td className="px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
               {!archived && onEdit && (
-                <button
-                  type="button"
-                  onClick={() => onEdit(item)}
-                  className="border border-stone-200 bg-white px-2 py-1 text-xs font-bold text-stone-500 transition-colors hover:border-stone-950 hover:text-stone-950"
-                >
+                <Button size="sm" variant="secondary" onClick={() => onEdit(item)}>
                   编辑
-                </button>
+                </Button>
               )}
               {!archived && onDelete && (
-                <button
-                  type="button"
-                  onClick={() => handleDeleteClick(item)}
-                  className="border border-stone-200 bg-white px-2 py-1 text-xs font-bold text-stone-400 transition-colors hover:border-rose-600 hover:text-rose-600"
-                >
+                <Button size="sm" variant="danger" onClick={() => handleDeleteClick(item)}>
                   删除
-                </button>
+                </Button>
               )}
             </div>
           </td>
@@ -213,9 +208,9 @@ export default function EntityList<T>({
   };
 
   return (
-    <section className="border border-stone-200 bg-white">
+    <section className="overflow-hidden rounded-3xl border border-line bg-surface shadow-card">
       {(filters || onBatchDelete || toolbarExtra || onAdd) && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-stone-200 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
           {filters?.map((tab) => {
             const isActive = activeFilter === tab.id;
             return (
@@ -223,38 +218,29 @@ export default function EntityList<T>({
                 key={tab.id}
                 type="button"
                 onClick={() => onFilterChange?.(tab.id)}
-                className={`px-3 py-1.5 text-sm font-black transition-colors ${
-                  isActive ? "bg-stone-950 text-white" : "bg-stone-100 text-stone-700 hover:bg-stone-200"
+                className={`rounded-full px-3 py-1.5 text-xs font-bold transition-colors ${
+                  isActive ? "bg-ink text-white" : "bg-soft text-muted hover:bg-sunken"
                 }`}
               >
                 {tab.label}
-                <span className="ml-1.5 text-xs font-bold tabular-nums text-stone-400">{tab.count}</span>
+                <span className="ml-1.5 font-rounded tabular-nums opacity-70">{tab.count}</span>
               </button>
             );
           })}
           <div className="ml-auto flex items-center gap-2">
             {toolbarExtra}
-            <span className="text-xs text-stone-400">
-              已选 <span className="font-black tabular-nums text-stone-700">{selectedCount}</span>
+            <span className="text-xs text-faint">
+              已选 <span className="font-rounded font-bold tabular-nums text-ink">{selectedCount}</span>
             </span>
             {onBatchDelete && (
-              <button
-                type="button"
-                onClick={handleBatchDelete}
-                disabled={selectedCount === 0}
-                className="border border-stone-300 bg-white px-3 py-1.5 text-sm font-black text-stone-600 transition-colors hover:border-rose-600 hover:text-rose-600 disabled:cursor-not-allowed disabled:border-stone-200 disabled:text-stone-300"
-              >
+              <Button size="sm" variant="danger" onClick={handleBatchDelete} disabled={selectedCount === 0}>
                 批量删除
-              </button>
+              </Button>
             )}
             {onAdd && (
-              <button
-                type="button"
-                onClick={onAdd}
-                className="bg-stone-950 px-3 py-1.5 text-sm font-black text-white transition-colors hover:bg-stone-800"
-              >
+              <Button size="sm" variant="primary" onClick={onAdd} icon={<Plus size={14} strokeWidth={2.6} />}>
                 {addLabel}
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -262,8 +248,8 @@ export default function EntityList<T>({
 
       <div className={`overflow-auto ${maxHeightClass}`}>
         <table className="w-full border-collapse text-left">
-          <thead className="sticky top-0 z-10 bg-stone-50">
-            <tr className="border-b border-stone-200 text-xs font-black uppercase tracking-wider text-stone-400">
+          <thead className="sticky top-0 z-10 bg-soft">
+            <tr className="border-b border-line text-[11px] font-bold uppercase tracking-[0.08em] text-faint">
               <th className="w-10 px-3 py-2.5">
                 <HeaderCheckbox
                   checked={allSelected}
@@ -285,14 +271,17 @@ export default function EntityList<T>({
 
             {archivedItems.length > 0 && (
               <>
-                <tr className="border-y border-stone-200 bg-stone-100">
+                <tr className="border-y border-line bg-soft">
                   <td colSpan={colCount} className="px-3 py-2">
                     <button
                       type="button"
                       onClick={() => setShowArchived((value) => !value)}
-                      className="flex items-center gap-2 text-xs font-black text-stone-500 hover:text-stone-800"
+                      className="flex items-center gap-1.5 rounded-lg text-xs font-bold text-muted transition-colors hover:text-ink"
                     >
-                      <span className={`transition-transform ${showArchived ? "rotate-90" : ""}`}>▸</span>
+                      <ChevronRight
+                        size={14}
+                        className={`transition-transform ${showArchived ? "rotate-90" : ""}`}
+                      />
                       <span>{archivedLabel?.(archivedItems.length) ?? `已归档 ${archivedItems.length} 条`}</span>
                     </button>
                   </td>
@@ -303,7 +292,7 @@ export default function EntityList<T>({
 
             {items.length === 0 && (
               <tr>
-                <td colSpan={colCount} className="p-10 text-center text-sm text-stone-500">
+                <td colSpan={colCount} className="p-12 text-center text-sm text-faint">
                   {emptyText}
                 </td>
               </tr>

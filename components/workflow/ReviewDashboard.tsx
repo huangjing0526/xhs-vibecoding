@@ -1,4 +1,10 @@
+"use client";
+
 import { toast } from "sonner";
+import { BarChart3 } from "lucide-react";
+import Button from "@/components/ui/Button";
+import EmptyState from "@/components/ui/EmptyState";
+import Stat from "@/components/ui/Stat";
 import type { ReviewActionLayer, ReviewMetric, ReviewResult } from "@/lib/xhsWorkflow";
 
 interface ReviewDashboardProps {
@@ -10,24 +16,19 @@ interface ReviewDashboardProps {
 
 // 下次优化层级配色，与发布前质检维度一一对应
 const LAYER_STYLE: Record<ReviewActionLayer, string> = {
-  选题: "bg-indigo-50 text-indigo-700",
-  钩子: "bg-amber-50 text-amber-700",
-  封面: "bg-purple-50 text-purple-700",
+  选题: "bg-brand-50 text-brand-600",
+  钩子: "bg-warn/10 text-warn",
+  封面: "bg-brand-100 text-brand-700",
   标签: "bg-sky-50 text-sky-700",
-  引导: "bg-teal-50 text-teal-700",
-  内容价值: "bg-rose-50 text-rose-700",
+  引导: "bg-ok/10 text-ok",
+  内容价值: "bg-danger/10 text-danger",
 };
 
 function toPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-export default function ReviewDashboard({
-  metrics,
-  review,
-  onGenerate,
-  generating,
-}: ReviewDashboardProps) {
+export default function ReviewDashboard({ metrics, review, onGenerate, generating }: ReviewDashboardProps) {
   const handleCarry = async (advice: string) => {
     try {
       await navigator.clipboard.writeText(advice);
@@ -40,80 +41,73 @@ export default function ReviewDashboard({
 
   const sortedMetrics = [...metrics].sort((a, b) => b.reads - a.reads);
   const totalReads = metrics.reduce((sum, item) => sum + item.reads, 0);
-  const averageSaveRate = metrics.length > 0
-    ? metrics.reduce((sum, item) => sum + item.saveRate, 0) / metrics.length
-    : 0;
+  const averageSaveRate =
+    metrics.length > 0 ? metrics.reduce((sum, item) => sum + item.saveRate, 0) / metrics.length : 0;
 
   return (
-    <section className="grid gap-3 xl:grid-cols-[1fr_1fr]">
-      <div className="border border-stone-300 bg-white">
-        <div className="grid grid-cols-3 border-b border-stone-200 text-center">
-          <div className="border-r border-stone-200 p-3">
-            <div className="text-xl font-black text-stone-950 tabular-nums">{metrics.length}</div>
-            <div className="mt-0.5 text-xs text-stone-500">已发布</div>
-          </div>
-          <div className="border-r border-stone-200 p-3">
-            <div className="text-xl font-black text-stone-950 tabular-nums">{totalReads}</div>
-            <div className="mt-0.5 text-xs text-stone-500">阅读</div>
-          </div>
-          <div className="p-3">
-            <div className="text-xl font-black text-stone-950 tabular-nums">{toPercent(averageSaveRate)}</div>
-            <div className="mt-0.5 text-xs text-stone-500">均收藏率</div>
-          </div>
+    <section className="grid gap-3 xl:grid-cols-2">
+      <div className="overflow-hidden rounded-3xl border border-line bg-surface shadow-card">
+        <div className="flex gap-2 p-4">
+          <Stat value={metrics.length} label="已发布" />
+          <Stat value={totalReads} label="阅读" />
+          <Stat value={toPercent(averageSaveRate)} label="均收藏率" tone="ok" />
         </div>
 
-        <div className="max-h-[calc(100vh-280px)] overflow-auto">
+        <div className="max-h-[calc(100vh-320px)] overflow-auto border-t border-line">
           {sortedMetrics.map((metric) => (
-            <div key={metric.noteId} className="grid gap-3 border-b border-stone-100 p-3 last:border-b-0 md:grid-cols-[1.2fr_0.8fr]">
-              <div>
-                <div className="text-xs font-bold text-stone-400">{metric.noteId}</div>
-                <div className="mt-1 text-sm font-black text-stone-950">{metric.title || "未命名笔记"}</div>
+            <div
+              key={metric.noteId}
+              className="grid gap-3 border-b border-line px-4 py-3 last:border-b-0 md:grid-cols-[1.2fr_0.8fr]"
+            >
+              <div className="min-w-0">
+                <div className="font-mono text-[11px] font-bold text-faint">{metric.noteId}</div>
+                <div className="mt-1 text-sm font-bold leading-6 text-ink">{metric.title || "未命名笔记"}</div>
               </div>
               <div className="grid grid-cols-3 text-center text-xs">
                 <div>
-                  <div className="font-black text-stone-950 tabular-nums">{metric.reads}</div>
-                  <div className="mt-0.5 text-stone-500">阅读</div>
+                  <div className="font-rounded font-bold tabular-nums text-ink">{metric.reads}</div>
+                  <div className="mt-0.5 text-faint">阅读</div>
                 </div>
                 <div>
-                  <div className="font-black text-teal-700 tabular-nums">{metric.saves}</div>
-                  <div className="mt-0.5 text-stone-500">收藏</div>
+                  <div className="font-rounded font-bold tabular-nums text-ok">{metric.saves}</div>
+                  <div className="mt-0.5 text-faint">收藏</div>
                 </div>
                 <div>
-                  <div className="font-black text-stone-700 tabular-nums">{toPercent(metric.interactionRate)}</div>
-                  <div className="mt-0.5 text-stone-500">互动率</div>
+                  <div className="font-rounded font-bold tabular-nums text-muted">
+                    {toPercent(metric.interactionRate)}
+                  </div>
+                  <div className="mt-0.5 text-faint">互动率</div>
                 </div>
               </div>
             </div>
           ))}
-          {metrics.length === 0 && (
-            <div className="p-8 text-center text-sm text-stone-500">暂无已发布笔记数据</div>
-          )}
+          {metrics.length === 0 && <div className="p-10 text-center text-sm text-faint">暂无已发布笔记数据</div>}
         </div>
       </div>
 
-      <div className="border border-stone-300 bg-white">
+      <div className="overflow-hidden rounded-3xl border border-line bg-surface shadow-card">
         {review ? (
-          <div className="p-4">
-            <div className="border-l-2 border-stone-950 bg-stone-50 px-3 py-2 text-sm font-semibold leading-6 text-stone-800">
+          <div className="p-5">
+            <div className="rounded-2xl bg-soft px-4 py-3 text-sm font-semibold leading-6 text-ink">
               {review.summary}
             </div>
 
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
               <div>
-                <h3 className="text-xs font-black uppercase tracking-wider text-stone-500">继续放大</h3>
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">继续放大</h3>
                 <ul className="mt-2 space-y-1.5">
                   {review.topPatterns.map((item) => (
-                    <li key={item} className="bg-teal-50 px-2.5 py-1.5 text-sm leading-6 text-teal-900">
+                    <li key={item} className="rounded-xl bg-ok/8 px-3 py-2 text-sm leading-6 text-ok">
                       {item}
                     </li>
                   ))}
                 </ul>
               </div>
               <div>
-                <h3 className="text-xs font-black uppercase tracking-wider text-stone-500">优先修正</h3>
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">优先修正</h3>
                 <ul className="mt-2 space-y-1.5">
                   {review.weakPatterns.map((item) => (
-                    <li key={item} className="bg-rose-50 px-2.5 py-1.5 text-sm leading-6 text-rose-900">
+                    <li key={item} className="rounded-xl bg-danger/8 px-3 py-2 text-sm leading-6 text-danger">
                       {item}
                     </li>
                   ))}
@@ -122,58 +116,66 @@ export default function ReviewDashboard({
             </div>
 
             {review.nextActions?.length > 0 && (
-              <div className="mt-3">
-                <h3 className="text-xs font-black uppercase tracking-wider text-stone-500">下次优化</h3>
+              <div className="mt-4">
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">下次优化</h3>
                 <ul className="mt-2 space-y-1.5">
                   {review.nextActions.map((action, index) => (
                     <li
                       key={`${action.layer}-${index}`}
-                      className="flex items-start gap-2 border border-stone-200 px-2.5 py-2"
+                      className="flex items-start gap-2.5 rounded-2xl border border-line px-3 py-2.5"
                     >
                       <span
-                        className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold ${LAYER_STYLE[action.layer] ?? "bg-stone-100 text-stone-600"}`}
+                        className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                          LAYER_STYLE[action.layer] ?? "bg-soft text-muted"
+                        }`}
                       >
                         {action.layer}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm leading-6 text-stone-800">{action.advice}</div>
-                        {action.basedOn && <div className="mt-0.5 text-xs text-stone-400">依据：{action.basedOn}</div>}
+                        <div className="text-sm leading-6 text-ink">{action.advice}</div>
+                        {action.basedOn && <div className="mt-0.5 text-xs text-faint">依据：{action.basedOn}</div>}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleCarry(action.advice)}
-                        className="shrink-0 border border-stone-300 px-2 py-1 text-xs font-bold text-stone-600 transition-colors hover:border-stone-950 hover:text-stone-950"
-                      >
+                      <Button size="sm" variant="secondary" onClick={() => handleCarry(action.advice)}>
                         带入
-                      </button>
+                      </Button>
                     </li>
                   ))}
                 </ul>
               </div>
             )}
 
-            <div className="mt-3 border border-stone-200">
+            <div className="mt-4 overflow-hidden rounded-2xl border border-line">
               {review.recordActions.map((action) => (
-                <div key={`${action.noteId}-${action.action}`} className="grid gap-3 border-b border-stone-100 p-2.5 last:border-b-0 md:grid-cols-[0.6fr_0.45fr_1.4fr]">
-                  <div className="text-xs font-bold text-stone-500">{action.noteId}</div>
-                  <div className="text-sm font-black text-stone-950">{action.action}</div>
-                  <div className="text-sm leading-6 text-stone-700">{action.reason}</div>
+                <div
+                  key={`${action.noteId}-${action.action}`}
+                  className="grid gap-3 border-b border-line px-3 py-2.5 last:border-b-0 md:grid-cols-[0.6fr_0.45fr_1.4fr]"
+                >
+                  <div className="font-mono text-[11px] font-bold text-faint">{action.noteId}</div>
+                  <div className="text-sm font-bold text-ink">{action.action}</div>
+                  <div className="text-sm leading-6 text-muted">{action.reason}</div>
                 </div>
               ))}
             </div>
           </div>
         ) : (
-          <div className="flex min-h-[420px] flex-col items-center justify-center gap-3 text-sm text-stone-500">
-            <p>把发布后的数据回填后，生成复盘结论。</p>
-            <button
-              type="button"
-              onClick={onGenerate}
-              disabled={generating || metrics.length === 0}
-              className="bg-[#FF2442] px-5 py-2 text-sm font-black text-white transition-colors hover:bg-[#E01E3A] disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400"
-            >
-              {generating ? "生成中…" : "生成复盘"}
-            </button>
-            {metrics.length === 0 && <p className="text-xs text-stone-400">先发布一篇笔记才有数据可复盘</p>}
+          <div className="flex min-h-[420px] items-center justify-center p-6">
+            <EmptyState
+              bare
+              icon={<BarChart3 size={22} />}
+              title="把发布后的数据回填后，生成复盘结论"
+              description={metrics.length === 0 ? "先发布一篇笔记才有数据可复盘。" : undefined}
+              action={
+                <Button
+                  variant="ai"
+                  size="lg"
+                  onClick={onGenerate}
+                  loading={generating}
+                  disabled={metrics.length === 0}
+                >
+                  {generating ? "生成中" : "生成复盘"}
+                </Button>
+              }
+            />
           </div>
         )}
       </div>

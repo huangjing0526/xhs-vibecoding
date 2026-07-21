@@ -102,11 +102,11 @@ export default function WatermarkStudio() {
   // ---------- 服务未启动的引导 ----------
   if (serviceUp === false) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-[#D2D2D7] bg-white py-16 text-center">
-        <p className="text-sm font-semibold text-[#1D1D1F]">本机去水印服务未启动</p>
-        <p className="max-w-md text-sm text-[#6E6E73]">
+      <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-line-strong bg-white py-16 text-center">
+        <p className="text-sm font-semibold text-ink">本机去水印服务未启动</p>
+        <p className="max-w-md text-sm text-muted">
           去水印用到本机的 AI 修复模型，需要先启动本地服务：双击桌面上的
-          <span className="mx-1 font-semibold text-[#1D1D1F]">「去水印工作台.command」</span>
+          <span className="mx-1 font-semibold text-ink">「去水印工作台.command」</span>
           ，看到启动提示后回到这里即可（本页会自动重连）。
         </p>
       </div>
@@ -136,13 +136,13 @@ export default function WatermarkStudio() {
           upload(e.dataTransfer.files);
         }}
         className={`cursor-pointer rounded-xl border border-dashed px-6 py-10 text-center transition-colors ${
-          dragOver ? "border-[#FF2442] bg-[#FFF5F6]" : "border-[#D2D2D7] bg-white"
+          dragOver ? "border-[#FF2442] bg-[#FFF5F6]" : "border-line-strong bg-white"
         }`}
       >
-        <p className="text-sm font-semibold text-[#1D1D1F]">
+        <p className="text-sm font-semibold text-ink">
           {uploading ? "上传中…" : "把视频拖到这里，或点击选择文件"}
         </p>
-        <p className="mt-1 text-xs text-[#8B8983]">支持 mp4 / mov，可一次拖入多个，按顺序排队处理</p>
+        <p className="mt-1 text-xs text-faint">支持 mp4 / mov，可一次拖入多个，按顺序排队处理</p>
         <input
           ref={fileRef}
           type="file"
@@ -155,14 +155,14 @@ export default function WatermarkStudio() {
 
       {/* 任务列表 */}
       {jobList.map((j) => (
-        <div key={j.id} className="rounded-xl border border-[#E5E5EA] bg-white p-4">
+        <div key={j.id} className="rounded-xl border border-line bg-white p-4">
           <div className="flex items-center gap-3">
-            <span className="min-w-0 flex-1 truncate text-sm font-bold text-[#1D1D1F]" title={j.name}>
+            <span className="min-w-0 flex-1 truncate text-sm font-bold text-ink" title={j.name}>
               {j.name}
             </span>
             <span
               className={`shrink-0 text-xs font-semibold ${
-                j.state === "done" ? "text-[#34C759]" : j.state === "error" ? "text-[#FF2442]" : "text-[#8B8983]"
+                j.state === "done" ? "text-[#34C759]" : j.state === "error" ? "text-[#FF2442]" : "text-faint"
               }`}
             >
               {stateText(j)}
@@ -183,7 +183,7 @@ export default function WatermarkStudio() {
                   className={`rounded-full border px-3 py-1 text-xs transition-colors disabled:opacity-40 ${
                     active
                       ? "border-[#FF2442] font-semibold text-[#FF2442]"
-                      : "border-[#E5E5EA] text-[#6E6E73] hover:border-[#C7C7CC]"
+                      : "border-line text-muted hover:border-line-strong"
                   }`}
                 >
                   {t}
@@ -196,11 +196,11 @@ export default function WatermarkStudio() {
           {/* 进度 */}
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#F2F2F7]">
             <div
-              className="h-full rounded-full bg-[#1D1D1F] transition-[width] duration-500"
+              className="h-full rounded-full bg-ink transition-[width] duration-500"
               style={{ width: `${j.progress || 0}%` }}
             />
           </div>
-          <div className="mt-1 flex justify-between text-xs text-[#8B8983]">
+          <div className="mt-1 flex justify-between text-xs text-faint">
             <span>{j.state === "error" ? "" : `${j.progress || 0}%`}</span>
             {j.state === "error" && <span className="text-[#FF2442]">{j.error}</span>}
           </div>
@@ -212,14 +212,14 @@ export default function WatermarkStudio() {
                 <button
                   type="button"
                   onClick={() => start(j.id)}
-                  className="rounded-lg bg-[#1D1D1F] px-4 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-black"
+                  className="rounded-2xl bg-ink px-4 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-black"
                 >
                   开始处理
                 </button>
                 <button
                   type="button"
                   onClick={() => setBoxJobId(j.id)}
-                  className="rounded-lg border border-[#E5E5EA] px-4 py-1.5 text-xs font-semibold text-[#1D1D1F] transition-colors hover:border-[#C7C7CC]"
+                  className="rounded-2xl border border-line px-4 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-line-strong"
                 >
                   框选水印
                 </button>
@@ -230,14 +230,14 @@ export default function WatermarkStudio() {
                 <button
                   type="button"
                   onClick={() => setCmpJobId(j.id)}
-                  className="rounded-lg bg-[#1D1D1F] px-4 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-black"
+                  className="rounded-2xl bg-ink px-4 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-black"
                 >
                   对比查看
                 </button>
                 <a
                   href={`${SERVICE}/api/media/${j.id}/result`}
                   download={j.name.replace(/\.(mp4|mov)$/i, "_去水印.mp4")}
-                  className="rounded-lg border border-[#E5E5EA] px-4 py-1.5 text-xs font-semibold text-[#1D1D1F] transition-colors hover:border-[#C7C7CC]"
+                  className="rounded-2xl border border-line px-4 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-line-strong"
                 >
                   下载成品
                 </a>
@@ -245,14 +245,14 @@ export default function WatermarkStudio() {
                   href={`${SERVICE}/api/mask/${j.id}?r=${Date.now()}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-lg border border-[#E5E5EA] px-4 py-1.5 text-xs font-semibold text-[#6E6E73] transition-colors hover:border-[#C7C7CC]"
+                  className="rounded-2xl border border-line px-4 py-1.5 text-xs font-semibold text-muted transition-colors hover:border-line-strong"
                 >
                   识别区域
                 </a>
                 <button
                   type="button"
                   onClick={() => start(j.id)}
-                  className="rounded-lg border border-[#E5E5EA] px-4 py-1.5 text-xs font-semibold text-[#6E6E73] transition-colors hover:border-[#C7C7CC]"
+                  className="rounded-2xl border border-line px-4 py-1.5 text-xs font-semibold text-muted transition-colors hover:border-line-strong"
                 >
                   重新处理
                 </button>
@@ -333,11 +333,11 @@ function BoxSelectModal({
         className="max-h-[90vh] overflow-auto rounded-xl bg-white p-5"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-sm font-bold text-[#1D1D1F]">框选水印区域</h3>
-        <p className="mb-3 mt-1 text-xs text-[#6E6E73]">按住鼠标拖出一个矩形框住水印，稍微框大一点没关系。</p>
+        <h3 className="text-sm font-bold text-ink">框选水印区域</h3>
+        <p className="mb-3 mt-1 text-xs text-muted">按住鼠标拖出一个矩形框住水印，稍微框大一点没关系。</p>
         <canvas
           ref={canvasRef}
-          className="block max-w-full cursor-crosshair rounded-lg"
+          className="block max-w-full cursor-crosshair rounded-2xl"
           onPointerDown={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
             dragStart.current = [e.clientX - r.left, e.clientY - r.top];
@@ -369,14 +369,14 @@ function BoxSelectModal({
               setRect(null);
               draw(null);
             }}
-            className="rounded-lg border border-[#E5E5EA] px-4 py-1.5 text-xs font-semibold text-[#6E6E73]"
+            className="rounded-2xl border border-line px-4 py-1.5 text-xs font-semibold text-muted"
           >
             清除框选
           </button>
           <button
             type="button"
             onClick={() => onSave(rect)}
-            className="rounded-lg bg-[#1D1D1F] px-4 py-1.5 text-xs font-semibold text-white"
+            className="rounded-2xl bg-ink px-4 py-1.5 text-xs font-semibold text-white"
           >
             保存
           </button>
@@ -396,16 +396,16 @@ function CompareModal({ jobId, onClose }: { jobId: string; onClose: () => void }
         className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-xl bg-white p-5"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-sm font-bold text-[#1D1D1F]">处理前后对比</h3>
-        <p className="mb-3 mt-1 text-xs text-[#6E6E73]">重点看水印原来出现的位置。</p>
+        <h3 className="text-sm font-bold text-ink">处理前后对比</h3>
+        <p className="mb-3 mt-1 text-xs text-muted">重点看水印原来出现的位置。</p>
         <div className="flex flex-wrap gap-3">
           <figure className="min-w-[260px] flex-1">
-            <figcaption className="mb-1 text-xs text-[#8B8983]">处理前</figcaption>
-            <video ref={origRef} src={`${SERVICE}/api/media/${jobId}/orig`} controls muted className="w-full rounded-lg bg-black" />
+            <figcaption className="mb-1 text-xs text-faint">处理前</figcaption>
+            <video ref={origRef} src={`${SERVICE}/api/media/${jobId}/orig`} controls muted className="w-full rounded-2xl bg-black" />
           </figure>
           <figure className="min-w-[260px] flex-1">
-            <figcaption className="mb-1 text-xs text-[#8B8983]">处理后</figcaption>
-            <video ref={newRef} src={`${SERVICE}/api/media/${jobId}/result`} controls className="w-full rounded-lg bg-black" />
+            <figcaption className="mb-1 text-xs text-faint">处理后</figcaption>
+            <video ref={newRef} src={`${SERVICE}/api/media/${jobId}/result`} controls className="w-full rounded-2xl bg-black" />
           </figure>
         </div>
         <div className="mt-4 flex justify-end gap-2">
@@ -419,14 +419,14 @@ function CompareModal({ jobId, onClose }: { jobId: string; onClose: () => void }
                 }
               }
             }}
-            className="rounded-lg bg-[#1D1D1F] px-4 py-1.5 text-xs font-semibold text-white"
+            className="rounded-2xl bg-ink px-4 py-1.5 text-xs font-semibold text-white"
           >
             同步播放
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-[#E5E5EA] px-4 py-1.5 text-xs font-semibold text-[#6E6E73]"
+            className="rounded-2xl border border-line px-4 py-1.5 text-xs font-semibold text-muted"
           >
             关闭
           </button>

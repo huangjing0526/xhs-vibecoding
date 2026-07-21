@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
 import { MATERIAL_STATUS, type MaterialItem } from "@/lib/xhsWorkflow";
 import EntityList, { type EntityColumn } from "./EntityList";
 import LocalDocsSyncPanel from "./LocalDocsSyncPanel";
@@ -60,10 +62,8 @@ export default function SourceWorkspace({
       width: "140px",
       render: (item) => (
         <div className="min-w-0">
-          <div className="text-xs font-bold text-stone-400">{item.sourceId}</div>
-          <div className="mt-1.5 inline-flex bg-stone-100 px-2 py-0.5 text-xs font-semibold text-stone-600">
-            {item.status || "素材"}
-          </div>
+          <div className="text-xs font-bold text-faint">{item.sourceId}</div>
+          <Badge className="mt-1.5">{item.status || "素材"}</Badge>
         </div>
       ),
     },
@@ -71,14 +71,14 @@ export default function SourceWorkspace({
       key: "event",
       label: "核心事件",
       render: (item) => (
-        <div className="text-sm font-black leading-6 text-stone-950">{clip(item.event || item.summary, 82)}</div>
+        <div className="text-sm font-bold leading-6 text-ink">{clip(item.event || item.summary, 82)}</div>
       ),
     },
     {
       key: "method",
       label: "可复用方法",
       render: (item) => (
-        <div className="text-sm font-semibold leading-6 text-stone-600">{clip(item.method || item.pitfall, 92)}</div>
+        <div className="text-sm leading-6 text-muted">{clip(item.method || item.pitfall, 92)}</div>
       ),
     },
   ];
@@ -122,25 +122,25 @@ export default function SourceWorkspace({
         }
         emptyText="当前筛选下暂无素材"
         onAdd={onAdd}
-        addLabel="+ 新增素材"
+        addLabel="新增素材"
         toolbarExtra={
           <>
-            <button
-              type="button"
+            <Button
+              size="sm"
+              variant="secondary"
               onClick={onSelectPendingMaterials}
               disabled={pendingMaterials.length === 0}
-              className="border border-stone-300 bg-white px-3 py-1.5 text-sm font-black text-stone-700 transition-colors hover:border-stone-950 hover:text-stone-950 disabled:cursor-not-allowed disabled:border-stone-200 disabled:text-stone-300"
             >
               选前 6 条
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
               onClick={onClearSelectedMaterials}
               disabled={selectedMaterialIds.length === 0}
-              className="border border-stone-300 bg-white px-3 py-1.5 text-sm font-black text-stone-600 transition-colors hover:border-rose-600 hover:text-rose-600 disabled:cursor-not-allowed disabled:border-stone-200 disabled:text-stone-300"
             >
               清空
-            </button>
+            </Button>
           </>
         }
       />

@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
+import Callout from "@/components/ui/Callout";
+import CollapsiblePanel from "@/components/ui/CollapsiblePanel";
+import Stat from "@/components/ui/Stat";
+import { Field, Input } from "@/components/ui/Field";
 import { importTopicPool, type TopicPoolImportResult } from "@/lib/workflowClient";
 import type { Notice } from "./types";
 
@@ -80,85 +86,62 @@ export default function TopicPoolImportPanel({
   };
 
   return (
-    <details className="group border border-stone-300 bg-white">
-      <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-2.5 transition-colors hover:bg-stone-50">
-        <div className="flex items-center gap-3">
-          <span className="text-stone-400 transition-transform group-open:rotate-90">▸</span>
-          <div>
-            <div className="text-xs font-black uppercase tracking-wider text-stone-400">Topic Pool Intake</div>
-            <div className="text-sm font-black text-stone-950">从选题池导入</div>
-          </div>
-        </div>
-        <span className="text-xs text-stone-500">把内容库「待发酵 / 可启动」选题导进来</span>
-      </summary>
-      <div className="grid gap-0 border-t border-stone-200 lg:grid-cols-[1.4fr_0.7fr]">
-        <div className="border-b border-stone-200 p-4 lg:border-b-0 lg:border-r">
-          <label className="block text-xs font-bold text-stone-500">内容库目录</label>
-          <input
+    <CollapsiblePanel title="从选题池导入" hint="把内容库「待发酵 / 可启动」选题导进来">
+      <div className="grid gap-5 p-5 lg:grid-cols-[1.4fr_0.8fr]">
+        <Field
+          label="内容库目录"
+          hint="读取目录下的 选题池.md，只导入「待发酵」「可启动」分区，不触碰试水区 / 已发布 / 已废弃。导入为选题种子（状态「待写」），痛点与正文结构留到本环节细化。"
+        >
+          <Input
             value={sourceDir}
             onChange={(event) => setSourceDir(event.target.value)}
             placeholder="如 /Users/you/workspace/content/xhs"
-            className="mt-2 w-full border border-stone-300 bg-[#f8f6f1] px-3 py-2 text-sm font-semibold text-stone-900 outline-none focus:border-stone-950"
           />
-          <p className="mt-2 text-xs leading-5 text-stone-500">
-            读取目录下的 <span className="font-semibold text-stone-700">选题池.md</span>，只导入「待发酵」「可启动」分区，不触碰试水区 / 已发布 / 已废弃。导入为选题种子（状态「待写」），痛点与正文结构留到本环节细化。
-          </p>
-        </div>
+        </Field>
 
-        <div className="p-4">
-          <div className="grid grid-cols-2 border border-stone-200 text-center">
-            <div className="border-r border-stone-200 p-3">
-              <div className="text-xl font-black text-rose-600">{previewResult?.topics.length || 0}</div>
-              <div className="text-xs text-stone-500">选题种子</div>
-            </div>
-            <div className="p-3">
-              <div className="text-xl font-black text-teal-700">{previewResult?.imported.length || 0}</div>
-              <div className="text-xs text-stone-500">已导入</div>
-            </div>
+        <div>
+          <div className="flex gap-2">
+            <Stat value={previewResult?.topics.length || 0} label="选题种子" tone="brand" />
+            <Stat value={previewResult?.imported.length || 0} label="已导入" tone="ok" />
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={handlePreview}
-              disabled={isPreviewing || !sourceDir.trim()}
-              className="border border-stone-950 bg-white px-3 py-2 text-sm font-black text-stone-950 transition-colors hover:bg-stone-950 hover:text-white disabled:cursor-not-allowed disabled:border-stone-300 disabled:text-stone-400"
-            >
+            <Button variant="secondary" onClick={handlePreview} loading={isPreviewing} disabled={!sourceDir.trim()}>
               {isPreviewing ? "解析中" : "解析预览"}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="primary"
               onClick={handleImport}
-              disabled={isImporting || !isFeishuReady || !sourceDir.trim()}
-              className="border border-rose-600 bg-rose-600 px-3 py-2 text-sm font-black text-white transition-colors hover:bg-stone-950 disabled:cursor-not-allowed disabled:border-stone-300 disabled:bg-stone-200 disabled:text-stone-500"
+              loading={isImporting}
+              disabled={!isFeishuReady || !sourceDir.trim()}
             >
-              {isImporting ? "导入中" : isFeishuReady ? "导入飞书" : "连接飞书后导入"}
-            </button>
+              {isImporting ? "导入中" : isFeishuReady ? "导入飞书" : "先连飞书"}
+            </Button>
           </div>
         </div>
       </div>
 
       {previewResult && (
-        <div className="border-t border-stone-200 p-4">
-          <div className="text-xs font-bold text-stone-400">前 6 条选题</div>
-          <div className="mt-2 flex flex-wrap gap-2">
+        <div className="border-t border-line bg-soft p-5">
+          <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">前 6 条选题</div>
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
             {previewResult.topics.slice(0, 6).map((topic) => (
-              <span key={topic.topicId} className="border border-stone-200 bg-[#f8f6f1] px-2 py-1 text-xs font-semibold text-stone-600">
+              <Badge key={topic.topicId} tone="outline">
                 {topic.titleCandidates[0]}
-              </span>
+              </Badge>
             ))}
             {previewResult.topics.length === 0 && (
-              <span className="border border-stone-200 bg-[#f8f6f1] px-2 py-1 text-xs font-semibold text-stone-500">
+              <Badge tone="outline">
                 未解析到可导入的选题
-              </span>
+              </Badge>
             )}
           </div>
           {!previewResult.writeBack && previewResult.topics.length > 0 && (
-            <div className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">
+            <Callout tone="warn" className="mt-3">
               当前只是解析预览，选题还没有进入飞书。连接飞书后可导入选题表。
-            </div>
+            </Callout>
           )}
         </div>
       )}
-    </details>
+    </CollapsiblePanel>
   );
 }

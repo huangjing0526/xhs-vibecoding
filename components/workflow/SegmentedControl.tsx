@@ -12,6 +12,7 @@ interface SegmentedControlProps<T extends string> {
   compact?: boolean;
 }
 
+/** 分段控件：全圆角凹槽 + 浮起的白色滑块，用于同层级的模式切换。 */
 export default function SegmentedControl<T extends string>({
   value,
   options,
@@ -20,11 +21,7 @@ export default function SegmentedControl<T extends string>({
   compact = false,
 }: SegmentedControlProps<T>) {
   return (
-    <div
-      role="radiogroup"
-      aria-label={ariaLabel}
-      className="inline-flex rounded-lg border border-[#D2D2D7] bg-[#F5F5F7] p-1"
-    >
+    <div role="radiogroup" aria-label={ariaLabel} className="inline-flex rounded-2xl bg-soft p-1">
       {options.map((option) => {
         const isActive = value === option.value;
         return (
@@ -34,19 +31,13 @@ export default function SegmentedControl<T extends string>({
             role="radio"
             aria-checked={isActive}
             onClick={() => onChange(option.value)}
-            className={`min-w-0 rounded-md px-3 text-left text-sm font-semibold transition-colors ${
+            className={`min-w-0 rounded-xl px-3.5 text-left text-sm font-bold transition-all duration-150 ${
               compact ? "py-1.5" : "py-2"
-            } ${
-              isActive
-                ? "bg-white text-[#1D1D1F] shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
-                : "text-[#6E6E73] hover:text-[#1D1D1F]"
-            }`}
+            } ${isActive ? "bg-surface text-ink shadow-card" : "text-muted hover:text-ink"}`}
           >
             <span className="block truncate">{option.label}</span>
             {option.description && !compact && (
-              <span className="mt-0.5 block truncate text-xs font-medium text-[#A1A1A6]">
-                {option.description}
-              </span>
+              <span className="mt-0.5 block truncate text-xs font-medium text-faint">{option.description}</span>
             )}
           </button>
         );

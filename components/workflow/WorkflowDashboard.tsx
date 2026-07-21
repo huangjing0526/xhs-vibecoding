@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
+import { Download, FileText, Plus, Sparkles } from "lucide-react";
+import Button from "@/components/ui/Button";
+import CollapsiblePanel from "@/components/ui/CollapsiblePanel";
+import EmptyState from "@/components/ui/EmptyState";
+import PipelineRail, { type PipelineStep } from "@/components/ui/PipelineRail";
 import CoverStudio from "@/components/workflow/CoverStudio";
 import TopicPoolImportPanel from "@/components/workflow/TopicPoolImportPanel";
 import ClueIntakePanel from "@/components/workflow/ClueIntakePanel";
@@ -10,7 +15,11 @@ import WorkflowOnboarding from "@/components/workflow/WorkflowOnboarding";
 import BloggerResearch from "@/components/workflow/BloggerResearch";
 import RewriteStudio from "@/components/workflow/RewriteStudio";
 import VideoStudio from "@/components/workflow/VideoStudio";
-import WorkbenchShell, { type WorkbenchAreaId, type WorkbenchNavGroup } from "@/components/workflow/WorkbenchShell";
+import WorkbenchShell, {
+  type WorkbenchAreaId,
+  type WorkbenchNavGroup,
+  type WorkbenchNavItem,
+} from "@/components/workflow/WorkbenchShell";
 import PageHeader from "@/components/workflow/PageHeader";
 import NoteList from "@/components/workflow/NoteList";
 import NoteEditor from "@/components/workflow/NoteEditor";
@@ -86,43 +95,48 @@ const DAOKU_OPTIONS = DEMO_BLOGGER_PROFILES.map((profile) => ({ bloggerId: profi
 
 // 每个区的单一事实源（按 id 收敛）：所属分组、侧栏标签 / 副标题、页头副标题。
 // 侧栏导航与页头标题都从这里派生，杜绝「nav 标签 ≠ 页头标题」的漂移。
-type AreaGroup = "内容流程" | "制作工具";
+// 分组按「用户做内容的流程」切，而非按工具类型：内容流程是顺着走的流水线，
+// AI 工具是随时可调、不打断主流程的能力。
+type AreaGroup = "内容流程" | "AI 工具";
 interface AreaDef {
-  group: AreaGroup;
+  /** 省略 = 侧栏置顶的独立入口，不归任何组。 */
+  group?: AreaGroup;
   label: string;
   hint?: string;
   subtitle: string;
 }
 const AREAS: Record<WorkbenchAreaId, AreaDef> = {
-  workbench: { group: "内容流程", label: "工作台", hint: "写笔记 · 从选题到发布", subtitle: "选一篇笔记，从选题到发布一条龙" },
+  workbench: { label: "工作台", hint: "写笔记 · 从选题到发布", subtitle: "选一篇笔记，从选题到发布一条龙" },
   library: { group: "内容流程", label: "素材库", hint: "攒料 · 出选题", subtitle: "攒料、提炼、导入——所有选题的来源。" },
-  review: { group: "内容流程", label: "复盘", hint: "看数据 · 拿建议", subtitle: "已发布笔记的数据表现与改进建议。" },
-  cover: { group: "制作工具", label: "封面与配图", subtitle: "为当前笔记生成封面与内容配图。" },
-  video: { group: "制作工具", label: "视频方案", subtitle: "把笔记转成口播 / 分镜视频脚本。" },
-  rewrite: { group: "制作工具", label: "更像爆款", subtitle: "对标道库改写，贴近爆款结构。" },
-  blogger: { group: "制作工具", label: "对标拆解", subtitle: "拆解对标博主，沉淀可复用的道库。" },
-  quality: { group: "制作工具", label: "质检发布", subtitle: "发布前规则质检与兜底修复。" },
-  watermark: { group: "制作工具", label: "视频去水印", subtitle: "去掉 AI 生成视频的水印（豆包 / Gemini 等）。" },
+  cover: { group: "内容流程", label: "封面与配图", hint: "做封面 · 配图", subtitle: "为当前笔记生成封面与内容配图。" },
+  video: { group: "内容流程", label: "视频脚本", hint: "口播 · 分镜", subtitle: "把笔记转成口播 / 分镜视频脚本。" },
+  quality: { group: "内容流程", label: "发布检查", hint: "质检 · 发布", subtitle: "发布前规则质检与兜底修复。" },
+  review: { group: "内容流程", label: "数据复盘", hint: "看数据 · 拿建议", subtitle: "已发布笔记的数据表现与改进建议。" },
+  rewrite: { group: "AI 工具", label: "爆款优化", subtitle: "对标道库改写，贴近爆款结构。" },
+  blogger: { group: "AI 工具", label: "对标拆解", subtitle: "拆解对标博主，沉淀可复用的道库。" },
+  watermark: { group: "AI 工具", label: "视频去水印", subtitle: "去掉 AI 生成视频的水印（豆包 / Gemini 等）。" },
 };
 
-// 侧栏两级导航，从 AREAS 派生：AREA_ORDER 是 Record 键的完整列表，
+// 侧栏导航，从 AREAS 派生：AREA_ORDER 是 Record 键的完整列表，
 // 新增区 id 时类型层会强制补 AREAS，从而保证它一定有导航入口。
-const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "review", "cover", "video", "rewrite", "blogger", "quality", "watermark"];
-const GROUP_ORDER: AreaGroup[] = ["内容流程", "制作工具"];
+const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "cover", "video", "quality", "review", "rewrite", "blogger", "watermark"];
+const GROUP_ORDER: AreaGroup[] = ["内容流程", "AI 工具"];
+const toNavItem = (id: WorkbenchAreaId): WorkbenchNavItem => ({
+  id,
+  label: AREAS[id].label,
+  hint: AREAS[id].hint,
+});
+const NAV_LEAD_ITEMS: WorkbenchNavItem[] = AREA_ORDER.filter((id) => !AREAS[id].group).map(toNavItem);
 const NAV_GROUPS: WorkbenchNavGroup[] = GROUP_ORDER.map((title) => ({
   title,
-  items: AREA_ORDER.filter((id) => AREAS[id].group === title).map((id) => ({
-    id,
-    label: AREAS[id].label,
-    hint: AREAS[id].hint,
-  })),
+  items: AREA_ORDER.filter((id) => AREAS[id].group === title).map(toNavItem),
 }));
 
-// 制作工具页统一的滚动容器：居中定宽，与素材库 / 复盘保持一致
+// 单页工具区统一的滚动容器：软色画布 + 居中定宽，让区内的白卡浮起来
 function ToolScroll({ children }: { children: ReactNode }) {
   return (
-    <div className="h-full overflow-auto">
-      <div className="mx-auto max-w-5xl p-4 md:p-6">{children}</div>
+    <div className="h-full overflow-auto bg-soft">
+      <div className="mx-auto max-w-5xl p-5 md:p-7">{children}</div>
     </div>
   );
 }
@@ -130,17 +144,17 @@ function ToolScroll({ children }: { children: ReactNode }) {
 // 工具页的「当前笔记」上下文条：工具页脱离了三栏，用它提示正在处理哪篇
 function NoteContextBar({ note, onGoWorkbench }: { note: ContentCard | null; onGoWorkbench: () => void }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-[#E5E5EA] bg-white px-3 py-2 text-xs">
-      <span className="shrink-0 font-semibold text-[#8B8983]">当前笔记</span>
-      <span className="truncate font-bold text-[#1D1D1F]">
+    <div className="flex items-center gap-2 rounded-2xl border border-line bg-surface px-4 py-2.5 text-xs shadow-card">
+      <span className="shrink-0 font-bold text-faint">当前笔记</span>
+      <span className="truncate font-bold text-ink">
         {note ? note.titleCandidates[0] || note.coreViewpoint : "未选择"}
       </span>
       <button
         type="button"
         onClick={onGoWorkbench}
-        className="ml-auto shrink-0 font-semibold text-[#FF2442] transition-colors hover:text-[#E01E3A]"
+        className="ml-auto shrink-0 rounded-lg px-1.5 font-bold text-brand-500 transition-colors hover:text-brand-600"
       >
-        切换 →
+        切换
       </button>
     </div>
   );
@@ -149,20 +163,19 @@ function NoteContextBar({ note, onGoWorkbench }: { note: ContentCard | null; onG
 // 工具页无笔记时的空态：把用户引回工作台选一篇
 function EmptyNote({ hint, onGoWorkbench }: { hint: string; onGoWorkbench: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-[#D2D2D7] bg-white py-16 text-center">
-      <p className="text-sm text-[#6E6E73]">{hint}</p>
-      <button
-        type="button"
-        onClick={onGoWorkbench}
-        className="rounded-lg bg-[#1D1D1F] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-black"
-      >
-        去工作台选笔记 →
-      </button>
-    </div>
+    <EmptyState
+      icon={<FileText size={22} />}
+      title={hint}
+      action={
+        <Button variant="primary" onClick={onGoWorkbench}>
+          去工作台选笔记
+        </Button>
+      }
+    />
   );
 }
 
-// 制作工具页统一骨架：滚动容器 + 页头（标题/副标题取自 AREAS）+ 可选「当前笔记」条 + 缺笔记空态。
+// 单笔记工具页统一骨架：滚动容器 + 页头（标题/副标题取自 AREAS）+ 可选「当前笔记」条 + 缺笔记空态。
 // 封面/视频/改写/质检共用它，只各自传入自己的工具组件与就绪条件。
 function ToolPage({
   area,
@@ -269,8 +282,8 @@ export default function WorkflowDashboard() {
   const [contentImageTemplate, setContentImageTemplate] = useState<ContentImageTemplateType>("flowchart");
   const [contentImagePlan, setContentImagePlan] = useState<ContentImagePlan | null>(null);
   const [review, setReview] = useState<ReviewResult | null>(null);
-  // 顶层工作区：内容工作台 / 素材库 / 复盘
-  const [area, setArea] = useState<WorkbenchAreaId>("library");
+  // 当前工作区，默认落地工作台；可选值见 WorkbenchAreaId
+  const [area, setArea] = useState<WorkbenchAreaId>("workbench");
   const [bloggerDistillation, setBloggerDistillation] = useState<BloggerDistillation | null>(null);
   // 每条选题各自绑定的对标博主道库：topicId -> bloggerId（""=不绑定）
   const [topicDaokuMap, setTopicDaokuMap] = useState<Record<string, string>>({});
@@ -937,9 +950,27 @@ export default function WorkflowDashboard() {
   const bloggerReady = Boolean(bloggerDistillation);
   const videoReady = Boolean(videoPlan);
 
+  // 当前笔记在内容管线上的位置。顺序即流程，节点可直接跳到对应的区。
+  const pipelineSteps: PipelineStep[] = useMemo(() => {
+    const published = Boolean(selectedDraft && isPublishedDraft(selectedDraft));
+    return [
+      { id: "topic", label: "选题", done: Boolean(selectedTopic) },
+      { id: "draft", label: "草稿", done: Boolean(selectedDraft) },
+      { id: "cover", label: "封面", done: Boolean(coverDataUrl), onSelect: () => setArea("cover") },
+      {
+        id: "quality",
+        label: "质检",
+        done: Boolean(selectedDraft && qualityResult && !qualityResult.hardFail),
+        onSelect: () => setArea("quality"),
+      },
+      { id: "publish", label: "发布", done: published },
+    ];
+  }, [selectedTopic, selectedDraft, coverDataUrl, qualityResult]);
+
   return (
     <>
       <WorkbenchShell
+        leadItems={NAV_LEAD_ITEMS}
         groups={NAV_GROUPS}
         area={area}
         onAreaChange={setArea}
@@ -951,7 +982,7 @@ export default function WorkflowDashboard() {
       >
         {area === "workbench" && (
           <div className="flex h-full flex-col">
-            <div className="shrink-0 border-b border-[#E5E5EA] bg-white px-4 py-2.5 md:px-6">
+            <div className="shrink-0 border-b border-line bg-surface px-4 py-3 md:px-6">
               <PageHeader
                 variant="bar"
                 title={AREAS.workbench.label}
@@ -961,18 +992,24 @@ export default function WorkflowDashboard() {
                     : AREAS.workbench.subtitle
                 }
                 action={
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
+                    variant="primary"
                     onClick={() => setAddingTopic(true)}
-                    className="rounded-lg bg-[#1D1D1F] px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-black"
+                    icon={<Plus size={14} strokeWidth={2.6} />}
                   >
-                    + 新建笔记
-                  </button>
+                    新建笔记
+                  </Button>
                 }
               />
+              {selectedTopic && (
+                <div className="mt-3 overflow-x-auto pb-0.5">
+                  <PipelineRail steps={pipelineSteps} />
+                </div>
+              )}
             </div>
             <div className="flex min-h-0 flex-1">
-              <div className="hidden w-72 shrink-0 border-r border-[#E5E5EA] md:block">
+              <div className="hidden w-72 shrink-0 border-r border-line md:block">
                 <NoteList
                   notes={usableTopics}
                   drafts={usableDrafts}
@@ -994,7 +1031,7 @@ export default function WorkflowDashboard() {
                   onOpenRewrite={() => setArea("rewrite")}
                 />
               </div>
-              <div className="hidden w-80 shrink-0 border-l border-[#E5E5EA] lg:block">
+              <div className="hidden w-80 shrink-0 border-l border-line lg:block">
                 <NoteInspector
                   topic={selectedTopic}
                   draft={selectedDraft}
@@ -1029,14 +1066,16 @@ export default function WorkflowDashboard() {
               title={AREAS.library.label}
               subtitle={AREAS.library.subtitle}
               action={
-                <button
-                  type="button"
+                <Button
+                  variant="ai"
+                  size="lg"
                   onClick={handleGenerateTopics}
-                  disabled={isGeneratingTopics || selectedMaterials.length === 0}
-                  className="rounded-lg bg-[#FF2442] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#E01E3A] disabled:cursor-not-allowed disabled:bg-[#E5E5EA] disabled:text-[#A1A1A6]"
+                  disabled={selectedMaterials.length === 0}
+                  loading={isGeneratingTopics}
+                  icon={<Sparkles size={16} />}
                 >
-                  {isGeneratingTopics ? "生成中…" : `生成选题（${selectedMaterials.length}）`}
-                </button>
+                  {isGeneratingTopics ? "生成中" : `生成选题（${selectedMaterials.length}）`}
+                </Button>
               }
             />
             <div className="space-y-3">
@@ -1049,20 +1088,11 @@ export default function WorkflowDashboard() {
                 onOpenSource={() => setArea("workbench")}
                 onDismiss={() => setArea("workbench")}
               />
-              <details className="group rounded-lg border border-[#E5E5EA] bg-white">
-                <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-[#1D1D1F]">录入与提炼</h3>
-                    <p className="mt-0.5 text-xs text-[#8B8983]">线索采集、选题池导入——展开按需使用</p>
-                  </div>
-                  <span className="text-xs font-semibold text-[#8B8983] transition-transform group-open:rotate-180">
-                    ▾
-                  </span>
-                </summary>
-                <div className="space-y-3 border-t border-[#E5E5EA] p-4">
-                  <p className="text-sm text-[#6E6E73]">
+              <CollapsiblePanel title="录入与提炼" hint="线索采集、选题池导入——展开按需使用">
+                <div className="space-y-3 p-5">
+                  <p className="text-sm leading-6 text-muted">
                     勾选下方素材，点右上「生成选题」即可提炼——每条选题就是一篇新笔记。已选{" "}
-                    <span className="font-bold tabular-nums text-[#1D1D1F]">{selectedMaterials.length}</span> 条。
+                    <span className="font-rounded font-bold tabular-nums text-ink">{selectedMaterials.length}</span> 条。
                   </p>
                   <ClueIntakePanel onClues={handleAddClues} onNotice={setNotice} />
                   <TopicPoolImportPanel
@@ -1072,7 +1102,7 @@ export default function WorkflowDashboard() {
                     onImported={loadSnapshot}
                   />
                 </div>
-              </details>
+              </CollapsiblePanel>
               <SourceWorkspace
                 materials={snapshot.materials}
                 selectedMaterialIds={selectedMaterialIds}
@@ -1133,22 +1163,14 @@ export default function WorkflowDashboard() {
               {(coverDataUrl || contentImageDataUrl) && (
                 <div className="flex flex-wrap gap-2">
                   {coverDataUrl && (
-                    <button
-                      type="button"
-                      onClick={handleDownloadCover}
-                      className="rounded-lg border border-[#D2D2D7] bg-white px-4 py-2 text-sm font-semibold text-[#1D1D1F] hover:bg-[#F5F5F7]"
-                    >
+                    <Button variant="secondary" onClick={handleDownloadCover} icon={<Download size={15} />}>
                       下载封面
-                    </button>
+                    </Button>
                   )}
                   {contentImageDataUrl && (
-                    <button
-                      type="button"
-                      onClick={handleDownloadContentImage}
-                      className="rounded-lg border border-[#D2D2D7] bg-white px-4 py-2 text-sm font-semibold text-[#1D1D1F] hover:bg-[#F5F5F7]"
-                    >
+                    <Button variant="secondary" onClick={handleDownloadContentImage} icon={<Download size={15} />}>
                       下载配图
-                    </button>
+                    </Button>
                   )}
                 </div>
               )}

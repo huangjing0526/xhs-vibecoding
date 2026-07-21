@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
+import Callout from "@/components/ui/Callout";
+import CollapsiblePanel from "@/components/ui/CollapsiblePanel";
+import Stat from "@/components/ui/Stat";
+import { Field, Input } from "@/components/ui/Field";
 import type { LocalDocCategory } from "@/lib/localDocs";
 import { scanLocalDocs, syncLocalDocs, type LocalDocsScanResult, type LocalDocsSyncResult } from "@/lib/workflowClient";
 import type { Notice } from "./types";
@@ -124,30 +130,16 @@ export default function LocalDocsSyncPanel({
   };
 
   return (
-    <details className="group border border-stone-300 bg-white">
-      <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-2.5 transition-colors hover:bg-stone-50">
-        <div className="flex items-center gap-3">
-          <span className="text-stone-400 transition-transform group-open:rotate-90">▸</span>
-          <div>
-            <div className="text-xs font-black uppercase tracking-wider text-stone-400">Local Docs Intake</div>
-            <div className="text-sm font-black text-stone-950">本地文档入库</div>
-          </div>
-        </div>
-        <span className="text-xs text-stone-500">把日报 / 问题 / 术语抽成素材</span>
-      </summary>
-      <div className="grid gap-0 border-t border-stone-200 lg:grid-cols-[1.4fr_0.7fr]">
-        <div className="border-b border-stone-200 p-4 lg:hidden">
-          <p className="text-sm leading-6 text-stone-600">把日报、问题记录、Agent 学习和协作标准抽成可提炼素材。</p>
-        </div>
-
-        <div className="border-b border-stone-200 p-4 lg:border-b-0 lg:border-r">
-          <label className="block text-xs font-bold text-stone-500">文档目录</label>
-          <input
-            value={sourceDir}
-            onChange={(event) => setSourceDir(event.target.value)}
-            placeholder="填写你的 Markdown 文档目录"
-            className="mt-2 w-full border border-stone-300 bg-[#f8f6f1] px-3 py-2 text-sm font-semibold text-stone-900 outline-none focus:border-stone-950"
-          />
+    <CollapsiblePanel title="本地文档入库" hint="把日报 / 问题 / 术语抽成素材">
+      <div className="grid gap-5 p-5 lg:grid-cols-[1.4fr_0.8fr]">
+        <div>
+          <Field label="文档目录" hint="日报、问题记录、Agent 学习和协作标准都会被抽成可提炼素材">
+            <Input
+              value={sourceDir}
+              onChange={(event) => setSourceDir(event.target.value)}
+              placeholder="填写你的 Markdown 文档目录"
+            />
+          </Field>
           <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
             {CATEGORY_OPTIONS.map((item) => {
               const isActive = selected[item.value];
@@ -155,87 +147,79 @@ export default function LocalDocsSyncPanel({
                 <button
                   key={item.value}
                   type="button"
+                  aria-pressed={isActive}
                   onClick={() => handleToggle(item.value)}
-                  className={`border px-3 py-2 text-left transition-colors ${
-                    isActive
-                      ? "border-stone-950 bg-stone-950 text-white"
-                      : "border-stone-300 bg-white text-stone-700 hover:border-stone-500"
+                  className={`rounded-2xl px-3 py-2.5 text-left transition-all ${
+                    isActive ? "bg-ink text-white" : "bg-soft text-muted hover:bg-sunken"
                   }`}
                 >
-                  <div className="text-sm font-black">{item.label}</div>
-                  <div className={`mt-1 text-xs ${isActive ? "text-stone-300" : "text-stone-500"}`}>{item.description}</div>
+                  <div className="text-sm font-bold">{item.label}</div>
+                  <div className={`mt-0.5 text-xs ${isActive ? "text-white/60" : "text-faint"}`}>
+                    {item.description}
+                  </div>
                 </button>
               );
             })}
           </div>
         </div>
 
-        <div className="p-4">
-          <div className="grid grid-cols-3 border border-stone-200 text-center">
-            <div className="border-r border-stone-200 p-3">
-              <div className="text-xl font-black text-stone-950">{scanResult?.scannedFiles || 0}</div>
-              <div className="text-xs text-stone-500">文件</div>
-            </div>
-            <div className="border-r border-stone-200 p-3">
-              <div className="text-xl font-black text-rose-600">{scanResult?.materials.length || 0}</div>
-              <div className="text-xs text-stone-500">素材</div>
-            </div>
-            <div className="p-3">
-              <div className="text-xl font-black text-teal-700">{scanResult?.glossary.length || 0}</div>
-              <div className="text-xs text-stone-500">术语</div>
-            </div>
+        <div>
+          <div className="flex gap-2">
+            <Stat value={scanResult?.scannedFiles || 0} label="文件" />
+            <Stat value={scanResult?.materials.length || 0} label="素材" tone="brand" />
+            <Stat value={scanResult?.glossary.length || 0} label="术语" tone="ok" />
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
               onClick={handleScan}
-              disabled={isScanning || categories.length === 0 || !sourceDir.trim()}
-              className="border border-stone-950 bg-white px-3 py-2 text-sm font-black text-stone-950 transition-colors hover:bg-stone-950 hover:text-white disabled:cursor-not-allowed disabled:border-stone-300 disabled:text-stone-400"
+              loading={isScanning}
+              disabled={categories.length === 0 || !sourceDir.trim()}
             >
               {isScanning ? "扫描中" : "扫描预览"}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="primary"
               onClick={handleImport}
-              disabled={isImporting || categories.length === 0 || !isFeishuReady || !sourceDir.trim()}
-              className="border border-rose-600 bg-rose-600 px-3 py-2 text-sm font-black text-white transition-colors hover:bg-stone-950 disabled:cursor-not-allowed disabled:border-stone-300 disabled:bg-stone-200 disabled:text-stone-500"
+              loading={isImporting}
+              disabled={categories.length === 0 || !isFeishuReady || !sourceDir.trim()}
             >
-              {isImporting ? "写入中" : isFeishuReady ? "写入飞书" : "连接飞书后写入"}
-            </button>
+              {isImporting ? "写入中" : isFeishuReady ? "写入飞书" : "先连飞书"}
+            </Button>
           </div>
         </div>
       </div>
 
-      <div className="grid border-t border-stone-200 lg:grid-cols-[1fr_1fr]">
-        <div className="border-b border-stone-200 p-4 lg:border-b-0 lg:border-r">
-          <div className="text-xs font-bold text-stone-400">样例</div>
-          <div className="mt-2 text-sm font-semibold leading-6 text-stone-800">{sampleText(scanResult)}</div>
+      <div className="grid gap-5 border-t border-line bg-soft p-5 lg:grid-cols-2">
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">样例</div>
+          <div className="mt-2 text-sm leading-6 text-ink">{sampleText(scanResult)}</div>
         </div>
-        <div className="p-4">
-          <div className="flex flex-wrap gap-2">
+        <div>
+          <div className="flex flex-wrap gap-1.5">
             {(scanResult?.files || []).slice(0, 8).map((file) => (
-              <span key={file.path} className="border border-stone-200 bg-[#f8f6f1] px-2 py-1 text-xs font-semibold text-stone-600">
+              <Badge key={file.path} tone="outline">
                 {categoryLabel(file.category)} · {file.extractedMaterials + file.extractedGlossary}
-              </span>
+              </Badge>
             ))}
-        {!scanResult && (
-          <span className="border border-stone-200 bg-[#f8f6f1] px-2 py-1 text-xs font-semibold text-stone-500">
-            预览会显示前 8 个文件的抽取数量
-          </span>
-        )}
+            {!scanResult && (
+              <Badge tone="outline">
+                预览会显示前 8 个文件的抽取数量
+              </Badge>
+            )}
           </div>
           {scanResult && !syncResult && (
-            <div className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">
+            <Callout tone="warn" className="mt-3">
               当前只是扫描预览，素材还没有进入飞书。连接飞书后可写入素材库。
-            </div>
+            </Callout>
           )}
           {syncResult && (
-            <div className="mt-3 text-xs font-semibold text-stone-500">
+            <div className="mt-3 text-xs font-semibold text-faint">
               已跳过重复：{syncResult.skippedMaterials} 条素材，{syncResult.skippedGlossary} 条术语。
             </div>
           )}
         </div>
       </div>
-    </details>
+    </CollapsiblePanel>
   );
 }
