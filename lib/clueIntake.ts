@@ -7,6 +7,8 @@
  * 输出落到现有素材结构（event/method/pitfall/relatedTerm），不新增飞书表。
  */
 
+import { ACCOUNT_AUDIENCE } from "./account";
+
 export type ClueSourceType = "github" | "x" | "web";
 
 /** AI/规则提炼出的原始线索（不含来源标签，由路由统一回填） */
@@ -130,7 +132,7 @@ export async function fetchClueContent(url: string): Promise<ClueFetchResult> {
 }
 
 export function buildClueExtractionPrompt(text: string, sourceType: ClueSourceType): string {
-  return `你在帮一个面向产品经理、独立开发者、AI Coding 新手的小红书账号采集选题线索。
+  return `你在帮一个面向${ACCOUNT_AUDIENCE}的小红书账号采集选题线索。
 
 下面是一条来自「${CLUE_SOURCE_LABEL[sourceType]}」的公开线索原文，请从中提炼 1-3 条「素材候选」。
 每条素材要能沉淀成可复用的做法/结论，宁缺毋滥，原文里没有的不要编。

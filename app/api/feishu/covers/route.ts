@@ -13,6 +13,7 @@ import {
   draftToCoverInput,
   getCoverSourceKey,
   mapCoverToFeishuFields,
+  normalizeCoverPlan,
 } from "@/lib/coverWorkflow";
 import {
   type DraftNote,
@@ -99,10 +100,7 @@ export async function POST(request: NextRequest) {
       maxTokens: 1800,
     });
 
-    const plan = {
-      ...fallbackPlan,
-      ...aiResult.result,
-    };
+    const plan = normalizeCoverPlan(aiResult.result, fallbackPlan);
     const coverConfig = {
       ...coverPlanToCoverConfig(plan),
       sourceKey: getCoverSourceKey(input),

@@ -1,4 +1,5 @@
 import { FeishuRecord, fieldToNumber, fieldToText } from "./feishu";
+import { ACCOUNT_POSITIONING } from "./account";
 import { deriveStrategyForCard, firstThreeLines, inferAssetType } from "./contentStrategy";
 import {
   DEFAULT_TARGET_ID,
@@ -30,6 +31,12 @@ export const DRAFT_STATUS = {
   pending: "待发布",
   published: "已发布",
 } as const;
+
+/**
+ * 正文字数上限（中文字符）。同时写在草稿 prompt 与 limitDraftContent 里，两处必须一致。
+ * 现为账号/小红书口径的固定值；接第二个目标时改由目标档案声明（见改造方案 Phase 3）。
+ */
+const BODY_MAX_CHARS = 200;
 
 export interface MaterialItem {
   recordId: string;
@@ -489,7 +496,7 @@ export function buildContentCardPrompt(materials: MaterialItem[], glossary: Glos
   return `你是「Jing｜AI实践录」的小红书内容主编。
 
 账号定位：
-给产品经理、独立开发者、AI Coding 新手看的真实 AI 编程实战复盘。
+${ACCOUNT_POSITIONING}
 
 任务：
 从开发日报和 AI Coding 术语中提炼 ${count} 张小红书内容卡片。
@@ -557,7 +564,7 @@ export function buildDraftPrompt(card: ContentCard): string {
 8. 如果提到模板或清单，必须在正文里直接给出结构，不要让读者评论后领取。
 9. 写法要克制：少用感叹号、少用煽动式反问，保留真实上下文和可复用步骤。
 10. 不要把个人项目包装成团队成功学案例；素材没有团队背景时，使用“我这次/这个项目/这轮协作”。
-11. 正文必须简明，总字数不超过 200 个中文字符。
+11. 正文必须简明，总字数不超过 ${BODY_MAX_CHARS} 个中文字符。
 12. 标题必须符合这条选题指定的标题结构，正文必须符合指定的正文结构。
 13. 前 3 行必须出现具体场景、反差或结果。
 14. 正文必须直接给出可收藏资产，不能只说“我整理了一个模板”。
@@ -579,7 +586,7 @@ export function buildReviewPrompt(metrics: ReviewMetric[]): string {
   return `请复盘这些小红书笔记数据。
 
 账号定位：
-给产品经理、独立开发者、AI Coding 新手看的真实 AI 编程实战复盘。
+${ACCOUNT_POSITIONING}
 
 复盘目标：
 判断问题卡在选题、标题封面、内容价值、互动引导中的哪一层，并给出下周优化方向。
@@ -929,7 +936,7 @@ function stripMarketingParagraphs(value: string, fallback: string): string {
   return content || fallback;
 }
 
-function limitDraftContent(value: string, maxLength = 200): string {
+function limitDraftContent(value: string, maxLength = BODY_MAX_CHARS): string {
   const chars = Array.from(value.trim());
   return chars.length > maxLength ? chars.slice(0, maxLength).join("").trim() : value.trim();
 }

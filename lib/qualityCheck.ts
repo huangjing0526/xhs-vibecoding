@@ -192,7 +192,7 @@ function checkHook(draft: DraftNote): QualityIssue {
       ...base,
       verdict: "fail",
       message: `标题缺少钩子（无数字/提问/反差/利益点）${lenNote ? "，且" + lenNote : ""}。`,
-      fixHint: "用「更像爆款」改写标题，至少加一个钩子要素。",
+      fixHint: "用「爆款优化」改写标题，至少加一个钩子要素。",
     };
   }
   if (signals.length === 1 || lenNote) {

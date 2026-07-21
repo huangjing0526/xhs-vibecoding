@@ -86,10 +86,11 @@ XHS_TOPIC_POOL_DIR=/path/to/内容库
 
 ## 界面
 
-单页应用，8 个区域分两组（`components/workflow/WorkflowDashboard.tsx` 的 `AREAS`）：
+单页应用，9 个区域分三组（`components/workflow/WorkflowDashboard.tsx` 的 `AREAS`）：
 
-- **内容流程**：工作台、素材库、复盘
-- **制作工具**：封面与配图、视频方案、更像爆款、对标拆解、质检发布
+- **工作台**：默认落地页，选一篇笔记从选题写到发布
+- **内容流程**：素材库、封面与配图、视频脚本、发布检查、数据复盘（按流水线先后排列）
+- **AI 工具**：爆款优化、对标拆解、视频去水印（随时可调，不打断主流程）
 
 ## API
 

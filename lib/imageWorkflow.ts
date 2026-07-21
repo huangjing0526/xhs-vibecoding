@@ -1,8 +1,11 @@
 import type { AspectId } from "./targets";
 import type { ContentCard, DraftNote } from "./xhsWorkflow";
 
-/** 以下两个上限同时写在 prompt 文案里，两处必须一致。 */
+/** 以下三个上限同时写在 prompt 文案里，prompt 与代码必须读同一份，否则模型白写、渲染截断。 */
 const NODE_TEXT_MAX_CHARS = 18;
+
+/** 单条 callout 字数上限。原先 normalize 截 32、兜底另用 28，收成一份。 */
+const CALLOUT_MAX_CHARS = 32;
 
 /** 页脚把 callouts 拼成一段话、折成两行，多出来的既画不出也没有别的去处。 */
 const MAX_CALLOUTS = 2;
@@ -16,6 +19,20 @@ export type ContentImageTemplateType =
   | "timeline"
   | "comparison"
   | "steps";
+
+/**
+ * 每种模板的画布只排得下这么多 block——各 draw* 一直按这个数 slice，只是散成了魔法数字。
+ * 收成单一来源后，normalize 按模板容量截（不再平铺留 6），draw* 与 prompt 也读同一份，
+ * 消除「模型写了第 5/6 条、steps 只画 4 条、多的永不渲染」的幽灵 block（见改造方案 Phase 3）。
+ */
+const TEMPLATE_BLOCK_CAPACITY: Record<ContentImageTemplateType, number> = {
+  flowchart: 5,
+  architecture: 6,
+  checklist: 6,
+  timeline: 5,
+  comparison: 6,
+  steps: 4,
+};
 
 export interface ImageWorkflowSourceInput {
   sourceType: ImageSourceType;
@@ -222,8 +239,8 @@ export function buildContentImagePrompt(
 1. 内容必须来自输入，不要编造不存在的数据、工具效果、团队规模或收益。
 2. 文案短，适合图片阅读；每个节点不超过 ${NODE_TEXT_MAX_CHARS} 个中文字符。
 3. 优先表达流程、结构、清单、对比或步骤，不要写营销引导。
-4. 输出要可被前端渲染成图，所以 blocks 和 connections 必须清晰。
-5. callouts 最多 ${MAX_CALLOUTS} 条，写成可收藏提醒。
+4. 输出要可被前端渲染成图，所以 blocks 和 connections 必须清晰；blocks 数量控制在 ${TEMPLATE_BLOCK_CAPACITY[templateType]} 个以内（超出的画不下）。
+5. callouts 最多 ${MAX_CALLOUTS} 条，每条不超过 ${CALLOUT_MAX_CHARS} 个中文字符，写成可收藏提醒。
 
 输入：
 ${JSON.stringify(input, null, 2)}
@@ -332,8 +349,8 @@ export function createFallbackContentImagePlan(
       label: index === 0 ? "下一步" : undefined,
     })),
     callouts: [
-      clipText(input.reusableAsset, 28),
-      clipText(input.commentPrompt, 28),
+      clipText(input.reusableAsset, CALLOUT_MAX_CHARS),
+      clipText(input.commentPrompt, CALLOUT_MAX_CHARS),
     ].filter(Boolean),
     palette: template.defaultPalette,
     reason: `根据内容结构生成${template.name}，便于正文内解释和收藏。`,
@@ -387,13 +404,13 @@ function normalizePalette(value: unknown, fallback: ContentImagePalette): Conten
   };
 }
 
-function normalizeBlocks(value: unknown, fallback: ContentImageBlock[]): ContentImageBlock[] {
-  if (!Array.isArray(value)) return fallback;
+function normalizeBlocks(value: unknown, fallback: ContentImageBlock[], capacity: number): ContentImageBlock[] {
+  if (!Array.isArray(value)) return fallback.slice(0, capacity);
   const blocks = value
     .map((item, index): ContentImageBlock | null => {
       if (!item || typeof item !== "object") return null;
       const block = item as Partial<ContentImageBlock>;
-      const title = clipText(unknownToText(block.title), 22);
+      const title = clipText(unknownToText(block.title), NODE_TEXT_MAX_CHARS);
       const detail = clipText(unknownToText(block.detail), 44);
       if (!title && !detail) return null;
       const normalized: ContentImageBlock = {
@@ -408,7 +425,7 @@ function normalizeBlocks(value: unknown, fallback: ContentImageBlock[]): Content
       return normalized;
     })
     .filter((item): item is ContentImageBlock => Boolean(item));
-  return blocks.length > 0 ? blocks.slice(0, 6) : fallback;
+  return (blocks.length > 0 ? blocks : fallback).slice(0, capacity);
 }
 
 function normalizeConnections(value: unknown, blocks: ContentImageBlock[]): ContentImageConnection[] {
@@ -443,7 +460,7 @@ export function normalizeContentImagePlan(
   const templateType = normalizeTemplateType(value.templateType, fallback.templateType);
   const template = getContentImageTemplate(templateType);
   const palette = normalizePalette(value.palette, template.defaultPalette);
-  const blocks = normalizeBlocks(value.blocks, fallback.blocks);
+  const blocks = normalizeBlocks(value.blocks, fallback.blocks, TEMPLATE_BLOCK_CAPACITY[templateType]);
 
   return {
     assetId: unknownToText(value.assetId, fallback.assetId),
@@ -456,7 +473,7 @@ export function normalizeContentImagePlan(
     blocks,
     connections: normalizeConnections(value.connections, blocks),
     callouts: unknownToList(value.callouts, fallback.callouts)
-      .map((item) => clipText(item, 32))
+      .map((item) => clipText(item, CALLOUT_MAX_CHARS))
       .filter(Boolean)
       .slice(0, MAX_CALLOUTS),
     palette,
@@ -543,7 +560,7 @@ function drawContentImageHeader(ctx: CanvasRenderingContext2D, plan: ContentImag
 }
 
 function drawFlowchart(ctx: CanvasRenderingContext2D, plan: ContentImagePlan, width: number, height: number): void {
-  const blocks = plan.blocks.slice(0, 5);
+  const blocks = plan.blocks.slice(0, TEMPLATE_BLOCK_CAPACITY[plan.templateType]);
   const startY = 430;
   const gap = 34;
   const cardHeight = Math.min(142, (height - 650 - gap * (blocks.length - 1)) / Math.max(blocks.length, 1));
@@ -558,7 +575,7 @@ function drawFlowchart(ctx: CanvasRenderingContext2D, plan: ContentImagePlan, wi
 }
 
 function drawArchitecture(ctx: CanvasRenderingContext2D, plan: ContentImagePlan, width: number, height: number): void {
-  const blocks = plan.blocks.slice(0, 6);
+  const blocks = plan.blocks.slice(0, TEMPLATE_BLOCK_CAPACITY[plan.templateType]);
   const lanes = Array.from(new Set(blocks.map((block) => block.lane || "模块"))).slice(0, 3);
   const startY = 440;
   const laneHeight = 228;
@@ -582,7 +599,7 @@ function drawArchitecture(ctx: CanvasRenderingContext2D, plan: ContentImagePlan,
 }
 
 function drawChecklist(ctx: CanvasRenderingContext2D, plan: ContentImagePlan, width: number, _height: number): void {
-  const blocks = plan.blocks.slice(0, 6);
+  const blocks = plan.blocks.slice(0, TEMPLATE_BLOCK_CAPACITY[plan.templateType]);
   blocks.forEach((block, index) => {
     const y = 438 + index * 128;
     ctx.fillStyle = plan.palette.surface;
@@ -605,7 +622,7 @@ function drawChecklist(ctx: CanvasRenderingContext2D, plan: ContentImagePlan, wi
 }
 
 function drawTimeline(ctx: CanvasRenderingContext2D, plan: ContentImagePlan, width: number, _height: number): void {
-  const blocks = plan.blocks.slice(0, 5);
+  const blocks = plan.blocks.slice(0, TEMPLATE_BLOCK_CAPACITY[plan.templateType]);
   const x = 148;
   ctx.strokeStyle = plan.palette.primary;
   ctx.lineWidth = 8;
@@ -625,7 +642,7 @@ function drawTimeline(ctx: CanvasRenderingContext2D, plan: ContentImagePlan, wid
 }
 
 function drawComparison(ctx: CanvasRenderingContext2D, plan: ContentImagePlan, width: number, _height: number): void {
-  const blocks = plan.blocks.slice(0, 6);
+  const blocks = plan.blocks.slice(0, TEMPLATE_BLOCK_CAPACITY[plan.templateType]);
   const mid = Math.ceil(blocks.length / 2);
   const columns = [
     { title: "常见误区", blocks: blocks.slice(0, mid), color: plan.palette.accent },
@@ -647,7 +664,7 @@ function drawComparison(ctx: CanvasRenderingContext2D, plan: ContentImagePlan, w
 }
 
 function drawSteps(ctx: CanvasRenderingContext2D, plan: ContentImagePlan, width: number, _height: number): void {
-  const blocks = plan.blocks.slice(0, 4);
+  const blocks = plan.blocks.slice(0, TEMPLATE_BLOCK_CAPACITY[plan.templateType]);
   blocks.forEach((block, index) => {
     const y = 438 + index * 176;
     ctx.fillStyle = plan.palette.surface;

@@ -4,6 +4,7 @@ import {
   CoverTemplateId,
   getCoverTemplate,
 } from "./cover";
+import { ACCOUNT_POSITIONING } from "./account";
 import type { AspectId } from "./targets";
 import { ContentCard, DraftNote } from "./xhsWorkflow";
 
@@ -105,7 +106,7 @@ export function buildCoverPlanPrompt(input: CoverInput, coverAspect: AspectId): 
   return `你是小红书 AI Coding 账号的封面主编。
 
 账号定位：
-给产品经理、独立开发者、AI Coding 新手看的真实 AI 编程实战复盘。
+${ACCOUNT_POSITIONING}
 
 任务：
 根据内容信息生成小红书 ${coverAspect} 首图封面方案。
@@ -267,6 +268,57 @@ export function createFallbackCoverPlan(input: CoverInput): CoverPlan {
     titleSize: style === "清单型" ? 72 : 80,
     titlePosition: style === "案例型" ? "left" : "center",
     reason: "基于标题和痛点自动生成的封面方案。",
+  };
+}
+
+const COVER_STYLES: readonly CoverStyle[] = ["痛点型", "清单型", "反差型", "案例型"];
+const COVER_TITLE_POSITIONS: readonly CoverPlan["titlePosition"][] = ["center", "left", "bottom"];
+
+function asPlainText(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function asBoundedNumber(value: unknown, fallback: number, min: number, max: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+}
+
+function asOneOf<T>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+/**
+ * 把 AI 返回的封面标题收进 COVER_TITLE_MAX_CHARS。
+ * 按可见字符数（去掉换行）判断：预算内原样保留——AI 被明确要求可用 \n 换行，旧 AI 路径也裸透传，
+ * 过一遍 trimCoverTitle 反而会把 \n 归一成空格、破坏换行意图；只有超预算才拍平后交给 trimCoverTitle
+ * 折成两行（末支截到两行 × 每行 COVER_TITLE_LINE_CHARS）。这样只补齐「AI 路径不截 24」的缺口，
+ * 不改动预算内标题的既有渲染。
+ */
+function normalizeCoverTitle(value: unknown, fallback: string): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return fallback;
+  const visibleLength = Array.from(raw.replace(/\n/g, "")).length;
+  if (visibleLength <= COVER_TITLE_MAX_CHARS) return raw;
+  return trimCoverTitle(raw.replace(/\n/g, " "));
+}
+
+/**
+ * 校验并收口 AI 返回的封面方案，角色对齐 normalizeContentImagePlan：兜未知/越界字段，
+ * 并把标题收进 COVER_TITLE_MAX_CHARS。原先 covers 路由裸展开 {...fallback, ...aiResult} 对
+ * AI 输出零校验，coverPlanToCoverConfig 又原样透传 plan.title——≤24 只在兜底路径生效，AI 路径
+ * 完全不执行（见改造方案 Phase 3 附带 bug）。
+ */
+export function normalizeCoverPlan(value: Partial<CoverPlan>, fallback: CoverPlan): CoverPlan {
+  return {
+    style: asOneOf(value.style, COVER_STYLES, fallback.style),
+    title: normalizeCoverTitle(value.title, fallback.title),
+    subtitle: asPlainText(value.subtitle, fallback.subtitle),
+    backgroundColor: asPlainText(value.backgroundColor, fallback.backgroundColor),
+    overlayColor: asPlainText(value.overlayColor, fallback.overlayColor),
+    overlayOpacity: asBoundedNumber(value.overlayOpacity, fallback.overlayOpacity, 0, 1),
+    titleColor: asPlainText(value.titleColor, fallback.titleColor),
+    titleSize: asBoundedNumber(value.titleSize, fallback.titleSize, 40, 120),
+    titlePosition: asOneOf(value.titlePosition, COVER_TITLE_POSITIONS, fallback.titlePosition),
+    reason: asPlainText(value.reason, fallback.reason),
   };
 }
 
