@@ -98,6 +98,27 @@ function clip(text: string, max: number): string {
   return Array.from(normalized).slice(0, max).join("");
 }
 
+/**
+ * 口播脚本加标点：whisper 原始转写几乎没标点，是一堵字墙，阅读不友好。
+ * 让模型只补标点和分段、一个字都不改，返回 { text }。
+ */
+export function buildPunctuationPrompt(transcript: string): string {
+  return `下面是一段语音转写（ASR）出来的口播文字，几乎没有标点，读起来很吃力。
+
+请只做两件事：
+① 按语义补上合适的中文标点（，。？！、；：等）；
+② 在自然的话题停顿处分段，用换行分隔。
+
+硬性要求：
+- 不要改写、增删、纠正或调整任何字词，一个字都不能动，只加标点和换行。
+- 不要加任何解释、标题或前缀。
+
+原文：
+${transcript}
+
+用 JSON 返回，格式：{"text": "加好标点分好段的正文"}`;
+}
+
 export function buildScriptAnalysisPrompt(video: ExtractedVideo): string {
   const script = clip(video.transcript, MAX_TRANSCRIPT);
   const body = script || video.desc;

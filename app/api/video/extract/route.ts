@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk, readJsonBody } from "../../feishu/_utils";
 import { generateWorkflowJson } from "@/lib/workflowAi";
 import {
+  buildPunctuationPrompt,
   buildScriptAnalysisPrompt,
   createFallbackScriptAnalysis,
   detectVideoPlatform,
@@ -98,7 +99,20 @@ export async function POST(request: NextRequest) {
     const video = normalizeVideo(extractData, url);
     if (!video.videoUrl) return apiBadRequest("拆片服务没返回视频地址，请换一条链接重试");
 
-    // 2. AI 拆脚本结构（无 AI 时回兜底，原样保留脚本）
+    // 2. 口播脚本加标点（whisper 原始转写几乎没标点，阅读不友好）；先加好再拿去拆结构，
+    //    这样结构里引用的原文片段也带标点。无 AI 时兜底原样返回。
+    if (video.transcript) {
+      const punct = await generateWorkflowJson<{ text: string }>({
+        action: "video.extract.punctuate",
+        prompt: buildPunctuationPrompt(video.transcript),
+        fallback: { text: video.transcript },
+        maxTokens: Math.min(4000, Math.round(video.transcript.length * 1.5) + 300),
+      });
+      const punctuated = punct.result?.text?.trim();
+      if (punctuated) video.transcript = punctuated;
+    }
+
+    // 3. AI 拆脚本结构（无 AI 时回兜底，原样保留脚本）
     const fallback = createFallbackScriptAnalysis(video);
     const ai = await generateWorkflowJson<ScriptAnalysis>({
       action: "video.extract.analyze",
