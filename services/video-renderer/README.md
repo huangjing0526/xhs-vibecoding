@@ -62,18 +62,19 @@ VIDEO_RENDERER_URL=http://localhost:8787
 }
 ```
 
-依赖本机二进制：`yt-dlp`（抓无水印视频 + 元信息）、`ffmpeg`（抽音频）。ASR 口播转写可插拔：
+依赖本机二进制：`yt-dlp`（抓无水印视频 + 元信息）、`ffmpeg`（抽音频）。ASR 口播转写可插拔，配置放**本服务自己的 `.env`**（不是主 app 的 `.env.local`——那份是 Next 进程读的，本服务读不到）；`npm start` 会通过 `--env-file-if-exists=.env` 加载它：
 
 ```bash
-brew install yt-dlp ffmpeg
-# 本地转写（默认，离线免费）：
-brew install whisper-cpp
-# 下载 ggml 模型（推荐 large-v3-turbo），并在主 app 的 .env.local 里配：
-#   WHISPER_MODEL=/abs/path/to/ggml-large-v3-turbo.bin
-# 或走 API：ASR_PROVIDER=siliconflow（默认复用 SILICONFLOW_API_KEY）
+brew install yt-dlp ffmpeg whisper-cpp
+# 下载 ggml 模型（推荐 large-v3 / large-v3-turbo），然后在 services/video-renderer/.env 里配：
+#   ASR_PROVIDER=whisper-cpp
+#   WHISPER_BIN=whisper-cli
+#   WHISPER_MODEL=/abs/path/to/ggml-large-v3.bin
+#   WHISPER_LANG=zh
+# 或走 API：ASR_PROVIDER=siliconflow + ASR_API_KEY（详见 .env 注释）
 ```
 
-> 主 app 通过 `app/api/video/extract` 转发到这里，环境变量 `VIDEO_EXTRACTOR_URL`（默认复用 `VIDEO_RENDERER_URL`）。小红书部分链接需 yt-dlp cookie，v1 先跑通抖音。
+> 主 app 通过 `app/api/video/extract` 转发到这里，环境变量 `VIDEO_EXTRACTOR_URL`（默认复用 `VIDEO_RENDERER_URL`）配在主 app 的 `.env.local`。小红书部分链接需 yt-dlp cookie，v1 先跑通抖音。
 
 ## 工作流程
 

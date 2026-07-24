@@ -5,8 +5,8 @@
   "type": "module",
   "description": "本地视频渲染服务：Remotion 渲染图文快闪 + edge-tts 配音。独立于主 app，不进 Cloudflare 部署。",
   "scripts": {
-    "start": "node src/server.mjs",
-    "dev": "node --watch src/server.mjs"
+    "start": "node --env-file-if-exists=.env src/server.mjs",
+    "dev": "node --env-file-if-exists=.env --watch src/server.mjs"
   },
   "dependencies": {
     "@remotion/bundler": "^4.0.0",
