@@ -74,7 +74,29 @@ brew install yt-dlp ffmpeg whisper-cpp
 # 或走 API：ASR_PROVIDER=siliconflow + ASR_API_KEY（详见 .env 注释）
 ```
 
-抖音（及小红书）要浏览器 cookie（哪怕未登录）才不报「Fresh cookies needed」。在本服务 `.env` 里配 `YTDLP_COOKIES_FROM_BROWSER=chrome`（从本地 Chrome 直接读，需本机访问过对应站点），或 `YTDLP_COOKIES_FILE=/path/cookies.txt`。抖音用户主页/搜索/发现页里的视频，URL 形如 `.../search/...?modal_id=<id>`，主 app 的 `normalizeVideoUrl` 会自动改写成 `/video/<id>` 再交给 yt-dlp。
+抖音（及小红书）要浏览器 cookie（哪怕未登录）才不报「Fresh cookies needed」。
+
+⚠️ 本服务是**后台进程、脱离登录会话**，`--cookies-from-browser chrome` 拿不到 macOS 钥匙串、解不了 Chrome 加密 cookie。所以后台跑时用**导出的 cookies.txt**，在 `.env` 配 `YTDLP_COOKIES_FILE`。导出（在能访问钥匙串的交互终端里跑一次）：
+
+```bash
+# 用 yt-dlp 自带 cookie 模块把 Chrome cookie 导成 Netscape 格式
+/Users/kp/.local/pipx/venvs/yt-dlp/bin/python - services/video-renderer/cookies.txt <<'PY'
+import sys
+from yt_dlp.cookies import extract_cookies_from_browser
+class L:
+    def debug(s,m):pass
+    def info(s,m):pass
+    def warning(s,m):pass
+    def error(s,m):print("ERR:",m)
+jar = extract_cookies_from_browser("chrome", logger=L())
+jar.save(sys.argv[1], ignore_discard=True, ignore_expires=True)
+print("saved", sum(1 for _ in jar), "cookies")
+PY
+```
+
+抖音的匿名 cookie（ttwid 等）会轮换、有时效；再次报「Fresh cookies needed」时重跑上面这条刷新即可。`cookies.txt` 已 gitignore。（前台/交互式运行时也可直接用 `YTDLP_COOKIES_FROM_BROWSER=chrome`。）
+
+抖音用户主页/搜索/发现页里的视频，URL 形如 `.../search/...?modal_id=<id>`，主 app 的 `normalizeVideoUrl` 会自动改写成 `/video/<id>` 再交给 yt-dlp。
 
 > 主 app 通过 `app/api/video/extract` 转发到这里，环境变量 `VIDEO_EXTRACTOR_URL`（默认复用 `VIDEO_RENDERER_URL`）配在主 app 的 `.env.local`。v1 先跑通抖音，小红书为第二步。
 
