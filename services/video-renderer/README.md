@@ -74,7 +74,9 @@ brew install yt-dlp ffmpeg whisper-cpp
 # 或走 API：ASR_PROVIDER=siliconflow + ASR_API_KEY（详见 .env 注释）
 ```
 
-> 主 app 通过 `app/api/video/extract` 转发到这里，环境变量 `VIDEO_EXTRACTOR_URL`（默认复用 `VIDEO_RENDERER_URL`）配在主 app 的 `.env.local`。小红书部分链接需 yt-dlp cookie，v1 先跑通抖音。
+抖音（及小红书）要浏览器 cookie（哪怕未登录）才不报「Fresh cookies needed」。在本服务 `.env` 里配 `YTDLP_COOKIES_FROM_BROWSER=chrome`（从本地 Chrome 直接读，需本机访问过对应站点），或 `YTDLP_COOKIES_FILE=/path/cookies.txt`。抖音用户主页/搜索/发现页里的视频，URL 形如 `.../search/...?modal_id=<id>`，主 app 的 `normalizeVideoUrl` 会自动改写成 `/video/<id>` 再交给 yt-dlp。
+
+> 主 app 通过 `app/api/video/extract` 转发到这里，环境变量 `VIDEO_EXTRACTOR_URL`（默认复用 `VIDEO_RENDERER_URL`）配在主 app 的 `.env.local`。v1 先跑通抖音，小红书为第二步。
 
 ## 工作流程
 

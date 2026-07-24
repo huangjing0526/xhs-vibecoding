@@ -33,6 +33,18 @@ function run(bin, args, { timeoutMs = 180000 } = {}) {
   });
 }
 
+/**
+ * 抖音/小红书需要浏览器 cookie（哪怕未登录）才不报「Fresh cookies needed」。
+ * 支持从本地浏览器直接读（YTDLP_COOKIES_FROM_BROWSER=chrome/safari/…）或指定 cookies.txt。
+ */
+function ytdlpCookieArgs() {
+  const fromBrowser = process.env.YTDLP_COOKIES_FROM_BROWSER?.trim();
+  if (fromBrowser) return ["--cookies-from-browser", fromBrowser];
+  const cookiesFile = process.env.YTDLP_COOKIES_FILE?.trim();
+  if (cookiesFile) return ["--cookies", cookiesFile];
+  return [];
+}
+
 function detectPlatform(url, extractorKey) {
   const key = (extractorKey || "").toLowerCase();
   if (key.includes("douyin") || /douyin\.com|iesdouyin\.com/i.test(url)) return "douyin";
@@ -51,6 +63,7 @@ async function downloadVideo(url, outDir, id) {
   const { stdout } = await run("yt-dlp", [
     "--no-warnings",
     "--no-playlist",
+    ...ytdlpCookieArgs(),
     "--merge-output-format",
     "mp4",
     "-o",

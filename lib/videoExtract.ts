@@ -77,6 +77,20 @@ export function extractShareUrl(text: string): string | null {
   return match ? match[0] : null;
 }
 
+/**
+ * 规范化到 yt-dlp 认得的视频 URL。
+ * 抖音用户主页/搜索/发现等页面把视频开在弹窗里，真实 aweme_id 在 modal_id，
+ * 这类页面 URL yt-dlp 直接报「Unsupported URL」，统一改写成 /video/<id> 规范形。
+ */
+export function normalizeVideoUrl(url: string): string {
+  if (!url) return url;
+  if (/douyin\.com/i.test(url)) {
+    const modal = url.match(/[?&]modal_id=(\d+)/);
+    if (modal) return `https://www.douyin.com/video/${modal[1]}`;
+  }
+  return url;
+}
+
 const MAX_TRANSCRIPT = 6000;
 
 function clip(text: string, max: number): string {

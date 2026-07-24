@@ -6,6 +6,7 @@ import {
   createFallbackScriptAnalysis,
   detectVideoPlatform,
   extractShareUrl,
+  normalizeVideoUrl,
   VIDEO_PLATFORM_LABEL,
   type ExtractedVideo,
   type ScriptAnalysis,
@@ -61,8 +62,9 @@ export async function POST(request: NextRequest) {
     const input = body.input?.trim();
     if (!input) return apiBadRequest("请粘贴一条抖音/小红书视频链接或分享口令");
 
-    const url = extractShareUrl(input);
-    if (!url) return apiBadRequest("没识别到链接，请粘贴包含 http(s) 链接的分享内容");
+    const rawUrl = extractShareUrl(input);
+    if (!rawUrl) return apiBadRequest("没识别到链接，请粘贴包含 http(s) 链接的分享内容");
+    const url = normalizeVideoUrl(rawUrl);
 
     // 1. 本地服务抓无水印视频 + 口播脚本
     let resp: Response;
