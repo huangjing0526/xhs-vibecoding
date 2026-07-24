@@ -40,6 +40,41 @@ VIDEO_RENDERER_URL=http://localhost:8787
 
 `GET /health` → `{ "ok": true }`
 
+---
+
+`POST /extract`（链接拆片：抖音/小红书 → 无水印视频 + 口播脚本）
+
+```jsonc
+{ "url": "https://v.douyin.com/xxxxx/" }   // 纯链接；分享口令的抠取在主 app 侧完成
+```
+
+返回：
+
+```jsonc
+{
+  "platform": "douyin",
+  "title": "...", "desc": "...", "author": "...",
+  "durationSec": 42,
+  "coverUrl": "...",
+  "videoUrl": "http://localhost:8787/out/extract-xxx.mp4",
+  "transcript": "口播脚本（ASR 转写）",
+  "transcriptNote": ""   // 转写失败/未启用时给原因，视频与文案仍可用
+}
+```
+
+依赖本机二进制：`yt-dlp`（抓无水印视频 + 元信息）、`ffmpeg`（抽音频）。ASR 口播转写可插拔：
+
+```bash
+brew install yt-dlp ffmpeg
+# 本地转写（默认，离线免费）：
+brew install whisper-cpp
+# 下载 ggml 模型（推荐 large-v3-turbo），并在主 app 的 .env.local 里配：
+#   WHISPER_MODEL=/abs/path/to/ggml-large-v3-turbo.bin
+# 或走 API：ASR_PROVIDER=siliconflow（默认复用 SILICONFLOW_API_KEY）
+```
+
+> 主 app 通过 `app/api/video/extract` 转发到这里，环境变量 `VIDEO_EXTRACTOR_URL`（默认复用 `VIDEO_RENDERER_URL`）。小红书部分链接需 yt-dlp cookie，v1 先跑通抖音。
+
 ## 工作流程
 
 1. `edge-tts`（msedge-tts）把 `plan.voiceover` 合成中文配音 mp3，并测算时长。

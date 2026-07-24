@@ -16,6 +16,7 @@ import ClueIntakePanel from "@/components/workflow/ClueIntakePanel";
 import ReviewDashboard from "@/components/workflow/ReviewDashboard";
 import WorkflowOnboarding from "@/components/workflow/WorkflowOnboarding";
 import BloggerResearch from "@/components/workflow/BloggerResearch";
+import VideoExtractPanel from "@/components/workflow/VideoExtractPanel";
 import RewriteStudio from "@/components/workflow/RewriteStudio";
 import VideoStudio from "@/components/workflow/VideoStudio";
 import WorkbenchShell, {
@@ -120,12 +121,13 @@ const AREAS: Record<WorkbenchAreaId, AreaDef> = {
   review: { group: "内容流程", label: "数据复盘", hint: "看数据 · 拿建议", subtitle: "已发布笔记的数据表现与改进建议。" },
   rewrite: { group: "AI 工具", label: "爆款优化", subtitle: "对标道库改写，贴近爆款结构。" },
   blogger: { group: "AI 工具", label: "对标拆解", subtitle: "拆解对标博主，沉淀可复用的道库。" },
+  extract: { group: "AI 工具", label: "链接拆片", subtitle: "粘抖音/小红书链接，提取视频 + 口播脚本并拆解结构。" },
   watermark: { group: "AI 工具", label: "视频去水印", subtitle: "去掉 AI 生成视频的水印（豆包 / Gemini 等）。" },
 };
 
 // 侧栏导航，从 AREAS 派生：AREA_ORDER 是 Record 键的完整列表，
 // 新增区 id 时类型层会强制补 AREAS，从而保证它一定有导航入口。
-const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "cover", "video", "quality", "review", "rewrite", "blogger", "watermark"];
+const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "cover", "video", "quality", "review", "rewrite", "blogger", "extract", "watermark"];
 const GROUP_ORDER: AreaGroup[] = ["内容流程", "AI 工具"];
 const toNavItem = (id: WorkbenchAreaId): WorkbenchNavItem => ({
   id,
@@ -1373,6 +1375,16 @@ export default function WorkflowDashboard() {
             <BloggerResearch
               selectedDistillation={bloggerDistillation}
               onDistillationChange={setBloggerDistillation}
+            />
+          </ToolPage>
+        )}
+
+        {area === "extract" && (
+          <ToolPage area="extract" onGoWorkbench={() => setArea("workbench")}>
+            <VideoExtractPanel
+              onNotice={setNotice}
+              onSinkToDaoku={setBloggerDistillation}
+              onGoBlogger={() => setArea("blogger")}
             />
           </ToolPage>
         )}

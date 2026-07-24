@@ -18,6 +18,7 @@ import {
 } from "@/lib/xhsWorkflow";
 import type { LocalDocCategory, LocalDocFileSummary } from "@/lib/localDocs";
 import type { ExtractedClue } from "@/lib/clueIntake";
+import type { VideoExtractResult } from "@/lib/videoExtract";
 import type { InlineRewriteAction } from "@/lib/inlineRewrite";
 
 export interface WorkflowSnapshot {
@@ -438,6 +439,15 @@ export async function extractClues(options: { url?: string; rawText?: string }):
     "/api/feishu/clues",
     { method: "POST", body: JSON.stringify(options) },
     "线索提炼失败"
+  );
+}
+
+/** 视频拆片：粘抖音/小红书链接或分享口令 → 本地服务抓无水印视频 + 口播脚本 → AI 拆脚本结构 */
+export async function extractVideo(input: string): Promise<VideoExtractResult> {
+  return workflowRequest<VideoExtractResult>(
+    "/api/video/extract",
+    { method: "POST", body: JSON.stringify({ input }) },
+    "视频拆片失败"
   );
 }
 

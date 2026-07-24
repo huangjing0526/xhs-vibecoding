@@ -15,6 +15,7 @@ export type WorkbenchAreaId =
   | "video"
   | "rewrite"
   | "blogger"
+  | "extract"
   | "quality"
   | "watermark";
 

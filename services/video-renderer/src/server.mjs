@@ -6,6 +6,7 @@ import { mkdir } from "node:fs/promises";
 import { bundle } from "@remotion/bundler";
 import { selectComposition, renderMedia } from "@remotion/renderer";
 import { synthesizeToFile } from "./tts.mjs";
+import { extractVideo } from "./extract.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -113,6 +114,25 @@ app.post("/render", async (req, res) => {
       sourceType: plan?.sourceType,
       message,
     });
+    return res.status(500).json({ error: message });
+  }
+});
+
+// 抖音/小红书拆片：下无水印视频 + ffmpeg 抽音频 + ASR 转写口播脚本。下载文件复用 /out 静态目录对外提供。
+app.post("/extract", async (req, res) => {
+  const { url } = req.body || {};
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "缺少 url" });
+  }
+
+  const id = `extract-${Date.now().toString(36)}`;
+  try {
+    await mkdir(OUT_DIR, { recursive: true });
+    const result = await extractVideo({ url, outDir: OUT_DIR, publicUrl: PUBLIC_URL, id });
+    return res.json(result);
+  } catch (error) {
+    const message = normalizeError(error);
+    console.error("[video-extractor] extract failed", { action: "video.extract", url, message });
     return res.status(500).json({ error: message });
   }
 });
