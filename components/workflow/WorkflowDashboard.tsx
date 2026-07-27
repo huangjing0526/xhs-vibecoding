@@ -550,6 +550,30 @@ export default function WorkflowDashboard() {
     setNotice({ type: "success", message: "素材已更新" });
   }, [editingMaterial, setFriendlyError, setNotice, workflowMode]);
 
+  const handleToggleMaterialStatus = useCallback(async (item: MaterialItem) => {
+    const nextStatus =
+      item.status === MATERIAL_STATUS.pending ? MATERIAL_STATUS.extracted : MATERIAL_STATUS.pending;
+    const updated = { ...item, status: nextStatus };
+    setSnapshot((current) => ({
+      ...current,
+      materials: current.materials.map((m) => (m.recordId === updated.recordId ? updated : m)),
+    }));
+    if (workflowMode === "connected") {
+      try {
+        await saveMaterial({ material: updated, writeBack: true });
+      } catch (error) {
+        // 写回失败：回滚本地状态，避免界面与飞书不一致
+        setSnapshot((current) => ({
+          ...current,
+          materials: current.materials.map((m) => (m.recordId === item.recordId ? item : m)),
+        }));
+        setFriendlyError("materials.save", error);
+        return;
+      }
+    }
+    setNotice({ type: "success", message: `已标记为「${nextStatus}」` });
+  }, [setFriendlyError, setNotice, workflowMode]);
+
   const handleDeleteTopic = useCallback(async (topic: ContentCard) => {
     const ok = await deleteEntityRemote("topic", topic.recordId ? [topic.recordId] : []);
     if (!ok) return;
@@ -660,25 +684,26 @@ export default function WorkflowDashboard() {
     setNotice({ type: "success", message: "已手动新增选题并选中" });
   }, [setNotice]);
 
-  const handleGenerateTopics = useCallback(async () => {
+  const handleGenerateTopics = useCallback(async (targetMaterials?: MaterialItem[]) => {
     if (!hasPendingMaterials) {
       setNotice({ type: "error", message: "没有待提炼素材。请先在「本地文档入库」点「写入飞书」，再同步飞书。" });
       return;
     }
-    if (selectedMaterials.length === 0) {
+    const materials = targetMaterials ?? selectedMaterials;
+    if (materials.length === 0) {
       setNotice({ type: "error", message: "请先在素材页勾选本轮要提炼的素材。" });
       return;
     }
 
     setIsGeneratingTopics(true);
-    setNotice({ type: "info", message: `正在从 ${selectedMaterials.length} 条已选素材提炼选题` });
+    setNotice({ type: "info", message: `正在从 ${materials.length} 条素材提炼选题` });
     try {
       const shouldWriteBack = workflowMode === "connected";
       const result = await generateContentCards({
-        count: selectedMaterials.length,
+        count: materials.length,
         status: MATERIAL_STATUS.pending,
         writeBack: shouldWriteBack,
-        materials: selectedMaterials,
+        materials,
         glossary: snapshot.glossary,
         signal: tasks.start("topics"),
       });
@@ -1219,7 +1244,7 @@ export default function WorkflowDashboard() {
                   <Button
                     variant="ai"
                     size="lg"
-                    onClick={handleGenerateTopics}
+                    onClick={() => handleGenerateTopics()}
                     disabled={selectedMaterials.length === 0}
                     loading={isGeneratingTopics}
                     icon={<Sparkles size={16} />}
@@ -1266,6 +1291,8 @@ export default function WorkflowDashboard() {
                 onEditMaterial={handleEditMaterial}
                 onDeleteMaterial={handleDeleteMaterial}
                 onBatchDeleteMaterials={handleBatchDeleteMaterials}
+                onExtractMaterial={(item) => handleGenerateTopics([item])}
+                onToggleMaterialStatus={handleToggleMaterialStatus}
                 onNotice={setNotice}
                 onImported={loadSnapshot}
               />

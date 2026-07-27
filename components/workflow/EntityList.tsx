@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Plus } from "lucide-react";
-import Button from "@/components/ui/Button";
+import { ChevronRight, MoreHorizontal, Plus } from "lucide-react";
+import Button, { type ButtonVariant } from "@/components/ui/Button";
 
 /** 一列定义：可选固定列宽（CSS width，如 "120px"；省略=自适应剩余空间）。 */
 export interface EntityColumn<T> {
@@ -11,6 +11,20 @@ export interface EntityColumn<T> {
   /** 固定列宽，如 "92px"；省略则自适应。 */
   width?: string;
   render: (item: T) => ReactNode;
+}
+
+/**
+ * 一个行操作。inMenu=false（默认）直接渲染成按钮；inMenu=true 收进行尾「⋯ 更多」下拉。
+ * 需要按行变文案/隐藏时，在 rowActions(item) 里按条目算好再返回。
+ */
+export interface RowAction<T> {
+  key: string;
+  label: string;
+  onClick: (item: T) => void;
+  variant?: ButtonVariant;
+  inMenu?: boolean;
+  /** 返回非空串则先 window.confirm 该文案，取消则不执行。 */
+  confirm?: (item: T) => string | null;
 }
 
 export interface EntityFilterTab {
@@ -39,11 +53,11 @@ interface EntityListProps<T> {
   activeFilter?: string;
   onFilterChange?: (id: string) => void;
 
-  /** 行操作。 */
-  onEdit?: (item: T) => void;
-  onDelete?: (item: T) => void;
-  deleteConfirm?: (item: T) => string | null;
+  /** 行操作：按条目返回操作列表；返回空数组则该行无操作列。 */
+  rowActions?: (item: T) => RowAction<T>[];
 
+  /** 清空选择（选中态浮条的「清空」）。 */
+  onClearSelection?: () => void;
   /** 批量删除（作用于 selectedIds）。 */
   onBatchDelete?: (ids: string[]) => void;
   batchDeleteConfirm?: (count: number) => string | null;
@@ -93,6 +107,75 @@ function HeaderCheckbox({
   );
 }
 
+/** 行操作单元格：直接按钮 + 「⋯ 更多」下拉（inMenu 的收进来，点外部关闭）。 */
+function RowActionsCell<T>({
+  actions,
+  onRun,
+}: {
+  actions: RowAction<T>[];
+  onRun: (action: RowAction<T>) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuOpen]);
+
+  const inlineActions = actions.filter((action) => !action.inMenu);
+  const menuActions = actions.filter((action) => action.inMenu);
+
+  return (
+    <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+      {inlineActions.map((action) => (
+        <Button
+          key={action.key}
+          size="sm"
+          variant={action.variant ?? "secondary"}
+          onClick={() => onRun(action)}
+        >
+          {action.label}
+        </Button>
+      ))}
+      {menuActions.length > 0 && (
+        <div ref={ref} className="relative">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setMenuOpen((open) => !open)}
+            aria-label="更多操作"
+            icon={<MoreHorizontal size={16} />}
+          />
+          {menuOpen && (
+            <div className="absolute right-0 top-full z-20 mt-1 min-w-32 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-card">
+              {menuActions.map((action) => (
+                <button
+                  key={action.key}
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onRun(action);
+                  }}
+                  className={`block w-full px-3 py-2 text-left text-xs font-bold transition-colors hover:bg-soft ${
+                    action.variant === "danger" ? "text-red-600" : "text-ink"
+                  }`}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function EntityList<T>({
   items,
   getRowId,
@@ -105,9 +188,8 @@ export default function EntityList<T>({
   filters,
   activeFilter,
   onFilterChange,
-  onEdit,
-  onDelete,
-  deleteConfirm,
+  rowActions,
+  onClearSelection,
   onBatchDelete,
   batchDeleteConfirm,
   isArchived,
@@ -119,7 +201,7 @@ export default function EntityList<T>({
   addLabel = "新增",
 }: EntityListProps<T>) {
   const [showArchived, setShowArchived] = useState(false);
-  const hasActions = Boolean(onEdit || onDelete);
+  const hasActions = Boolean(rowActions);
   const colCount = 1 + columns.length + (hasActions ? 1 : 0);
 
   const activeItems = items.filter((item) => !isArchived?.(item));
@@ -135,10 +217,10 @@ export default function EntityList<T>({
     else selectableIds.forEach((id) => !selectedSet.has(id) && onToggleRow(id));
   };
 
-  const handleDeleteClick = (item: T) => {
-    const message = deleteConfirm?.(item);
+  const runRowAction = (item: T, action: RowAction<T>) => {
+    const message = action.confirm?.(item);
     if (message && !window.confirm(message)) return;
-    onDelete?.(item);
+    action.onClick(item);
   };
 
   const handleBatchDelete = () => {
@@ -189,18 +271,12 @@ export default function EntityList<T>({
         ))}
         {hasActions && (
           <td className="px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-              {!archived && onEdit && (
-                <Button size="sm" variant="secondary" onClick={() => onEdit(item)}>
-                  编辑
-                </Button>
-              )}
-              {!archived && onDelete && (
-                <Button size="sm" variant="danger" onClick={() => handleDeleteClick(item)}>
-                  删除
-                </Button>
-              )}
-            </div>
+            {!archived && rowActions && (
+              <RowActionsCell
+                actions={rowActions(item)}
+                onRun={(action) => runRowAction(item, action)}
+              />
+            )}
           </td>
         )}
       </tr>
@@ -209,7 +285,8 @@ export default function EntityList<T>({
 
   return (
     <section className="overflow-hidden rounded-3xl border border-line bg-surface shadow-card">
-      {(filters || onBatchDelete || toolbarExtra || onAdd) && (
+      {/* 第一层：视图筛选（左） + 全局动作（右）。常驻，与选择无关。 */}
+      {(filters || toolbarExtra || onAdd) && (
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
           {filters?.map((tab) => {
             const isActive = activeFilter === tab.id;
@@ -229,19 +306,34 @@ export default function EntityList<T>({
           })}
           <div className="ml-auto flex items-center gap-2">
             {toolbarExtra}
-            <span className="text-xs text-faint">
-              已选 <span className="font-rounded font-bold tabular-nums text-ink">{selectedCount}</span>
-            </span>
-            {onBatchDelete && (
-              <Button size="sm" variant="danger" onClick={handleBatchDelete} disabled={selectedCount === 0}>
-                批量删除
-              </Button>
-            )}
             {onAdd && (
               <Button size="sm" variant="primary" onClick={onAdd} icon={<Plus size={14} strokeWidth={2.6} />}>
                 {addLabel}
               </Button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 第二层：选中态浮条。仅在有选中时出现，收纳批量动作。 */}
+      {onBatchDelete && selectedCount > 0 && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-line bg-brand-50/60 px-4 py-2.5">
+          <span className="text-xs text-muted">
+            已选 <span className="font-rounded font-bold tabular-nums text-ink">{selectedCount}</span> 条
+          </span>
+          {onClearSelection && (
+            <button
+              type="button"
+              onClick={onClearSelection}
+              className="text-xs font-bold text-muted transition-colors hover:text-ink"
+            >
+              清空
+            </button>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="danger" onClick={handleBatchDelete}>
+              批量删除
+            </Button>
           </div>
         </div>
       )}
