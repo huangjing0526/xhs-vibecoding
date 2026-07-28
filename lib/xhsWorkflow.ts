@@ -1,4 +1,4 @@
-import { FeishuRecord, fieldToNumber, fieldToText } from "./feishu";
+import { FeishuRecord, fieldToNumber, fieldToOptionalNumber, fieldToText } from "./feishu";
 import { ACCOUNT_POSITIONING } from "./account";
 import { deriveStrategyForCard, firstThreeLines, inferAssetType } from "./contentStrategy";
 import {
@@ -191,6 +191,12 @@ export interface ReviewMetric {
   shares: number;
   interactionRate: number;
   saveRate: number;
+  /** 曝光量。仅创作服务平台导出的数据有（见 scripts/import-note-stats.mjs），手工填的复盘记录没有。 */
+  impressions?: number;
+  /** 封面点击率 = 观看 / 曝光，存小数。来源同 impressions。 */
+  coverClickRate?: number;
+  /** 这条笔记带来的涨粉数。来源同 impressions。 */
+  newFollowers?: number;
   contentLane?: ContentLane;
   referencePool?: ReferencePool;
   viralTitleStructure?: ViralTitleStructure;
@@ -437,8 +443,23 @@ export function normalizeReviewMetric(record: FeishuRecord): ReviewMetric {
     shares,
     interactionRate: reads > 0 ? interactions / reads : 0,
     saveRate: reads > 0 ? saves / reads : 0,
+    // 这三项只有创作服务平台导出的记录才有，手工填的复盘记录留空
+    impressions: fieldToOptionalNumber(fields["曝光"]),
+    coverClickRate: fieldToOptionalNumber(fields["封面点击率"]),
+    newFollowers: fieldToOptionalNumber(fields["涨粉"]),
     ...normalizeStrategyMetadata(fields),
   };
+}
+
+/**
+ * 复盘数据也可能由创作服务平台导出直接入表（scripts/import-note-stats.mjs），这些笔记不在草稿表里。
+ * 所以排除的是「草稿表里明确还没发布的」，而不是只保留「草稿表里已发布的」——后者会把导入的数据全滤掉。
+ */
+export function filterMetricsByDraftStatus(metrics: ReviewMetric[], drafts: DraftNote[]): ReviewMetric[] {
+  const unpublishedNoteIds = new Set(
+    drafts.filter((draft) => !isPublishedDraft(draft)).map((draft) => draft.noteId)
+  );
+  return metrics.filter((metric) => !unpublishedNoteIds.has(metric.noteId));
 }
 
 export function hasReviewMetricContent(item: ReviewMetric): boolean {
@@ -590,6 +611,11 @@ ${ACCOUNT_POSITIONING}
 
 复盘目标：
 判断问题卡在选题、标题封面、内容价值、互动引导中的哪一层，并给出下周优化方向。
+
+字段说明（部分记录只有互动数，没有 impressions/coverClickRate/newFollowers，遇到就跳过该层判断）：
+impressions 曝光、reads 观看、coverClickRate 封面点击率（观看/曝光）、newFollowers 涨粉。
+按漏斗定位问题：曝光低=选题或标签没被推荐；曝光够但 coverClickRate 低=封面标题问题；
+点击率够但 saveRate 低=内容没接住；收藏率够但 newFollowers 低=缺少关注理由。
 
 下次优化要求：
 给出 3-5 条「下次怎么做」的具体动作，每条挂到一个层级（只能用：选题 / 钩子 / 封面 / 标签 / 引导 / 内容价值），

@@ -5,9 +5,9 @@ import { generateWorkflowJson } from "@/lib/workflowAi";
 import {
   buildReviewPrompt,
   createFallbackReview,
+  filterMetricsByDraftStatus,
   filterUsableDrafts,
   filterUsableReviewMetrics,
-  isPublishedDraft,
   normalizeDraftNote,
   normalizeReviewMetric,
   ReviewMetric,
@@ -24,19 +24,14 @@ export async function POST(request: NextRequest) {
     const body = await readJsonBody<ReviewRequest>(request, "review.readJson");
     const writeBack = body.writeBack === true;
     const records = body.metrics ? [] : await searchFeishuRecords("review");
-    const publishedNoteIds = body.metrics
+    const drafts = body.metrics
       ? null
-      : new Set(
-          filterUsableDrafts((await searchFeishuRecords("draft")).map(normalizeDraftNote))
-            .filter(isPublishedDraft)
-            .map((draft) => draft.noteId)
-        );
-    const metrics = filterUsableReviewMetrics(body.metrics || records.map(normalizeReviewMetric)).filter((metric) => {
-      return publishedNoteIds ? publishedNoteIds.has(metric.noteId) : true;
-    });
+      : filterUsableDrafts((await searchFeishuRecords("draft")).map(normalizeDraftNote));
+    const usableMetrics = filterUsableReviewMetrics(body.metrics || records.map(normalizeReviewMetric));
+    const metrics = drafts ? filterMetricsByDraftStatus(usableMetrics, drafts) : usableMetrics;
 
     if (metrics.length === 0) {
-      return apiBadRequest("没有已发布笔记的复盘数据，请先发布草稿并回填数据");
+      return apiBadRequest("没有可复盘的笔记数据，请先发布笔记并回填数据");
     }
 
     const fallbackReview = createFallbackReview(metrics);

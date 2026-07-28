@@ -311,3 +311,12 @@ export function fieldToNumber(value: unknown): number {
   const number = Number(text);
   return Number.isFinite(number) ? number : 0;
 }
+
+/**
+ * 字段没填时返回 undefined，而不是 fieldToNumber 的 0。
+ * 用于「这项没有数据」和「这项是 0」必须区分的字段（如只有部分记录才有的曝光量）。
+ */
+export function fieldToOptionalNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  return fieldToNumber(value);
+}

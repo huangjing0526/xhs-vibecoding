@@ -65,6 +65,7 @@ import {
 } from "@/lib/imageWorkflow";
 import { createMarkdownDemoSnapshot, DEMO_SELECTED_MATERIAL_IDS, DEMO_SNAPSHOT } from "@/lib/demoWorkflow";
 import {
+  filterMetricsByDraftStatus,
   isPublishedDraft,
   type ContentCard,
   type DraftNote,
@@ -335,10 +336,10 @@ export default function WorkflowDashboard() {
   const topicPoolDir = bootstrapConfig?.topicPoolDir || "";
   const usableTopics = useMemo(() => getUsableTopics(snapshot.topics), [snapshot.topics]);
   const usableDrafts = useMemo(() => getUsableDrafts(snapshot.drafts), [snapshot.drafts]);
-  const publishedMetrics = useMemo(() => {
-    const publishedNoteIds = new Set(usableDrafts.filter(isPublishedDraft).map((draft) => draft.noteId));
-    return snapshot.metrics.filter((metric) => publishedNoteIds.has(metric.noteId));
-  }, [snapshot.metrics, usableDrafts]);
+  const publishedMetrics = useMemo(
+    () => filterMetricsByDraftStatus(snapshot.metrics, usableDrafts),
+    [snapshot.metrics, usableDrafts]
+  );
   const selectedMaterials = useMemo(
     () => snapshot.materials.filter((item) => selectedMaterialIds.includes(item.recordId)),
     [selectedMaterialIds, snapshot.materials]

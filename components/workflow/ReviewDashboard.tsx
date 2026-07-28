@@ -42,15 +42,20 @@ export default function ReviewDashboard({ metrics, review, onGenerate, onCancel,
 
   const sortedMetrics = [...metrics].sort((a, b) => b.reads - a.reads);
   const totalReads = metrics.reduce((sum, item) => sum + item.reads, 0);
+  const totalImpressions = metrics.reduce((sum, item) => sum + (item.impressions ?? 0), 0);
   const averageSaveRate =
     metrics.length > 0 ? metrics.reduce((sum, item) => sum + item.saveRate, 0) / metrics.length : 0;
+  // 整体封面点击率按总量算，而不是各条求平均——否则几十次曝光的笔记会把数字拉飞
+  const overallClickRate = totalImpressions > 0 ? totalReads / totalImpressions : 0;
 
   return (
     <section className="grid gap-3 xl:grid-cols-2">
       <div className="overflow-hidden rounded-3xl border border-line bg-surface shadow-card">
         <div className="flex gap-2 p-4">
           <Stat value={metrics.length} label="已发布" />
+          {totalImpressions > 0 && <Stat value={totalImpressions} label="曝光" />}
           <Stat value={totalReads} label="阅读" />
+          {totalImpressions > 0 && <Stat value={toPercent(overallClickRate)} label="封面点击率" />}
           <Stat value={toPercent(averageSaveRate)} label="均收藏率" tone="ok" />
         </div>
 
@@ -64,10 +69,18 @@ export default function ReviewDashboard({ metrics, review, onGenerate, onCancel,
                 <div className="font-mono text-[11px] font-bold text-faint">{metric.noteId}</div>
                 <div className="mt-1 text-sm font-bold leading-6 text-ink">{metric.title || "未命名笔记"}</div>
               </div>
-              <div className="grid grid-cols-3 text-center text-xs">
+              <div className="grid grid-cols-4 text-center text-xs">
+                <div>
+                  <div className="font-rounded font-bold tabular-nums text-muted">
+                    {metric.impressions ?? "—"}
+                  </div>
+                  <div className="mt-0.5 text-faint">曝光</div>
+                </div>
                 <div>
                   <div className="font-rounded font-bold tabular-nums text-ink">{metric.reads}</div>
-                  <div className="mt-0.5 text-faint">阅读</div>
+                  <div className="mt-0.5 text-faint">
+                    {metric.coverClickRate === undefined ? "阅读" : `阅读 ${toPercent(metric.coverClickRate)}`}
+                  </div>
                 </div>
                 <div>
                   <div className="font-rounded font-bold tabular-nums text-ok">{metric.saves}</div>
