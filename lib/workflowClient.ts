@@ -442,6 +442,15 @@ export async function extractClues(options: { url?: string; rawText?: string }):
   );
 }
 
+/** 弹 macOS 原生「选择文件夹」对话框，返回真实绝对路径（取消时 path 为 null）。 */
+export async function pickDirectory(defaultPath?: string): Promise<{ path: string | null }> {
+  return workflowRequest<{ path: string | null }>(
+    "/api/system/pick-directory",
+    { method: "POST", body: JSON.stringify({ defaultPath }) },
+    "打开目录选择器失败"
+  );
+}
+
 /** 视频拆片：粘抖音/小红书链接或分享口令 → 本地服务抓无水印视频 + 口播脚本 → AI 拆脚本结构 */
 export async function extractVideo(input: string): Promise<VideoExtractResult> {
   return workflowRequest<VideoExtractResult>(

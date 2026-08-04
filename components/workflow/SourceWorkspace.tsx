@@ -6,7 +6,6 @@ import Button from "@/components/ui/Button";
 import ModalOverlay from "@/components/ui/ModalOverlay";
 import { MATERIAL_STATUS, type MaterialItem } from "@/lib/xhsWorkflow";
 import EntityList, { type EntityColumn, type RowAction } from "./EntityList";
-import LocalDocsSyncPanel from "./LocalDocsSyncPanel";
 import type { Notice } from "./types";
 
 function clip(text: string | undefined, maxLength = 92): string {
@@ -16,7 +15,6 @@ function clip(text: string | undefined, maxLength = 92): string {
 interface SourceWorkspaceProps {
   materials: MaterialItem[];
   selectedMaterialIds: string[];
-  localDocsSourceDir: string;
   isFeishuReady: boolean;
   onToggleMaterial: (materialId: string) => void;
   onSelectPendingMaterials: () => void;
@@ -30,7 +28,6 @@ interface SourceWorkspaceProps {
   /** 在 待提炼 / 已提炼 间切换状态。 */
   onToggleMaterialStatus: (item: MaterialItem) => void;
   onNotice: (notice: Notice) => void;
-  onImported: () => Promise<void>;
 }
 
 type MaterialViewFilter = "all" | "pending" | "processed";
@@ -38,7 +35,6 @@ type MaterialViewFilter = "all" | "pending" | "processed";
 export default function SourceWorkspace({
   materials,
   selectedMaterialIds,
-  localDocsSourceDir,
   isFeishuReady,
   onToggleMaterial,
   onSelectPendingMaterials,
@@ -50,7 +46,6 @@ export default function SourceWorkspace({
   onExtractMaterial,
   onToggleMaterialStatus,
   onNotice,
-  onImported,
 }: SourceWorkspaceProps) {
   const [materialFilter, setMaterialFilter] = useState<MaterialViewFilter>("all");
   const [viewingMaterial, setViewingMaterial] = useState<MaterialItem | null>(null);
@@ -105,13 +100,6 @@ export default function SourceWorkspace({
 
   return (
     <div className="space-y-3">
-      <LocalDocsSyncPanel
-        defaultSourceDir={localDocsSourceDir}
-        isFeishuReady={isFeishuReady}
-        onNotice={onNotice}
-        onImported={onImported}
-      />
-
       <EntityList
         items={visibleMaterials}
         getRowId={(item) => item.recordId}

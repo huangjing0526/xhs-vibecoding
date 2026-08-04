@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
-import CollapsiblePanel from "@/components/ui/CollapsiblePanel";
+import IntakeShell from "@/components/workflow/IntakeShell";
 import Stat from "@/components/ui/Stat";
-import { Field, Input } from "@/components/ui/Field";
+import DirectoryField from "@/components/workflow/DirectoryField";
 import { importTopicPool, type TopicPoolImportResult } from "@/lib/workflowClient";
 import type { Notice } from "./types";
 
@@ -15,6 +15,7 @@ interface TopicPoolImportPanelProps {
   isFeishuReady: boolean;
   onNotice: (notice: Notice) => void;
   onImported: () => Promise<void>;
+  headless?: boolean;
 }
 
 export default function TopicPoolImportPanel({
@@ -22,6 +23,7 @@ export default function TopicPoolImportPanel({
   isFeishuReady,
   onNotice,
   onImported,
+  headless,
 }: TopicPoolImportPanelProps) {
   const [sourceDir, setSourceDir] = useState(defaultSourceDir);
   const [previewResult, setPreviewResult] = useState<TopicPoolImportResult | null>(null);
@@ -86,18 +88,16 @@ export default function TopicPoolImportPanel({
   };
 
   return (
-    <CollapsiblePanel title="从选题池导入" hint="把内容库「待发酵 / 可启动」选题导进来">
+    <IntakeShell title="从选题池导入" hint="把内容库「待发酵 / 可启动」选题导进来" headless={headless}>
       <div className="grid gap-5 p-5 lg:grid-cols-[1.4fr_0.8fr]">
-        <Field
+        <DirectoryField
           label="内容库目录"
           hint="读取目录下的 选题池.md，只导入「待发酵」「可启动」分区，不触碰试水区 / 已发布 / 已废弃。导入为选题种子（状态「待写」），痛点与正文结构留到本环节细化。"
-        >
-          <Input
-            value={sourceDir}
-            onChange={(event) => setSourceDir(event.target.value)}
-            placeholder="如 /Users/you/workspace/content/xhs"
-          />
-        </Field>
+          value={sourceDir}
+          onChange={setSourceDir}
+          placeholder="如 /Users/you/workspace/content/xhs"
+          onNotice={onNotice}
+        />
 
         <div>
           <div className="flex gap-2">
@@ -142,6 +142,6 @@ export default function TopicPoolImportPanel({
           )}
         </div>
       )}
-    </CollapsiblePanel>
+    </IntakeShell>
   );
 }

@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
-import CollapsiblePanel from "@/components/ui/CollapsiblePanel";
+import IntakeShell from "@/components/workflow/IntakeShell";
 import Stat from "@/components/ui/Stat";
-import { Field, Input } from "@/components/ui/Field";
+import DirectoryField from "@/components/workflow/DirectoryField";
 import type { LocalDocCategory } from "@/lib/localDocs";
 import { scanLocalDocs, syncLocalDocs, type LocalDocsScanResult, type LocalDocsSyncResult } from "@/lib/workflowClient";
 import type { Notice } from "./types";
@@ -16,6 +16,7 @@ interface LocalDocsSyncPanelProps {
   isFeishuReady: boolean;
   onNotice: (notice: Notice) => void;
   onImported: () => Promise<void>;
+  headless?: boolean;
 }
 
 const CATEGORY_OPTIONS: Array<{
@@ -51,6 +52,7 @@ export default function LocalDocsSyncPanel({
   isFeishuReady,
   onNotice,
   onImported,
+  headless,
 }: LocalDocsSyncPanelProps) {
   const [sourceDir, setSourceDir] = useState(defaultSourceDir);
   const [selected, setSelected] = useState<Record<LocalDocCategory, boolean>>({
@@ -130,16 +132,17 @@ export default function LocalDocsSyncPanel({
   };
 
   return (
-    <CollapsiblePanel title="本地文档入库" hint="把日报 / 问题 / 术语抽成素材">
+    <IntakeShell title="本地文档入库" hint="把日报 / 问题 / 术语抽成素材" headless={headless}>
       <div className="grid gap-5 p-5 lg:grid-cols-[1.4fr_0.8fr]">
         <div>
-          <Field label="文档目录" hint="日报、问题记录、Agent 学习和协作标准都会被抽成可提炼素材">
-            <Input
-              value={sourceDir}
-              onChange={(event) => setSourceDir(event.target.value)}
-              placeholder="填写你的 Markdown 文档目录"
-            />
-          </Field>
+          <DirectoryField
+            label="文档目录"
+            hint="日报、问题记录、Agent 学习和协作标准都会被抽成可提炼素材"
+            value={sourceDir}
+            onChange={setSourceDir}
+            placeholder="填写你的 Markdown 文档目录"
+            onNotice={onNotice}
+          />
           <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
             {CATEGORY_OPTIONS.map((item) => {
               const isActive = selected[item.value];
@@ -220,6 +223,6 @@ export default function LocalDocsSyncPanel({
           )}
         </div>
       </div>
-    </CollapsiblePanel>
+    </IntakeShell>
   );
 }

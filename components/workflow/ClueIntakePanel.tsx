@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
-import CollapsiblePanel from "@/components/ui/CollapsiblePanel";
+import IntakeShell from "@/components/workflow/IntakeShell";
 import { Field, Textarea } from "@/components/ui/Field";
 import { extractClues } from "@/lib/workflowClient";
 import type { ExtractedClue } from "@/lib/clueIntake";
@@ -12,11 +12,12 @@ import type { Notice } from "./types";
 interface ClueIntakePanelProps {
   onClues: (candidates: ExtractedClue[], sourceLabel: string) => void;
   onNotice: (notice: Notice) => void;
+  headless?: boolean;
 }
 
 const URL_PATTERN = /^https?:\/\/\S+$/i;
 
-export default function ClueIntakePanel({ onClues, onNotice }: ClueIntakePanelProps) {
+export default function ClueIntakePanel({ onClues, onNotice, headless }: ClueIntakePanelProps) {
   const [input, setInput] = useState("");
   const [candidates, setCandidates] = useState<ExtractedClue[]>([]);
   const [sourceLabel, setSourceLabel] = useState("");
@@ -60,7 +61,7 @@ export default function ClueIntakePanel({ onClues, onNotice }: ClueIntakePanelPr
   };
 
   return (
-    <CollapsiblePanel title="从 X / GitHub 线索采集" hint="粘贴链接联网抓取，或直接贴原文">
+    <IntakeShell title="从 X / GitHub 线索采集" hint="粘贴链接联网抓取，或直接贴原文" headless={headless}>
       <div className="p-5">
         <Field
           label="线索链接或原文"
@@ -103,6 +104,6 @@ export default function ClueIntakePanel({ onClues, onNotice }: ClueIntakePanelPr
           </Callout>
         </div>
       )}
-    </CollapsiblePanel>
+    </IntakeShell>
   );
 }

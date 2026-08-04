@@ -13,6 +13,8 @@ import { useAbortableTasks } from "@/components/workflow/useAbortableTasks";
 import CoverStudio from "@/components/workflow/CoverStudio";
 import TopicPoolImportPanel from "@/components/workflow/TopicPoolImportPanel";
 import ClueIntakePanel from "@/components/workflow/ClueIntakePanel";
+import LocalDocsSyncPanel from "@/components/workflow/LocalDocsSyncPanel";
+import SegmentedControl from "@/components/workflow/SegmentedControl";
 import ReviewDashboard from "@/components/workflow/ReviewDashboard";
 import WorkflowOnboarding from "@/components/workflow/WorkflowOnboarding";
 import BloggerResearch from "@/components/workflow/BloggerResearch";
@@ -330,6 +332,8 @@ export default function WorkflowDashboard() {
   const [addingTopic, setAddingTopic] = useState(false);
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("demo");
   const [bootstrapConfig, setBootstrapConfig] = useState<WorkflowBootstrapResult["config"] | null>(null);
+  // 录入与提炼：三种导入源用 tab 切换（线索采集 / 选题池 / 本地文档）
+  const [intakeTab, setIntakeTab] = useState<"clue" | "pool" | "docs">("clue");
   const hasPendingMaterials = snapshot.materials.some((item) => item.status === MATERIAL_STATUS.pending);
   const isFeishuReady = workflowMode === "connected" && Boolean(bootstrapConfig?.feishuReady);
   const localDocsSourceDir = bootstrapConfig?.localDocsSourceDir || "";
@@ -1265,25 +1269,50 @@ export default function WorkflowDashboard() {
                 onOpenSource={() => setArea("workbench")}
                 onDismiss={() => setArea("workbench")}
               />
-              <CollapsiblePanel title="录入与提炼" hint="线索采集、选题池导入——展开按需使用">
+              <CollapsiblePanel title="录入与提炼" hint="线索采集、选题池、本地文档——三选一导入">
                 <div className="space-y-3 p-5">
                   <p className="text-sm leading-6 text-muted">
                     勾选下方素材，点右上「生成选题」即可提炼——每条选题就是一篇新笔记。已选{" "}
                     <span className="font-rounded font-bold tabular-nums text-ink">{selectedMaterials.length}</span> 条。
                   </p>
-                  <ClueIntakePanel onClues={handleAddClues} onNotice={setNotice} />
-                  <TopicPoolImportPanel
-                    defaultSourceDir={topicPoolDir}
-                    isFeishuReady={isFeishuReady}
-                    onNotice={setNotice}
-                    onImported={loadSnapshot}
+                  <SegmentedControl
+                    value={intakeTab}
+                    onChange={setIntakeTab}
+                    ariaLabel="导入方式"
+                    options={[
+                      { value: "clue", label: "X / GitHub 线索" },
+                      { value: "pool", label: "从选题池" },
+                      { value: "docs", label: "本地文档" },
+                    ]}
                   />
+                  <div className="overflow-hidden rounded-3xl border border-line bg-surface shadow-card">
+                    {intakeTab === "clue" && (
+                      <ClueIntakePanel headless onClues={handleAddClues} onNotice={setNotice} />
+                    )}
+                    {intakeTab === "pool" && (
+                      <TopicPoolImportPanel
+                        headless
+                        defaultSourceDir={topicPoolDir}
+                        isFeishuReady={isFeishuReady}
+                        onNotice={setNotice}
+                        onImported={loadSnapshot}
+                      />
+                    )}
+                    {intakeTab === "docs" && (
+                      <LocalDocsSyncPanel
+                        headless
+                        defaultSourceDir={localDocsSourceDir}
+                        isFeishuReady={isFeishuReady}
+                        onNotice={setNotice}
+                        onImported={loadSnapshot}
+                      />
+                    )}
+                  </div>
                 </div>
               </CollapsiblePanel>
               <SourceWorkspace
                 materials={snapshot.materials}
                 selectedMaterialIds={selectedMaterialIds}
-                localDocsSourceDir={localDocsSourceDir}
                 isFeishuReady={isFeishuReady}
                 onToggleMaterial={handleToggleMaterial}
                 onSelectPendingMaterials={handleSelectPendingMaterials}
@@ -1295,7 +1324,6 @@ export default function WorkflowDashboard() {
                 onExtractMaterial={(item) => handleGenerateTopics([item])}
                 onToggleMaterialStatus={handleToggleMaterialStatus}
                 onNotice={setNotice}
-                onImported={loadSnapshot}
               />
             </div>
           </ToolScroll>
