@@ -32,6 +32,7 @@ import NoteEditor from "@/components/workflow/NoteEditor";
 import NoteInspector from "@/components/workflow/NoteInspector";
 import QualityGate from "@/components/workflow/QualityGate";
 import WatermarkStudio from "@/components/workflow/WatermarkStudio";
+import ImageFactory from "@/components/workflow/ImageFactory";
 import {
   getUsableDrafts,
   getUsableTopics,
@@ -126,11 +127,17 @@ const AREAS: Record<WorkbenchAreaId, AreaDef> = {
   blogger: { group: "AI 工具", label: "对标拆解", subtitle: "拆解对标博主，沉淀可复用的道库。" },
   extract: { group: "AI 工具", label: "链接拆片", subtitle: "粘抖音/小红书链接，提取视频 + 口播脚本并拆解结构。" },
   watermark: { group: "AI 工具", label: "视频去水印", subtitle: "去掉 AI 生成视频的水印（豆包 / Gemini 等）。" },
+  "ai-capabilities": {
+    group: "AI 工具",
+    label: "AI 图片工厂",
+    hint: "选模板 · 生成图",
+    subtitle: "选择模板、上传参考图，使用本机订阅 CLI 生成目标图。",
+  },
 };
 
 // 侧栏导航，从 AREAS 派生：AREA_ORDER 是 Record 键的完整列表，
 // 新增区 id 时类型层会强制补 AREAS，从而保证它一定有导航入口。
-const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "cover", "video", "quality", "review", "rewrite", "blogger", "extract", "watermark"];
+const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "cover", "video", "quality", "review", "ai-capabilities", "rewrite", "blogger", "extract", "watermark"];
 const GROUP_ORDER: AreaGroup[] = ["内容流程", "AI 工具"];
 const toNavItem = (id: WorkbenchAreaId): WorkbenchNavItem => ({
   id,
@@ -1449,6 +1456,13 @@ export default function WorkflowDashboard() {
           <ToolPage area="watermark" onGoWorkbench={() => setArea("workbench")}>
             <WatermarkStudio />
           </ToolPage>
+        )}
+
+        {area === "ai-capabilities" && (
+          <ToolScroll>
+            <PageHeader title={AREAS[area].label} subtitle={AREAS[area].subtitle} />
+            <ImageFactory />
+          </ToolScroll>
         )}
 
         {area === "quality" && (

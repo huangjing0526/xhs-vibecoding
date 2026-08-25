@@ -1,0 +1,99 @@
+import type { ImageFactoryTemplate } from "../types";
+
+/** 电商通用商品图：白底、主图、场景、细节、对比。 */
+export const ECOMMERCE_TEMPLATES: ImageFactoryTemplate[] = [
+  {
+    id: "product-scene",
+    name: "商品场景图",
+    category: "电商",
+    description: "保持商品外观，把商品自然放进目标生活场景。",
+    prompt: "生成一张真实、可发布的商品场景图。严格保持商品的形状、颜色、材质、包装文字和品牌标识；只改变环境、构图与光线。商品必须是画面唯一主角，不添加参考图中不存在的配件。",
+    aspectRatio: "3:4",
+    thumb: "product-scene",
+    slots: [
+      { id: "product", label: "商品图", description: "清晰展示商品正面与外观", required: true },
+      { id: "scene", label: "场景参考", description: "可选，用于确定环境和氛围", required: false },
+    ],
+    builtIn: true,
+  },
+  {
+    id: "commerce-white-bg",
+    name: "电商白底图",
+    category: "电商",
+    description: "生成可直传平台的纯白底商品图，一次出多个视角。",
+    prompt: "生成一张合规的电商白底商品图。严格保持商品的外形轮廓、比例、颜色、材质质感、金属件色泽和做工细节完全不变；不要重新设计、不要改色、不要添加任何品牌标识、不要臆造原图中不存在的部件。背景必须是纯白无缝背景，柔和均匀的棚拍光线，无模特、无道具、无文字、无水印、无促销标签。商品居中放置，边缘干净锐利，四周留出均匀的呼吸空间。",
+    aspectRatio: "1:1",
+    thumb: "white-bg",
+    slots: [
+      { id: "product", label: "商品图", description: "清晰、无遮挡的商品实拍", required: true },
+    ],
+    views: [
+      { id: "front", label: "正面主图", hint: "正对镜头的正面平视图，用作平台主图" },
+      { id: "side", label: "45°侧面", hint: "商品旋转 45 度的侧前方视角，展示厚度与立体结构" },
+      { id: "back", label: "背面", hint: "正对镜头的背面平视图" },
+      { id: "detail", label: "材质细节", hint: "材质纹理与做工细节的微距特写，保持真实比例" },
+    ],
+    builtIn: true,
+  },
+  {
+    id: "commerce-hero",
+    name: "电商主图",
+    category: "电商",
+    description: "从商品图生成干净、有销售力的主视觉。",
+    prompt: "生成一张专业电商主图。严格保持商品本身准确，背景干净，主体边缘清晰，光线自然，构图留有呼吸感。不要生成未经提供的价格、促销文字、功效声明或额外赠品。",
+    aspectRatio: "1:1",
+    thumb: "commerce-hero",
+    slots: [
+      { id: "product", label: "商品图", description: "清晰、无遮挡的商品参考", required: true },
+    ],
+    builtIn: true,
+  },
+  {
+    id: "detail-shots",
+    name: "详情细节图",
+    category: "电商",
+    description: "材质、做工、结构、垂坠四个视角的特写，一次出多张。",
+    prompt: "生成一张商品细节特写图。严格保持商品的外形轮廓、颜色、材质质感、纹理走向、五金件色泽和做工细节完全不变；不要重新设计、不要改色、不要添加任何品牌标识或原图中不存在的部件。背景干净纯净，柔和均匀的棚拍光线，细节区域对焦清晰、边缘锐利，景深自然。画面中若出现手部，默认为亚洲人的手，肤色自然。画面中不出现文字、水印、尺寸标注、参数说明与促销标签，也不要编造任何材质成分或功效说明。只输出一张真实、可直接用于详情页的图片。",
+    aspectRatio: "1:1",
+    thumb: "detail-shots",
+    slots: [
+      { id: "product", label: "商品图", description: "清晰、无遮挡的商品实拍", required: true },
+    ],
+    views: [
+      { id: "texture", label: "材质微距", hint: "面料或材质表面的微距特写，展现真实纹理与织法，颜色必须准确" },
+      { id: "craft", label: "做工细节", hint: "缝线、拉链、纽扣或五金件的近距离特写，展现工艺完成度" },
+      { id: "structure", label: "结构特写", hint: "领口、袖口、口袋或内衬等结构部位的特写，展现版型细节" },
+      { id: "drape", label: "垂坠形态", hint: "商品自然悬挂或垂落的局部特写，展现面料的垂坠感与光泽" },
+    ],
+    scenePresets: [
+      { id: "seamless-white", label: "纯白无缝", prompt: "纯白无缝背景，柔和均匀的棚拍光，几乎没有阴影。" },
+      { id: "grey-concrete", label: "浅灰水泥台", prompt: "浅灰色水泥台面，侧向柔光带出细微的颗粒质感与浅阴影。" },
+      { id: "wood-table", label: "原木桌面", prompt: "原木桌面，暖调自然光从侧上方洒下，木纹清晰但不抢主体。" },
+      { id: "linen-cloth", label: "米色亚麻布", prompt: "米色亚麻布铺底，布面有自然的褶皱起伏，光线柔和。" },
+      { id: "matte-dark", label: "深色哑光台", prompt: "深色哑光台面，低调的侧逆光勾出商品边缘轮廓。" },
+      { id: "marble", label: "浅色大理石", prompt: "浅色大理石台面，冷调柔光，纹理细腻干净。" },
+    ],
+    builtIn: true,
+  },
+  {
+    id: "compare-grid",
+    name: "场景对比图",
+    category: "电商",
+    description: "同一件商品左右分屏，只换场景与光线，不做效果对比。",
+    prompt: "生成一张同款商品的左右分屏对比图。左右两侧必须是同一件商品，严格保持它的外形、颜色、材质与所有细节完全一致，只改变两侧的场景、光线或呈现状态。两侧构图对称、主体大小一致，中间有干净清晰的分隔。画面中若出现人物或手部，默认为亚洲人，肤色自然。画面中不出现文字、箭头、标签与水印，也不要暗示任何功效、前后改善或效果对比。只输出一张真实、可直接发布的图片。",
+    aspectRatio: "1:1",
+    thumb: "compare-grid",
+    slots: [
+      { id: "product", label: "商品图", description: "清晰、无遮挡的商品实拍", required: true },
+    ],
+    scenePresets: [
+      { id: "indoor-outdoor", label: "室内 / 室外", prompt: "左侧是室内柔和光线下的呈现，右侧是室外自然光下的呈现。" },
+      { id: "day-night", label: "白天 / 夜晚", prompt: "左侧是明亮的日间自然光，右侧是暖色灯光下的夜间氛围。" },
+      { id: "single-set", label: "单件 / 整套", prompt: "左侧是商品单独呈现，右侧是它作为整套搭配一部分的呈现。" },
+      { id: "flat-worn", label: "平铺 / 上身", prompt: "左侧是商品平铺展示，右侧是它被穿着或使用时的状态。" },
+      { id: "close-wide", label: "近景 / 全景", prompt: "左侧是商品的近景特写，右侧是同一商品的完整全景。" },
+      { id: "warm-cool", label: "暖光 / 冷光", prompt: "左侧是暖色调光线下的呈现，右侧是冷色调光线下的呈现。" },
+    ],
+    builtIn: true,
+  },
+];

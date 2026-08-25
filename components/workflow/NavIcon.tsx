@@ -1,4 +1,4 @@
-import { BarChart3, Clapperboard, Eraser, Flame, Image, Inbox, PenLine, Radar, Scissors, ShieldCheck } from "lucide-react";
+import { BarChart3, Boxes, Clapperboard, Eraser, Flame, Image, Inbox, PenLine, Radar, Scissors, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { WorkbenchAreaId } from "@/components/workflow/WorkbenchShell";
 
@@ -14,6 +14,7 @@ const ICONS: Record<WorkbenchAreaId, LucideIcon> = {
   blogger: Radar,
   extract: Scissors,
   watermark: Eraser,
+  "ai-capabilities": Boxes,
 };
 
 export default function NavIcon({ id, size = 17 }: { id: WorkbenchAreaId; size?: number }) {

@@ -33,6 +33,9 @@ yarn-error.log*
 # cloudflare
 .open-next/
 
+# local CLI generation jobs
+/.local/
+
 # claude code
 .claude/
 

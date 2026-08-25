@@ -16,6 +16,7 @@ import {
   type ReviewMetric,
   type ReviewResult,
 } from "@/lib/xhsWorkflow";
+import type { CliProviderStatus, ImageGenerationResult } from "@/lib/imageFactory";
 import type { LocalDocCategory, LocalDocFileSummary } from "@/lib/localDocs";
 import type { ExtractedClue } from "@/lib/clueIntake";
 import type { VideoExtractResult } from "@/lib/videoExtract";
@@ -492,4 +493,22 @@ export async function rewriteInline(options: {
     },
     "内联改写失败"
   );
+}
+
+/** AI 图片工厂：探测本机已登录的生图 CLI。 */
+export async function getImageProviders(): Promise<{ providers: CliProviderStatus[] }> {
+  const response = await fetch("/api/image-factory/providers", { cache: "no-store" });
+  return parseApiResponse<{ providers: CliProviderStatus[] }>(response, "CLI 状态检查失败");
+}
+
+/**
+ * AI 图片工厂：生成一张目标图。
+ * 走 multipart 上传参考图，因此不能用 workflowRequest（它固定 JSON 头）。
+ */
+export async function generateImage(
+  formData: FormData,
+  signal?: AbortSignal
+): Promise<ImageGenerationResult> {
+  const response = await fetch("/api/image-factory/generate", { method: "POST", body: formData, signal });
+  return parseApiResponse<ImageGenerationResult>(response, "目标图生成失败");
 }

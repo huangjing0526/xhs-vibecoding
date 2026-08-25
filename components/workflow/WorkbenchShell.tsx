@@ -17,7 +17,8 @@ export type WorkbenchAreaId =
   | "blogger"
   | "extract"
   | "quality"
-  | "watermark";
+  | "watermark"
+  | "ai-capabilities";
 
 export interface WorkbenchNavItem {
   id: WorkbenchAreaId;
