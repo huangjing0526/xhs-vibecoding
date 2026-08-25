@@ -130,8 +130,8 @@ const AREAS: Record<WorkbenchAreaId, AreaDef> = {
   "ai-capabilities": {
     group: "AI 工具",
     label: "AI 图片工厂",
-    hint: "选模板 · 生成图",
-    subtitle: "选择模板、上传参考图，使用本机订阅 CLI 生成目标图。",
+    hint: "传图 · 出成图",
+    subtitle: "上传素材、勾选要的产出，使用本机订阅 CLI 一次生成多张目标图。",
   },
 };
 
