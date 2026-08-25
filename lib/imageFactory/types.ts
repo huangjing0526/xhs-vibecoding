@@ -30,6 +30,8 @@ export interface ImageTemplateView {
   id: string;
   label: string;
   hint: string;
+  /** 这个视角跑出来的样例，勾选前就能看到它长什么样；没有就只显示名称。 */
+  preview?: string;
 }
 
 /** 场景预设：模板层只放规则，画面场景拆到这里，点选后写进「补充生成要求」。 */

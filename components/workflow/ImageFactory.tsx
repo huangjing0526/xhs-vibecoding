@@ -189,6 +189,25 @@ function PreviewLightbox({ template, onClose }: { template: ImageFactoryTemplate
             <TemplateThumb thumb={template.thumb} />
           )}
         </div>
+        {(template.views?.length || 0) > 0 && (
+          <div className="mt-4">
+            <h3 className="text-xs font-bold text-muted">一次出这几个视角</h3>
+            <div className="mt-2 grid grid-cols-4 gap-2">
+              {(template.views || []).map((view) => (
+                <div key={view.id}>
+                  <div className="relative aspect-square overflow-hidden rounded-xl border border-line bg-soft">
+                    {view.preview ? (
+                      <Image src={view.preview} alt={view.label} fill sizes="96px" className="object-cover" unoptimized />
+                    ) : (
+                      <span className="flex h-full items-center justify-center text-[10px] text-faint">暂无</span>
+                    )}
+                  </div>
+                  <p className="mt-1 truncate text-[10px] font-bold text-muted" title={view.hint}>{view.label}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <p className="mt-3 text-[11px] leading-5 text-faint">
           这是该产出类型跑出来的真实样例，换成你自己的素材会得到同样结构的图。
         </p>
@@ -583,7 +602,7 @@ export default function ImageFactory() {
                   return (
                     <div key={template.id}>
                       <h3 className="text-xs font-bold text-muted">{template.name}</h3>
-                      <div className="mt-2 flex flex-wrap gap-2">
+                      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                         {(template.views || []).map((view) => {
                           const checked = picks.includes(view.id);
                           return (
@@ -594,14 +613,24 @@ export default function ImageFactory() {
                               aria-checked={checked}
                               onClick={() => toggleView(template.id, view.id)}
                               title={view.hint}
-                              className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-colors ${
-                                checked
-                                  ? "border-brand-400 bg-brand-50 text-brand-700"
-                                  : "border-line bg-surface text-muted hover:border-brand-300 hover:text-ink"
+                              className={`overflow-hidden rounded-2xl border text-left transition-colors ${
+                                checked ? "border-brand-400 bg-brand-50" : "border-line bg-surface hover:border-brand-300"
                               }`}
                             >
-                              {checked && <Check size={12} />}
-                              {view.label}
+                              {/* 有样例就摆出来——「4 视图」这三个字说不清每个视角拍成什么样 */}
+                              <div className="relative aspect-square border-b border-line bg-soft">
+                                {view.preview ? (
+                                  <Image src={view.preview} alt="" fill sizes="140px" className={`object-cover ${checked ? "" : "opacity-85"}`} unoptimized />
+                                ) : (
+                                  <span className="flex h-full items-center justify-center px-2 text-center text-[10px] leading-4 text-faint">{view.hint || "暂无样例"}</span>
+                                )}
+                                {checked && (
+                                  <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-brand-500 text-white shadow-brand">
+                                    <Check size={11} strokeWidth={3} />
+                                  </span>
+                                )}
+                              </div>
+                              <div className={`truncate px-2 py-1.5 text-[11px] font-bold ${checked ? "text-brand-700" : "text-muted"}`}>{view.label}</div>
                             </button>
                           );
                         })}

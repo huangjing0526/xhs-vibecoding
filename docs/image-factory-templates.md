@@ -107,15 +107,21 @@ L3 场景预设 scenePresets   一句话画面描述，点选后写进「补充�
 
 ```
 .local/image-factory/samples/<模板id>/*.png   原图（不进 git，本机跑出来的）
-public/template-previews/<模板id>.jpg          卡片预览（进 git，600×750、共约 730 KB）
+public/template-previews/<模板id>.jpg          卡片预览（进 git，600×750）
+public/template-previews/<模板id>__<视角id>.jpg 视角缩略图（400×400）；两者合计约 1 MB
 lib/imageFactory/templates/*.ts                模板的 preview 字段指向它
 ```
+
+**多视角的产出，每个视角也要有样例**——卡片上写「4 视图」说不清每个视角拍成什么样。
+视角缩略图是方的（400×400），文件名约定为 `<视角id>.png`，同一产出的几个视角
+**必须用同一件商品**，用户看到的才是「同一个东西的四个视角」。
 
 换样例或加模板后重出预览图：
 
 ```bash
-node scripts/image-factory/build-previews.mjs                       # 各模板用目录里第一张
-node scripts/image-factory/build-previews.mjs --pick <id>=<文件名>   # 指定某张
+node scripts/image-factory/build-previews.mjs                          # 各模板用目录里第一张
+node scripts/image-factory/build-previews.mjs --pick <id>=<文件名>      # 指定模板卡用哪张
+node scripts/image-factory/build-previews.mjs --view <id>:<视角id>=<文件名>  # 指定视角缩略图
 ```
 
 卡片图区是 `aspect-[4/5]`，脚本按 4:5 裁切、纵向偏上 18%（人像模板保住脸和上半身）。
