@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "豆包下载器",
+  "version": "1.1.0",
+  "description": "在豆包 / Dola 网页端提取你自己生成的无水印图片、视频资源，支持预览与批量下载。纯本地运行，无卡密、无外连服务器。",
+  "permissions": [
+    "tabs",
+    "downloads",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://*.doubao.com/*",
+    "*://*.dola.com/*",
+    "*://*.byteintlapi.com/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.doubao.com/*",
+        "*://*.dola.com/*"
+      ],
+      "js": [
+        "page-hook.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://*.doubao.com/*",
+        "*://*.dola.com/*"
+      ],
+      "js": [
+        "content-panel.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "豆包下载器",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  }
+}
