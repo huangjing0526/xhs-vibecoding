@@ -51,6 +51,43 @@ export default function TemplateThumb({ thumb, active = false }: TemplateThumbPr
 
 function renderThumb(thumb: ImageTemplateThumb | undefined, p: ThumbPalette) {
   switch (thumb) {
+    // 一个人物主体 + 底部多视角缩略，点出「同一个人、一次多视角」
+    case "model-asset":
+      return (
+        <>
+          <rect x="38" y="8" width="44" height="52" rx="4" className={p.frame} strokeWidth="1" />
+          <circle cx="60" cy="26" r="9" className={p.strong} />
+          <path d="M46 58 q0 -24 14 -24 q14 0 14 24 Z" className={p.mid} />
+          {[16, 44, 72, 100].map((x, index) => (
+            <rect
+              key={x}
+              x={x - 8}
+              y="66"
+              width="16"
+              height="18"
+              rx="2.5"
+              className={index === 1 ? p.mid : p.weak}
+            />
+          ))}
+        </>
+      );
+
+    // 同一个人的三种姿态并排，中间那位是主体——点出「锁身份、换姿势」
+    case "model-poses":
+      return (
+        <>
+          {[24, 98].map((cx) => (
+            <g key={cx} className={p.mid}>
+              <circle cx={cx} cy="26" r="8" />
+              <path d={`M${cx - 12} 76 q0 -26 12 -26 q12 0 12 26 Z`} />
+            </g>
+          ))}
+          <circle cx="60" cy="24" r="9" className={p.strong} />
+          <path d="M46 76 q0 -28 14 -28 q14 0 14 28 Z" className={p.strong} />
+          <path d="M74 44 q8 -6 12 -2" className={p.edge} strokeWidth="2" fill="none" strokeLinecap="round" />
+        </>
+      );
+
     // 纯白画布上的商品 + 底部三个视角缩略，点出「一次多张」
     case "white-bg":
       return (

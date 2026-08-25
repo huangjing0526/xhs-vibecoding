@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
 
-type CalloutTone = "warn" | "info" | "ok";
+type CalloutTone = "warn" | "info" | "ok" | "danger";
 
 const TONE: Record<CalloutTone, string> = {
   warn: "bg-warn/8 text-warn ring-warn/20",
   info: "bg-brand-50 text-brand-700 ring-brand-200",
   ok: "bg-ok/8 text-ok ring-ok/20",
+  danger: "bg-danger/10 text-danger ring-danger/20",
 };
 
 /** 就地提示条：说明当前状态和下一步，不是弹窗、不打断操作。 */

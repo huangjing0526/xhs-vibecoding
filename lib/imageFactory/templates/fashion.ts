@@ -13,7 +13,7 @@ export const FASHION_TEMPLATES: ImageFactoryTemplate[] = [
     preview: "/template-previews/flat-to-model.jpg",
     slots: [
       { id: "garment", label: "服装平铺图", description: "平铺或挂拍的服装正面，尽量无遮挡", required: true },
-      { id: "model", label: "模特参考", description: "可选，用于锁定模特的脸型、体型与气质", required: false },
+      { id: "model", label: "模特参考", description: "可选，用于锁定模特的脸型、体型与气质", required: false, fromModelLibrary: true },
     ],
     scenePresets: [
       { id: "store-mannequin", label: "店内同款模特架", prompt: "服装店内，模特站在穿着同款服装的人体模特架旁，一手自然搭在模特架上整理衣服，眼神看向模特架，店内简约高级，暖色射灯。" },
@@ -41,7 +41,7 @@ export const FASHION_TEMPLATES: ImageFactoryTemplate[] = [
     thumb: "model-tryon",
     preview: "/template-previews/model-tryon.jpg",
     slots: [
-      { id: "model", label: "模特图", description: "用于锁定人物身份和体型", required: true },
+      { id: "model", label: "模特图", description: "用于锁定人物身份和体型", required: true, fromModelLibrary: true },
       { id: "garment", label: "服装图", description: "要穿到模特身上的目标服装", required: true },
       { id: "style", label: "场景参考", description: "可选，用于确定背景和拍摄风格", required: false },
     ],

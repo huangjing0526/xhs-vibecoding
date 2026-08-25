@@ -39,7 +39,7 @@ export const XHS_TEMPLATES: ImageFactoryTemplate[] = [
     thumb: "talking-head",
     preview: "/template-previews/talking-head.jpg",
     slots: [
-      { id: "person", label: "人物参考图", description: "用于锁定出镜人的脸、发型与服装", required: true },
+      { id: "person", label: "人物参考图", description: "用于锁定出镜人的脸、发型与服装", required: true, fromModelLibrary: true },
       { id: "style", label: "场景参考", description: "可选，用于确定背景与色调", required: false },
     ],
     scenePresets: [

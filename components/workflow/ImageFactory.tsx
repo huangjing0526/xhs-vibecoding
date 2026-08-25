@@ -2,16 +2,27 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { Check, Download, ImagePlus, Loader2, Maximize2, Pencil, Plus, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
+import { BookmarkPlus, Check, Download, ImagePlus, Loader2, Maximize2, Pencil, Plus, RefreshCw, Sparkles, Trash2, UserRound, X } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
 import Card from "@/components/ui/Card";
+import EmptyState from "@/components/ui/EmptyState";
+import ModalOverlay from "@/components/ui/ModalOverlay";
+import DirectoryField from "@/components/workflow/DirectoryField";
 import SegmentedControl from "@/components/workflow/SegmentedControl";
 import TemplateThumb from "@/components/workflow/TemplateThumb";
 import { useAbortableTasks } from "@/components/workflow/useAbortableTasks";
 import { downloadImageAsset } from "@/lib/imageWorkflow";
-import { generateImage, getImageProviders, isAbortError } from "@/lib/workflowClient";
+import {
+  deleteModelAsset,
+  generateImage,
+  getImageProviders,
+  isAbortError,
+  listModelAssets,
+  saveGeneratedImage,
+  saveModelAssets,
+} from "@/lib/workflowClient";
 import {
   BUILT_IN_IMAGE_TEMPLATES,
   IMAGE_FACTORY_STORAGE_KEY,
@@ -23,9 +34,30 @@ import {
   type ImageTemplateSlot,
   type ImageTemplateThumb,
   type ImageTemplateView,
+  type ModelAssetEntry,
 } from "@/lib/imageFactory";
 
 const GENERATE_TASK_KEY = "imageFactory.generate";
+const OUTPUT_DIR_STORAGE_KEY = "vibenote.image-factory.output-dir.v1";
+
+/** 模特库里的图存在服务端，塞回上传槽位前先取回来包成 File，走的还是同一条 multipart 链路。 */
+async function modelAssetToFile(entry: ModelAssetEntry): Promise<File> {
+  const blob = await (await fetch(entry.imageUrl)).blob();
+  return new File([blob], `model-${entry.id}${entry.extension}`, { type: blob.type || "image/png" });
+}
+
+/**
+ * CLI 状态检查要 spawn 好几个子进程，代价不小；而它在一次会话里几乎不变。
+ * 合并成图片区后来回切分段会反复挂载本组件，用一份模块级短缓存挡住重复探测，手动刷新仍然直连。
+ */
+const PROVIDER_CACHE_TTL_MS = 60_000;
+let providerCache: { at: number; providers: CliProviderStatus[] } | null = null;
+
+/** 入库默认名：同一次运行出的多张视角图归到同一位模特名下。 */
+function defaultModelName(): string {
+  const now = new Date();
+  return `模特 ${now.getMonth() + 1}-${now.getDate()}`;
+}
 
 interface SelectedInput {
   slotId: string;
@@ -84,6 +116,16 @@ interface GenerationJob {
 interface RunResult {
   job: GenerationJob;
   result: ImageGenerationResult;
+  /** 存进输出目录后的绝对路径；没设目录或存失败就没有 */
+  savedPath?: string;
+  saveError?: string;
+}
+
+/** 产物文件名：日期 + 产出类型 + 视角，直接能认出是什么，重名由服务端顺延 */
+function buildFileName(job: GenerationJob): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const viewPart = job.view ? `-${job.view.label}` : "";
+  return `${today}-${job.template.name}${viewPart}`;
 }
 
 /** 产出类型行：左边小图点开看大图，整行点击切换勾选。 */
@@ -216,6 +258,87 @@ function PreviewLightbox({ template, onClose }: { template: ImageFactoryTemplate
   );
 }
 
+/** 模特库选择器：从已存的模特资产里挑一张塞进上传槽位，也在这里删掉不要的。 */
+function ModelLibraryPicker({
+  slotLabel,
+  models,
+  loading,
+  errorMessage,
+  onPick,
+  onDelete,
+  onClose,
+}: {
+  slotLabel: string;
+  models: ModelAssetEntry[];
+  loading: boolean;
+  errorMessage: string;
+  onPick: (entry: ModelAssetEntry) => void;
+  onDelete: (entry: ModelAssetEntry) => void;
+  onClose: () => void;
+}) {
+  return (
+    <ModalOverlay onClose={onClose} maxWidthClass="max-w-2xl" ariaLabel="模特库">
+      <Card>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-ink">模特库</h2>
+            <p className="mt-0.5 text-xs leading-5 text-muted">挑一位存好的模特，填进「{slotLabel}」</p>
+          </div>
+          <button type="button" onClick={onClose} className="shrink-0 rounded-xl p-2 text-faint hover:bg-soft hover:text-ink" aria-label="关闭">
+            <X size={16} />
+          </button>
+        </div>
+
+        {errorMessage && <Callout tone="danger" className="mt-3">{errorMessage}</Callout>}
+
+        {loading ? (
+          <div className="mt-6 flex items-center justify-center gap-2 py-10 text-xs text-faint">
+            <Loader2 size={14} className="animate-spin" />
+            正在读取模特库
+          </div>
+        ) : models.length === 0 ? (
+          <EmptyState
+            bare
+            icon={<UserRound size={22} />}
+            title="模特库还是空的"
+            description="用「模特资产图」跑一组，再把满意的存进来。"
+          />
+        ) : (
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {models.map((entry) => (
+              <div key={entry.id} className="group">
+                <button
+                  type="button"
+                  onClick={() => onPick(entry)}
+                  className="relative block w-full overflow-hidden rounded-2xl border border-line bg-soft transition-colors hover:border-brand-400"
+                >
+                  <span className="relative block aspect-[3/4]">
+                    <Image src={entry.imageUrl} alt={entry.name} fill sizes="180px" className="object-cover" unoptimized />
+                  </span>
+                </button>
+                <div className="mt-1.5 flex items-start justify-between gap-1">
+                  <div className="min-w-0">
+                    <p className="truncate text-[11px] font-bold text-ink" title={entry.name}>{entry.name}</p>
+                    {entry.sourceLabel && <p className="truncate text-[10px] text-faint">{entry.sourceLabel}</p>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(entry)}
+                    className="shrink-0 rounded-lg p-1 text-faint opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
+                    aria-label={`移除${entry.name}`}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </ModalOverlay>
+  );
+}
+
 export default function ImageFactory() {
   const tasks = useAbortableTasks();
   const [customTemplates, setCustomTemplates] = useState<ImageFactoryTemplate[]>([]);
@@ -237,6 +360,16 @@ export default function ImageFactory() {
   const [errorMessage, setErrorMessage] = useState("");
   const [editingTemplate, setEditingTemplate] = useState<ImageFactoryTemplate | null>(null);
   const [previewTemplate, setPreviewTemplate] = useState<ImageFactoryTemplate | null>(null);
+  const [outputDir, setOutputDir] = useState("");
+  const [modelAssets, setModelAssets] = useState<ModelAssetEntry[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  /** 正在为哪个槽位挑模特；null 表示选择器关着 */
+  const [pickingSlot, setPickingSlot] = useState<ImageTemplateSlot | null>(null);
+  const [modelName, setModelName] = useState("");
+  /** 产出 key -> 入库状态，整组入库时每张各自流转，避免重复存进模特库 */
+  const [modelSaveState, setModelSaveState] = useState<Record<string, "saving" | "saved">>({});
+  const [modelLibraryError, setModelLibraryError] = useState("");
+  const defaultName = useMemo(defaultModelName, []);
 
   const templates = useMemo(() => [...BUILT_IN_IMAGE_TEMPLATES, ...customTemplates], [customTemplates]);
   const categories = useMemo(() => {
@@ -310,23 +443,54 @@ export default function ImageFactory() {
     return [...groups.values()];
   }, [results]);
 
-  const refreshProviders = useCallback(async () => {
+  const applyProviders = useCallback((list: CliProviderStatus[]) => {
+    setProviders(list);
+    const usable = list.find((item) => item.available && item.authenticated);
+    if (usable) setProvider(usable.id);
+  }, []);
+
+  const refreshProviders = useCallback(async (force = false) => {
+    if (!force && providerCache && Date.now() - providerCache.at < PROVIDER_CACHE_TTL_MS) {
+      applyProviders(providerCache.providers);
+      setIsLoadingProviders(false);
+      return;
+    }
     setIsLoadingProviders(true);
     try {
       const data = await getImageProviders();
-      setProviders(data.providers);
-      const usable = data.providers.find((item) => item.available && item.authenticated);
-      if (usable) setProvider(usable.id);
+      providerCache = { at: Date.now(), providers: data.providers };
+      applyProviders(data.providers);
     } catch (error) {
       console.error("[ImageFactory] CLI 状态检查失败", { action: "imageFactory.providers", error });
     } finally {
       setIsLoadingProviders(false);
     }
-  }, []);
+  }, [applyProviders]);
 
   useEffect(() => {
     setCustomTemplates(loadCustomTemplates());
+    setOutputDir(localStorage.getItem(OUTPUT_DIR_STORAGE_KEY) || "");
   }, []);
+
+  // 只在打开选择器时拉，进页面不必背这份开销；列表只有元数据，图片由 <Image> 各自按需取
+  const refreshModelAssets = async () => {
+    setIsLoadingModels(true);
+    setModelLibraryError("");
+    try {
+      const data = await listModelAssets();
+      setModelAssets(data.models);
+    } catch (error) {
+      console.error("[ImageFactory] 模特库读取失败", { action: "imageFactory.models.list", error });
+      setModelLibraryError(error instanceof Error ? error.message : "模特库读取失败");
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  const openModelLibrary = (slot: ImageTemplateSlot) => {
+    setPickingSlot(slot);
+    refreshModelAssets();
+  };
 
   useEffect(() => {
     refreshProviders();
@@ -378,6 +542,71 @@ export default function ImageFactory() {
     setResults([]);
   };
 
+  const pickModelAsset = async (slot: ImageTemplateSlot, entry: ModelAssetEntry) => {
+    try {
+      selectInput(slot.id, await modelAssetToFile(entry));
+      setPickingSlot(null);
+    } catch (error) {
+      console.error("[ImageFactory] 模特图载入失败", {
+        action: "imageFactory.models.pick",
+        modelId: entry.id,
+        slotId: slot.id,
+        error,
+      });
+      setModelLibraryError("这张模特图读不出来，换一张或重新生成");
+    }
+  };
+
+  /** 整组或单张都走这一条：一次请求存完，服务端只读写一次索引。 */
+  const saveToModelLibrary = async (items: RunResult[]) => {
+    const pending = items.filter((item) => !modelSaveState[item.job.key]);
+    if (pending.length === 0) return;
+
+    const name = modelName.trim() || defaultName;
+    setModelSaveState((current) => ({
+      ...current,
+      ...Object.fromEntries(pending.map((item) => [item.job.key, "saving" as const])),
+    }));
+    setModelLibraryError("");
+    try {
+      await saveModelAssets(
+        pending.map(({ job, result }) => ({
+          sourcePath: result.outputPath,
+          name,
+          sourceLabel: [job.template.name, job.view?.label].filter(Boolean).join(" · "),
+        })),
+      );
+      setModelSaveState((current) => ({
+        ...current,
+        ...Object.fromEntries(pending.map((item) => [item.job.key, "saved" as const])),
+      }));
+    } catch (error) {
+      console.error("[ImageFactory] 存入模特库失败", {
+        action: "imageFactory.models.save",
+        jobKeys: pending.map((item) => item.job.key),
+        error,
+      });
+      setModelLibraryError(error instanceof Error ? error.message : "存入模特库失败");
+      // 失败的这批退回未入库，让用户能重试
+      setModelSaveState((current) => {
+        const next = { ...current };
+        pending.forEach((item) => delete next[item.job.key]);
+        return next;
+      });
+    }
+  };
+
+  const removeModelAsset = async (entry: ModelAssetEntry) => {
+    if (!window.confirm(`确认把「${entry.name}」从模特库移除吗？`)) return;
+    try {
+      await deleteModelAsset(entry.id);
+      setModelAssets((current) => current.filter((item) => item.id !== entry.id));
+    } catch (error) {
+      console.error("[ImageFactory] 移除模特失败", { action: "imageFactory.models.delete", modelId: entry.id, error });
+      setModelLibraryError(error instanceof Error ? error.message : "移除模特失败");
+    }
+  };
+
   const removeInput = (slotId: string) => {
     setSelectedInputs((current) => {
       const next = { ...current };
@@ -422,6 +651,8 @@ export default function ImageFactory() {
     setIsGenerating(true);
     setErrorMessage("");
     setResults([]);
+    setModelSaveState({});
+    setModelLibraryError("");
     setRunTotal(jobs.length);
 
     try {
@@ -445,7 +676,28 @@ export default function ImageFactory() {
           formData.append("inputFile", input.file);
         });
 
-        collected.push({ job, result: await generateImage(formData, signal) });
+        const result = await generateImage(formData, signal);
+        const entry: RunResult = { job, result };
+        // 设了输出目录就随生成随存，跑完就能直接去目录里拿图，不用一张张点下载
+        if (outputDir.trim()) {
+          try {
+            const saved = await saveGeneratedImage({
+              sourcePath: result.outputPath,
+              targetDir: outputDir.trim(),
+              fileName: buildFileName(job),
+            });
+            entry.savedPath = saved.savedPath;
+          } catch (error) {
+            console.error("[ImageFactory] 保存到输出目录失败", {
+              action: "imageFactory.save",
+              templateId: job.template.id,
+              outputDir,
+              error,
+            });
+            entry.saveError = error instanceof Error ? error.message : "保存失败";
+          }
+        }
+        collected.push(entry);
         setResults([...collected]);
       }
     } catch (error) {
@@ -508,29 +760,48 @@ export default function ImageFactory() {
                           <div className="text-xs font-bold">{slot.label}</div>
                           <div className="mt-0.5 truncate text-[10px] text-white/70">{input.file.name}</div>
                         </div>
-                        <button type="button" onClick={() => removeInput(slot.id)} className="absolute right-2 top-2 rounded-full bg-black/55 p-1.5 text-white" aria-label={`移除${slot.label}`}>
-                          <X size={13} />
-                        </button>
+                        <div className="absolute right-2 top-2 flex gap-1.5">
+                          {slot.fromModelLibrary && (
+                            <button type="button" onClick={() => openModelLibrary(slot)} className="rounded-full bg-black/55 p-1.5 text-white" aria-label={`从模特库换一位${slot.label}`}>
+                              <UserRound size={13} />
+                            </button>
+                          )}
+                          <button type="button" onClick={() => removeInput(slot.id)} className="rounded-full bg-black/55 p-1.5 text-white" aria-label={`移除${slot.label}`}>
+                            <X size={13} />
+                          </button>
+                        </div>
                       </div>
                     ) : (
-                      <label className="flex aspect-[4/3] cursor-pointer flex-col items-center justify-center p-5 text-center hover:bg-brand-50/50">
-                        <ImagePlus size={26} className="text-brand-400" />
-                        <span className="mt-2.5 text-sm font-bold text-ink">
-                          {slot.label}
-                          {slot.required && <span className="text-danger"> *</span>}
-                        </span>
-                        <span className="mt-1 text-[11px] leading-4 text-faint">{slot.description || "点击选择图片"}</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="sr-only"
-                          onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (file) selectInput(slot.id, file);
-                            event.target.value = "";
-                          }}
-                        />
-                      </label>
+                      <div className="flex aspect-[4/3] flex-col">
+                        <label className="flex flex-1 cursor-pointer flex-col items-center justify-center p-5 text-center hover:bg-brand-50/50">
+                          <ImagePlus size={26} className="text-brand-400" />
+                          <span className="mt-2.5 text-sm font-bold text-ink">
+                            {slot.label}
+                            {slot.required && <span className="text-danger"> *</span>}
+                          </span>
+                          <span className="mt-1 text-[11px] leading-4 text-faint">{slot.description || "点击选择图片"}</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="sr-only"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) selectInput(slot.id, file);
+                              event.target.value = "";
+                            }}
+                          />
+                        </label>
+                        {slot.fromModelLibrary && (
+                          <button
+                            type="button"
+                            onClick={() => openModelLibrary(slot)}
+                            className="flex items-center justify-center gap-1.5 border-t border-dashed border-line-strong py-2 text-[11px] font-bold text-brand-600 hover:bg-brand-50"
+                          >
+                            <UserRound size={13} />
+                            从模特库选
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 );
@@ -643,6 +914,19 @@ export default function ImageFactory() {
           )}
 
           <Card>
+            <div className="mb-3">
+              <DirectoryField
+                label="输出目录"
+                hint="填了就随生成随存，跑完直接去目录里拿图；留空只在结果区下载"
+                value={outputDir}
+                onChange={(value) => {
+                  setOutputDir(value);
+                  // 只读不写的话，设完目录一刷新就没了
+                  localStorage.setItem(OUTPUT_DIR_STORAGE_KEY, value);
+                }}
+                placeholder="留空则不自动保存"
+              />
+            </div>
             <Button
               block
               size="lg"
@@ -665,7 +949,7 @@ export default function ImageFactory() {
             {!isGenerating && !blockReason && !providerReady && (
               <Callout tone="warn" className="mt-2 text-center">右侧选一个已登录的生成引擎</Callout>
             )}
-            {errorMessage && <p className="mt-3 rounded-2xl bg-danger/10 px-3 py-2 text-xs leading-5 text-danger">{errorMessage}</p>}
+            {errorMessage && <Callout tone="danger" className="mt-3">{errorMessage}</Callout>}
           </Card>
 
           {results.length > 0 && (
@@ -682,35 +966,89 @@ export default function ImageFactory() {
                 )}
               </div>
               <div className="mt-4 space-y-5">
-                {resultGroups.map((group) => (
-                  <div key={group.template.id}>
-                    <h3 className="text-xs font-bold text-muted">
-                      {group.template.name}
-                      <span className="ml-1.5 font-normal text-faint">{group.items.length} 张</span>
-                    </h3>
-                    <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                      {group.items.map((item) => (
-                        <div key={item.job.key} className="group">
-                          <div className="relative overflow-hidden rounded-2xl border border-line bg-soft">
-                            <div className="relative aspect-[4/5]">
-                              <Image src={item.result.imageDataUrl} alt={`${group.template.name}产出`} fill sizes="320px" className="object-cover" unoptimized />
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => downloadResult(item)}
-                              className="absolute right-2 top-2 rounded-xl bg-black/55 p-2 text-white opacity-0 transition-opacity group-hover:opacity-100"
-                              aria-label="下载这张"
-                            >
-                              <Download size={13} />
-                            </button>
-                          </div>
-                          {item.job.view && <p className="mt-1.5 text-[11px] font-bold text-muted">{item.job.view.label}</p>}
+                {resultGroups.map((group) => {
+                  const isModelAsset = Boolean(group.template.producesModelAsset);
+                  return (
+                    <div key={group.template.id}>
+                      <h3 className="text-xs font-bold text-muted">
+                        {group.template.name}
+                        <span className="ml-1.5 font-normal text-faint">{group.items.length} 张</span>
+                      </h3>
+                      {isModelAsset && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-2xl bg-soft p-2.5">
+                          <label htmlFor="image-factory-model-name" className="text-[11px] font-bold text-muted">模特名称</label>
+                          <input
+                            id="image-factory-model-name"
+                            value={modelName}
+                            onChange={(event) => setModelName(event.target.value)}
+                            placeholder={defaultName}
+                            className="min-w-0 flex-1 rounded-xl border border-line bg-surface px-2.5 py-1.5 text-xs font-bold text-ink outline-none transition focus:border-brand-300"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => saveToModelLibrary(group.items)}
+                            className="rounded-xl bg-brand-50 px-2.5 py-1.5 text-[11px] font-bold text-brand-600 hover:bg-brand-100"
+                          >
+                            整组存入模特库
+                          </button>
                         </div>
-                      ))}
+                      )}
+                      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                        {group.items.map((item) => {
+                          const saveState = modelSaveState[item.job.key];
+                          return (
+                            <div key={item.job.key} className="group">
+                              <div className="relative overflow-hidden rounded-2xl border border-line bg-soft">
+                                <div className="relative aspect-[4/5]">
+                                  <Image src={item.result.imageDataUrl} alt={`${group.template.name}产出`} fill sizes="320px" className="object-cover" unoptimized />
+                                </div>
+                                <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+                                  {isModelAsset && (
+                                    <button
+                                      type="button"
+                                      disabled={Boolean(saveState)}
+                                      onClick={() => saveToModelLibrary([item])}
+                                      className={`rounded-xl p-2 text-white ${saveState === "saved" ? "bg-ok/80" : "bg-black/55"} disabled:cursor-default`}
+                                      aria-label={saveState === "saved" ? "已存入模特库" : "存入模特库"}
+                                    >
+                                      {saveState === "saving" ? (
+                                        <Loader2 size={13} className="animate-spin" />
+                                      ) : saveState === "saved" ? (
+                                        <Check size={13} />
+                                      ) : (
+                                        <BookmarkPlus size={13} />
+                                      )}
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => downloadResult(item)}
+                                    className="rounded-xl bg-black/55 p-2 text-white"
+                                    aria-label="下载这张"
+                                  >
+                                    <Download size={13} />
+                                  </button>
+                                </div>
+                              </div>
+                              <p className="mt-1.5 flex items-center gap-1 text-[11px] font-bold text-muted">
+                                {item.job.view?.label}
+                                {saveState === "saved" && <span className="text-ok">已入库</span>}
+                              </p>
+                              {item.savedPath && (
+                                <p className="truncate text-[10px] text-faint" title={item.savedPath}>已存到 {item.savedPath}</p>
+                              )}
+                              {item.saveError && (
+                                <p className="text-[10px] text-danger">保存到输出目录失败：{item.saveError}</p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
+              {modelLibraryError && <Callout tone="danger" className="mt-3">{modelLibraryError}</Callout>}
               {isGenerating && results.length < runTotal && (
                 <div className="mt-3 flex items-center gap-2 rounded-2xl bg-soft p-3 text-xs text-faint">
                   <Loader2 size={14} className="animate-spin" />
@@ -779,7 +1117,7 @@ export default function ImageFactory() {
                 <h2 className="text-sm font-bold text-ink">生成引擎</h2>
                 <p className="mt-0.5 text-[11px] text-faint">使用已登录 CLI 的订阅额度</p>
               </div>
-              <button type="button" onClick={refreshProviders} disabled={isLoadingProviders} className="rounded-xl p-2 text-faint hover:bg-soft hover:text-ink" aria-label="刷新CLI状态">
+              <button type="button" onClick={() => refreshProviders(true)} disabled={isLoadingProviders} className="rounded-xl p-2 text-faint hover:bg-soft hover:text-ink" aria-label="刷新CLI状态">
                 <RefreshCw size={15} className={isLoadingProviders ? "animate-spin" : ""} />
               </button>
             </div>
@@ -794,6 +1132,18 @@ export default function ImageFactory() {
       </div>
 
       {previewTemplate && <PreviewLightbox template={previewTemplate} onClose={() => setPreviewTemplate(null)} />}
+
+      {pickingSlot && (
+        <ModelLibraryPicker
+          slotLabel={pickingSlot.label}
+          models={modelAssets}
+          loading={isLoadingModels}
+          errorMessage={modelLibraryError}
+          onPick={(entry) => pickModelAsset(pickingSlot, entry)}
+          onDelete={removeModelAsset}
+          onClose={() => setPickingSlot(null)}
+        />
+      )}
 
       {editingTemplate && (
         <TemplateEditor

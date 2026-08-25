@@ -16,7 +16,7 @@ import {
   type ReviewMetric,
   type ReviewResult,
 } from "@/lib/xhsWorkflow";
-import type { CliProviderStatus, ImageGenerationResult } from "@/lib/imageFactory";
+import type { CliProviderStatus, ImageGenerationResult, ModelAssetEntry } from "@/lib/imageFactory";
 import type { LocalDocCategory, LocalDocFileSummary } from "@/lib/localDocs";
 import type { ExtractedClue } from "@/lib/clueIntake";
 import type { VideoExtractResult } from "@/lib/videoExtract";
@@ -501,6 +501,20 @@ export async function getImageProviders(): Promise<{ providers: CliProviderStatu
   return parseApiResponse<{ providers: CliProviderStatus[] }>(response, "CLI 状态检查失败");
 }
 
+/** AI 图片工厂：把生成好的产物复制到用户指定的输出目录。 */
+export async function saveGeneratedImage(payload: {
+  sourcePath: string;
+  targetDir: string;
+  fileName: string;
+}): Promise<{ savedPath: string }> {
+  const response = await fetch("/api/image-factory/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse<{ savedPath: string }>(response, "保存目标图失败");
+}
+
 /**
  * AI 图片工厂：生成一张目标图。
  * 走 multipart 上传参考图，因此不能用 workflowRequest（它固定 JSON 头）。
@@ -511,4 +525,33 @@ export async function generateImage(
 ): Promise<ImageGenerationResult> {
   const response = await fetch("/api/image-factory/generate", { method: "POST", body: formData, signal });
   return parseApiResponse<ImageGenerationResult>(response, "目标图生成失败");
+}
+
+/** 模特库：读出本机已存的全部模特资产。 */
+export async function listModelAssets(): Promise<{ models: ModelAssetEntry[] }> {
+  const response = await fetch("/api/image-factory/models", { cache: "no-store" });
+  return parseApiResponse<{ models: ModelAssetEntry[] }>(response, "模特库读取失败");
+}
+
+/**
+ * 模特库：把已生成的图存进库，传的是它们在本机的产物路径。
+ * 一次运行的多个视角属于同一位模特，整组一起提交，服务端只读写一次索引。
+ */
+export async function saveModelAssets(
+  items: Array<{ sourcePath: string; name: string; sourceLabel: string }>
+): Promise<{ models: ModelAssetEntry[] }> {
+  return workflowRequest<{ models: ModelAssetEntry[] }>(
+    "/api/image-factory/models",
+    { method: "POST", body: JSON.stringify({ items }) },
+    "存入模特库失败"
+  );
+}
+
+/** 模特库：移除一条模特资产，图片一并删掉。 */
+export async function deleteModelAsset(modelId: string): Promise<{ id: string }> {
+  return workflowRequest<{ id: string }>(
+    `/api/image-factory/models?id=${encodeURIComponent(modelId)}`,
+    { method: "DELETE" },
+    "移除模特失败"
+  );
 }

@@ -11,14 +11,13 @@ export type WorkbenchAreaId =
   | "workbench"
   | "library"
   | "review"
-  | "cover"
+  | "images"
   | "video"
   | "rewrite"
   | "blogger"
   | "extract"
   | "quality"
-  | "watermark"
-  | "ai-capabilities";
+  | "watermark";
 
 export interface WorkbenchNavItem {
   id: WorkbenchAreaId;

@@ -1,31 +1,22 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
+import {
+  JOB_ROOT,
+  MIME_BY_EXTENSION,
+  newShortId,
+  readImageAsDataUrl,
+  safeSegment,
+} from "@/app/api/image-factory/_shared";
 import type { ImageCliProvider } from "@/lib/imageFactory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const JOB_ROOT = path.join(process.cwd(), ".local", "image-factory", "jobs");
-// 扩展名白名单与 MIME 映射合成一张表，加新格式只改这里
-const MIME_BY_EXTENSION: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-};
-// jobId / viewId 来自前端，直接拼路径会有目录穿越风险，只放行这一种形态
-const SAFE_SEGMENT = /^[A-Za-z0-9_-]{1,64}$/;
-
 interface CommandResult {
   stdout: string;
   stderr: string;
-}
-
-function safeSegment(value: string, fallback: string): string {
-  return SAFE_SEGMENT.test(value) ? value : fallback;
 }
 
 function runCommand(command: string, args: string[], cwd: string, stdin?: string): Promise<CommandResult> {
@@ -120,9 +111,8 @@ export async function POST(request: Request) {
     }
     if (provider !== "codex" && provider !== "grok") return apiBadRequest("请选择可用的本地 CLI");
 
-    const fallbackJobId = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
     // 同一次多视图运行共用一个 jobId，各视角落在各自子目录，产物在本机归到一起
-    jobId = safeSegment(String(formData.get("jobId") || "").trim(), fallbackJobId);
+    jobId = safeSegment(String(formData.get("jobId") || "").trim(), newShortId());
     const runDir = path.join(JOB_ROOT, jobId);
     const jobDir = viewId ? path.join(runDir, safeSegment(viewId, "view")) : runDir;
     // 参考图按「一次运行」存一份，多视图循环里后续视角直接复用，不重复落盘
@@ -202,15 +192,13 @@ export async function POST(request: Request) {
     const generatedPath = await findOutputImage(jobDir, outputPath);
     if (!generatedPath) throw new Error(`${provider} 已结束，但没有生成目标图片文件`);
 
-    const bytes = await readFile(generatedPath);
     const extension = path.extname(generatedPath).toLowerCase();
-    const mimeType = MIME_BY_EXTENSION[extension] || "image/png";
 
     return apiOk(
       {
         jobId,
         provider,
-        imageDataUrl: `data:${mimeType};base64,${bytes.toString("base64")}`,
+        imageDataUrl: await readImageAsDataUrl(generatedPath),
         outputPath: generatedPath,
         runDir,
         extension,

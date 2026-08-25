@@ -7,13 +7,18 @@ export default function ModalOverlay({
   onClose,
   children,
   maxWidthClass = "max-w-lg",
+  ariaLabel,
 }: {
   onClose: () => void;
   children: ReactNode;
   maxWidthClass?: string;
+  ariaLabel?: string;
 }) {
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={ariaLabel}
       className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-ink/40 p-4 backdrop-blur-sm sm:items-center"
       onClick={onClose}
     >

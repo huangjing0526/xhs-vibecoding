@@ -10,7 +10,7 @@ import PipelineRail, { type PipelineStep } from "@/components/ui/PipelineRail";
 import CommandPalette, { type Command } from "@/components/ui/CommandPalette";
 import NavIcon from "@/components/workflow/NavIcon";
 import { useAbortableTasks } from "@/components/workflow/useAbortableTasks";
-import CoverStudio from "@/components/workflow/CoverStudio";
+import CoverStudio, { type ImageMode } from "@/components/workflow/CoverStudio";
 import TopicPoolImportPanel from "@/components/workflow/TopicPoolImportPanel";
 import ClueIntakePanel from "@/components/workflow/ClueIntakePanel";
 import LocalDocsSyncPanel from "@/components/workflow/LocalDocsSyncPanel";
@@ -119,7 +119,7 @@ interface AreaDef {
 const AREAS: Record<WorkbenchAreaId, AreaDef> = {
   workbench: { label: "工作台", hint: "写笔记 · 从选题到发布", subtitle: "选一篇笔记，从选题到发布一条龙" },
   library: { group: "内容流程", label: "素材库", hint: "攒料 · 出选题", subtitle: "攒料、提炼、导入——所有选题的来源。" },
-  cover: { group: "内容流程", label: "封面与配图", hint: "做封面 · 配图", subtitle: "为当前笔记生成封面与内容配图。" },
+  images: { group: "内容流程", label: "图片工厂", hint: "封面 · 配图 · AI 生图", subtitle: "笔记的封面与配图，以及用本机 CLI 跑的 AI 生图。" },
   video: { group: "内容流程", label: "视频脚本", hint: "口播 · 分镜", subtitle: "把笔记转成口播 / 分镜视频脚本。" },
   quality: { group: "内容流程", label: "发布检查", hint: "质检 · 发布", subtitle: "发布前规则质检与兜底修复。" },
   review: { group: "内容流程", label: "数据复盘", hint: "看数据 · 拿建议", subtitle: "已发布笔记的数据表现与改进建议。" },
@@ -127,17 +127,21 @@ const AREAS: Record<WorkbenchAreaId, AreaDef> = {
   blogger: { group: "AI 工具", label: "对标拆解", subtitle: "拆解对标博主，沉淀可复用的道库。" },
   extract: { group: "AI 工具", label: "链接拆片", subtitle: "粘抖音/小红书链接，提取视频 + 口播脚本并拆解结构。" },
   watermark: { group: "AI 工具", label: "视频去水印", subtitle: "去掉 AI 生成视频的水印（豆包 / Gemini 等）。" },
-  "ai-capabilities": {
-    group: "AI 工具",
-    label: "AI 图片工厂",
-    hint: "传图 · 出成图",
-    subtitle: "上传素材、勾选要的产出，使用本机订阅 CLI 一次生成多张目标图。",
-  },
 };
+
+// 图片工厂的三段：前两段是当前笔记的封面/配图（复用 CoverStudio 的 ImageMode），第三段是不依赖笔记的 AI 生图。
+type ImageTab = ImageMode | "ai";
+const IMAGE_TABS: Array<{ value: ImageTab; label: string; subtitle: string }> = [
+  { value: "cover", label: "封面图", subtitle: "为当前笔记生成封面方案与预览图。" },
+  { value: "content", label: "内容配图", subtitle: "为当前笔记生成正文里的配图。" },
+  { value: "ai", label: "AI 生图", subtitle: "上传素材、勾选要的产出，用本机订阅 CLI 一次生成多张目标图。" },
+];
+// 分段控件只认 value/label，静态表提前算好，别每次渲染重建
+const IMAGE_TAB_OPTIONS = IMAGE_TABS.map(({ value, label }) => ({ value, label }));
 
 // 侧栏导航，从 AREAS 派生：AREA_ORDER 是 Record 键的完整列表，
 // 新增区 id 时类型层会强制补 AREAS，从而保证它一定有导航入口。
-const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "cover", "video", "quality", "review", "ai-capabilities", "rewrite", "blogger", "extract", "watermark"];
+const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "images", "video", "quality", "review", "rewrite", "blogger", "extract", "watermark"];
 const GROUP_ORDER: AreaGroup[] = ["内容流程", "AI 工具"];
 const toNavItem = (id: WorkbenchAreaId): WorkbenchNavItem => ({
   id,
@@ -198,6 +202,7 @@ function EmptyNote({ hint, onGoWorkbench }: { hint: string; onGoWorkbench: () =>
 function ToolPage({
   area,
   note,
+  subtitle,
   ready = true,
   emptyHint,
   onGoWorkbench,
@@ -206,6 +211,8 @@ function ToolPage({
   area: WorkbenchAreaId;
   /** 传入则显示「当前笔记」上下文条；对标拆解这类与具体笔记无关的页不传。 */
   note?: ContentCard | null;
+  /** 覆写页头副标题；分段切换的区（图片工厂）按当前段换文案。 */
+  subtitle?: string;
   /** false 时显示空态而非 children（缺笔记 / 缺草稿）。 */
   ready?: boolean;
   emptyHint?: string;
@@ -217,7 +224,7 @@ function ToolPage({
     <ToolScroll>
       <PageHeader
         title={meta.label}
-        subtitle={meta.subtitle}
+        subtitle={subtitle || meta.subtitle}
         meta={note !== undefined ? <NoteContextBar note={note} onGoWorkbench={onGoWorkbench} /> : undefined}
       />
       {ready ? children : <EmptyNote hint={emptyHint || ""} onGoWorkbench={onGoWorkbench} />}
@@ -296,7 +303,13 @@ export default function WorkflowDashboard() {
   const [selectedDraft, setSelectedDraft] = useState<DraftNote | null>(null);
   const [coverConfig, setCoverConfig] = useState<CoverConfig>({ ...DEFAULT_COVER_CONFIG });
   const [coverPlan, setCoverPlan] = useState<CoverPlan | null>(null);
-  const [imageMode, setImageMode] = useState<"cover" | "content">("cover");
+  const [imageTab, setImageTab] = useState<ImageTab>("cover");
+
+  // 别处的「去做封面」入口：进图片工厂并落在封面那一段
+  const openCover = useCallback(() => {
+    setImageTab("cover");
+    setArea("images");
+  }, []);
   const [contentImageTemplate, setContentImageTemplate] = useState<ContentImageTemplateType>("flowchart");
   const [contentImagePlan, setContentImagePlan] = useState<ContentImagePlan | null>(null);
   const [review, setReview] = useState<ReviewResult | null>(null);
@@ -411,7 +424,7 @@ export default function WorkflowDashboard() {
     setArea("workbench");
     setCoverPlan(null);
     setCoverDataUrl("");
-    setImageMode("cover");
+    setImageTab("cover");
     setContentImagePlan(null);
     setContentImageDataUrl("");
     setNotice({ type: "success", message: "已进入 Demo 模式，不会写入飞书" });
@@ -424,7 +437,7 @@ export default function WorkflowDashboard() {
     setArea("workbench");
     setCoverPlan(null);
     setCoverDataUrl("");
-    setImageMode("content");
+    setImageTab("content");
     setContentImagePlan(null);
     setContentImageDataUrl("");
     setNotice({ type: "success", message: "已从 Markdown 生成 Demo 内容包，可继续生成图片" });
@@ -954,7 +967,7 @@ export default function WorkflowDashboard() {
         signal: tasks.start("contentImage"),
       });
       setContentImagePlan(result.plan);
-      setImageMode("content");
+      setImageTab("content");
       setNotice({
         type: "success",
         message: result.usedFallback ? "已用规则生成内容配图" : "内容配图已生成",
@@ -997,7 +1010,7 @@ export default function WorkflowDashboard() {
 
   const handleDownloadCover = useCallback(() => {
     if (!coverDataUrl) {
-      setNotice({ type: "error", message: "请先在图片页生成封面预览图" });
+      setNotice({ type: "error", message: "请先在图片工厂的封面页生成预览图" });
       return;
     }
     downloadCover(coverDataUrl, `xhs-cover-${Date.now()}.png`);
@@ -1050,7 +1063,7 @@ export default function WorkflowDashboard() {
     return [
       { id: "topic", label: "选题", done: Boolean(selectedTopic) },
       { id: "draft", label: "草稿", done: Boolean(selectedDraft) },
-      { id: "cover", label: "封面", done: Boolean(coverDataUrl), onSelect: () => setArea("cover") },
+      { id: "cover", label: "封面", done: Boolean(coverDataUrl), onSelect: openCover },
       {
         id: "quality",
         label: "质检",
@@ -1059,7 +1072,7 @@ export default function WorkflowDashboard() {
       },
       { id: "publish", label: "发布", done: published },
     ];
-  }, [selectedTopic, selectedDraft, coverDataUrl, qualityResult]);
+  }, [selectedTopic, selectedDraft, coverDataUrl, qualityResult, openCover]);
 
   // ⌘K 命令表：分区跳转 + 笔记切换 + 高频动作，全部收在一个入口
   const commands: Command[] = useMemo(() => {
@@ -1123,7 +1136,7 @@ export default function WorkflowDashboard() {
         label: "生成封面方案",
         icon: <Sparkles size={15} />,
         run: () => {
-          setArea("cover");
+          openCover();
           handleGenerateCover();
         },
       },
@@ -1135,6 +1148,7 @@ export default function WorkflowDashboard() {
     handleGenerateDraft,
     handleSelectNote,
     loadSnapshot,
+    openCover,
     selectedTopic,
     setNotice,
     usableDrafts,
@@ -1226,7 +1240,7 @@ export default function WorkflowDashboard() {
                   bloggerReady={bloggerReady}
                   onOpenBlogger={() => setArea("blogger")}
                   coverDataUrl={coverDataUrl}
-                  onOpenCover={() => setArea("cover")}
+                  onOpenCover={openCover}
                   videoReady={videoReady}
                   onOpenVideo={() => setArea("video")}
                   quality={qualityResult}
@@ -1349,51 +1363,68 @@ export default function WorkflowDashboard() {
           </ToolScroll>
         )}
 
-        {area === "cover" && (
-          <ToolPage area="cover" note={selectedTopic} onGoWorkbench={() => setArea("workbench")}>
-            <div className="space-y-3">
-              <CoverStudio
-                topics={usableTopics}
-                drafts={usableDrafts}
-                selectedTopic={selectedTopic}
-                selectedDraft={selectedDraft}
-                coverConfig={coverConfig}
-                coverPlan={coverPlan}
-                imageMode={imageMode}
-                contentImageTemplate={contentImageTemplate}
-                contentImagePlan={contentImagePlan}
-                contentImageDataUrl={contentImageDataUrl}
-                isGenerating={isGeneratingCover}
-                isGeneratingContentImage={isGeneratingContentImage}
-                onGenerateCover={handleGenerateCover}
-                onGenerateContentImage={handleGenerateContentImage}
-                onCancelGenerate={() => {
-                  tasks.cancel("cover");
-                  tasks.cancel("contentImage");
-                }}
-                onSelectTopic={handleSelectTopic}
-                onSelectDraft={handleSelectDraft}
-                onConfigChange={setCoverConfig}
-                onCoverGenerated={setCoverDataUrl}
-                onImageModeChange={setImageMode}
-                onContentTemplateChange={handleContentTemplateChange}
-                onContentImageGenerated={setContentImageDataUrl}
+        {area === "images" && (
+          // AI 生图不针对某一篇笔记，那一段不传 note 就不显示「当前笔记」条
+          <ToolPage
+            area="images"
+            note={imageTab === "ai" ? undefined : selectedTopic}
+            subtitle={IMAGE_TABS.find((tab) => tab.value === imageTab)?.subtitle}
+            onGoWorkbench={() => setArea("workbench")}
+          >
+            <div className="mb-4">
+              <SegmentedControl
+                options={IMAGE_TAB_OPTIONS}
+                value={imageTab}
+                onChange={setImageTab}
+                ariaLabel="图片类型"
               />
-              {(coverDataUrl || contentImageDataUrl) && (
-                <div className="flex flex-wrap gap-2">
-                  {coverDataUrl && (
-                    <Button variant="secondary" onClick={handleDownloadCover} icon={<Download size={15} />}>
-                      下载封面
-                    </Button>
-                  )}
-                  {contentImageDataUrl && (
-                    <Button variant="secondary" onClick={handleDownloadContentImage} icon={<Download size={15} />}>
-                      下载配图
-                    </Button>
-                  )}
-                </div>
-              )}
             </div>
+            {imageTab === "ai" ? (
+              <ImageFactory />
+            ) : (
+              <div className="space-y-3">
+                <CoverStudio
+                  topics={usableTopics}
+                  drafts={usableDrafts}
+                  selectedTopic={selectedTopic}
+                  selectedDraft={selectedDraft}
+                  coverConfig={coverConfig}
+                  coverPlan={coverPlan}
+                  imageMode={imageTab}
+                  contentImageTemplate={contentImageTemplate}
+                  contentImagePlan={contentImagePlan}
+                  contentImageDataUrl={contentImageDataUrl}
+                  isGenerating={isGeneratingCover}
+                  isGeneratingContentImage={isGeneratingContentImage}
+                  onGenerateCover={handleGenerateCover}
+                  onGenerateContentImage={handleGenerateContentImage}
+                  onCancelGenerate={() => {
+                    tasks.cancel("cover");
+                    tasks.cancel("contentImage");
+                  }}
+                  onSelectTopic={handleSelectTopic}
+                  onSelectDraft={handleSelectDraft}
+                  onConfigChange={setCoverConfig}
+                  onCoverGenerated={setCoverDataUrl}
+                  onContentTemplateChange={handleContentTemplateChange}
+                  onContentImageGenerated={setContentImageDataUrl}
+                />
+                {(coverDataUrl || contentImageDataUrl) && (
+                  <div className="flex flex-wrap gap-2">
+                    {coverDataUrl && (
+                      <Button variant="secondary" onClick={handleDownloadCover} icon={<Download size={15} />}>
+                        下载封面
+                      </Button>
+                    )}
+                    {contentImageDataUrl && (
+                      <Button variant="secondary" onClick={handleDownloadContentImage} icon={<Download size={15} />}>
+                        下载配图
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </ToolPage>
         )}
 
@@ -1458,13 +1489,6 @@ export default function WorkflowDashboard() {
           </ToolPage>
         )}
 
-        {area === "ai-capabilities" && (
-          <ToolScroll>
-            <PageHeader title={AREAS[area].label} subtitle={AREAS[area].subtitle} />
-            <ImageFactory />
-          </ToolScroll>
-        )}
-
         {area === "quality" && (
           <ToolPage
             area="quality"
@@ -1479,7 +1503,7 @@ export default function WorkflowDashboard() {
               onApplyDraftPatch={handlePatchDraft}
               onResolve={(action) => {
                 if (action === "rewrite") setArea("rewrite");
-                else if (action === "cover") setArea("cover");
+                else if (action === "cover") openCover();
                 else if (action === "source") setArea("library");
               }}
               onPublish={() => {

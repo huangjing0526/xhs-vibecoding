@@ -2,6 +2,8 @@ export type ImageCliProvider = "codex" | "gemini" | "grok";
 
 /** 模板示意图标识，对应 TemplateThumb 里的一张内联 SVG；自建模板不填走通用兜底。 */
 export type ImageTemplateThumb =
+  | "model-asset"
+  | "model-poses"
   | "white-bg"
   | "product-scene"
   | "commerce-hero"
@@ -23,6 +25,8 @@ export interface ImageTemplateSlot {
   label: string;
   description: string;
   required: boolean;
+  /** 填了就允许从模特库直接选一张已存的模特图，省掉重新上传。 */
+  fromModelLibrary?: boolean;
 }
 
 /** 多视图模板的一个输出视角，一个视角对应一次 CLI 生成。 */
@@ -56,6 +60,8 @@ export interface ImageFactoryTemplate {
   thumb?: ImageTemplateThumb;
   /** 该模板真实跑出来的一张样例，用作卡片预览；没有就回落到 thumb 的示意图。 */
   preview?: string;
+  /** 产出的是可复用的模特资产，结果区据此给出「存入模特库」入口。 */
+  producesModelAsset?: boolean;
   builtIn?: boolean;
 }
 
@@ -85,6 +91,8 @@ export interface ImageGenerationResult {
 
 /** 编辑器里可选的示意图，顺序即下拉顺序；不选走通用兜底。 */
 export const IMAGE_TEMPLATE_THUMB_OPTIONS: Array<{ id: ImageTemplateThumb; label: string }> = [
+  { id: "model-asset", label: "模特资产" },
+  { id: "model-poses", label: "模特多姿势" },
   { id: "white-bg", label: "白底多视角" },
   { id: "product-scene", label: "商品场景" },
   { id: "commerce-hero", label: "主视觉" },
@@ -101,3 +109,14 @@ export const IMAGE_TEMPLATE_THUMB_OPTIONS: Array<{ id: ImageTemplateThumb; label
   { id: "brand-kit", label: "视觉素材包" },
   { id: "style-transfer", label: "风格迁移" },
 ];
+
+/** 模特库里的一条模特资产：图片存在本机 .local 目录，列表只带取图地址，不内联图片本体。 */
+export interface ModelAssetEntry {
+  id: string;
+  name: string;
+  /** 来源模板与视角，用于在库里区分「同一位模特的正面/侧面」。 */
+  sourceLabel: string;
+  createdAt: string;
+  extension: string;
+  imageUrl: string;
+}
