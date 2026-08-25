@@ -52,6 +52,8 @@ export interface ImageFactoryTemplate {
   /** 可点选的画面场景，选中即填进补充要求；模板规则不受影响。 */
   scenePresets?: ImageScenePreset[];
   thumb?: ImageTemplateThumb;
+  /** 该模板真实跑出来的一张样例，用作卡片预览；没有就回落到 thumb 的示意图。 */
+  preview?: string;
   builtIn?: boolean;
 }
 

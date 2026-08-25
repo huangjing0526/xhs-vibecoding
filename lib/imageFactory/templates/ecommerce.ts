@@ -10,6 +10,7 @@ export const ECOMMERCE_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张真实、可发布的商品场景图。严格保持商品的形状、颜色、材质、包装文字和品牌标识；只改变环境、构图与光线。商品必须是画面唯一主角，不添加参考图中不存在的配件。",
     aspectRatio: "3:4",
     thumb: "product-scene",
+    preview: "/template-previews/product-scene.jpg",
     slots: [
       { id: "product", label: "商品图", description: "清晰展示商品正面与外观", required: true },
       { id: "scene", label: "场景参考", description: "可选，用于确定环境和氛围", required: false },
@@ -24,6 +25,7 @@ export const ECOMMERCE_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张合规的电商白底商品图。严格保持商品的外形轮廓、比例、颜色、材质质感、金属件色泽和做工细节完全不变；不要重新设计、不要改色、不要添加任何品牌标识、不要臆造原图中不存在的部件。背景必须是纯白无缝背景，柔和均匀的棚拍光线，无模特、无道具、无文字、无水印、无促销标签。商品居中放置，边缘干净锐利，四周留出均匀的呼吸空间。",
     aspectRatio: "1:1",
     thumb: "white-bg",
+    preview: "/template-previews/commerce-white-bg.jpg",
     slots: [
       { id: "product", label: "商品图", description: "清晰、无遮挡的商品实拍", required: true },
     ],
@@ -43,6 +45,7 @@ export const ECOMMERCE_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张专业电商主图。严格保持商品本身准确，背景干净，主体边缘清晰，光线自然，构图留有呼吸感。不要生成未经提供的价格、促销文字、功效声明或额外赠品。",
     aspectRatio: "1:1",
     thumb: "commerce-hero",
+    preview: "/template-previews/commerce-hero.jpg",
     slots: [
       { id: "product", label: "商品图", description: "清晰、无遮挡的商品参考", required: true },
     ],
@@ -56,6 +59,7 @@ export const ECOMMERCE_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张商品细节特写图。严格保持商品的外形轮廓、颜色、材质质感、纹理走向、五金件色泽和做工细节完全不变；不要重新设计、不要改色、不要添加任何品牌标识或原图中不存在的部件。背景干净纯净，柔和均匀的棚拍光线，细节区域对焦清晰、边缘锐利，景深自然。画面中若出现手部，默认为亚洲人的手，肤色自然。画面中不出现文字、水印、尺寸标注、参数说明与促销标签，也不要编造任何材质成分或功效说明。只输出一张真实、可直接用于详情页的图片。",
     aspectRatio: "1:1",
     thumb: "detail-shots",
+    preview: "/template-previews/detail-shots.jpg",
     slots: [
       { id: "product", label: "商品图", description: "清晰、无遮挡的商品实拍", required: true },
     ],
@@ -83,6 +87,7 @@ export const ECOMMERCE_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张同款商品的左右分屏对比图。左右两侧必须是同一件商品，严格保持它的外形、颜色、材质与所有细节完全一致，只改变两侧的场景、光线或呈现状态。两侧构图对称、主体大小一致，中间有干净清晰的分隔。画面中若出现人物或手部，默认为亚洲人，肤色自然。画面中不出现文字、箭头、标签与水印，也不要暗示任何功效、前后改善或效果对比。只输出一张真实、可直接发布的图片。",
     aspectRatio: "1:1",
     thumb: "compare-grid",
+    preview: "/template-previews/compare-grid.jpg",
     slots: [
       { id: "product", label: "商品图", description: "清晰、无遮挡的商品实拍", required: true },
     ],

@@ -10,6 +10,7 @@ export const XHS_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张真实的实拍感配图。严格保持参考图中主体物品的外形、颜色、材质与所有细节完全不变；只改变它所处的环境、摆放方式与光线。画面要像手机随手拍下的真实照片，有自然的光影、轻微的景深和真实的材质反光，不要塑料感或过度渲染的效果。构图干净，主体清晰，周围陈设服务于主体、不喧宾夺主。画面中若出现手部，默认为亚洲人的手，肤色自然。画面中不出现文字、水印、可辨认的品牌标识与促销标签，不臆造参考图中没有的部件。只输出一张真实、可直接发布的成图。",
     aspectRatio: "3:4",
     thumb: "note-flatlay",
+    preview: "/template-previews/note-flatlay.jpg",
     slots: [
       { id: "subject", label: "主体物品", description: "配图里必须保留的主体", required: true },
       { id: "style", label: "风格参考", description: "可选，用于确定色调与摆拍风格", required: false },
@@ -36,6 +37,7 @@ export const XHS_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张人物出镜的场景图。严格保持人物参考图中的脸、发型、肤色、体型，以及服装的颜色、版型与细节完全不变；只改变环境、姿态与光线。人物面向镜头、神态自然，像是在对着镜头说话的瞬间，嘴部与眼神状态放松不僵硬。光线打在脸上均匀柔和，背景有真实的空间纵深与轻微虚化，人物与背景的光线方向一致。画面中不出现文字、水印、字幕条与品牌标识。只输出一张真实、可直接发布的成图。",
     aspectRatio: "3:4",
     thumb: "talking-head",
+    preview: "/template-previews/talking-head.jpg",
     slots: [
       { id: "person", label: "人物参考图", description: "用于锁定出镜人的脸、发型与服装", required: true },
       { id: "style", label: "场景参考", description: "可选，用于确定背景与色调", required: false },

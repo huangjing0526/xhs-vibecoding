@@ -10,6 +10,7 @@ export const FASHION_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张写实的服装上身展示图。参考图里的服装是平铺图或挂拍图，把它自然地穿到真人模特身上。严格保持服装的颜色、图案、印花位置与比例、版型剪裁、领口袖型、门襟与口袋结构、面料质感和缝线细节完全不变；不要改色、不要重新设计款式、不要增删任何部件。提供模特参考图时，严格保持该模特的脸、发型、肤色和体型；没有提供模特参考图时，默认生成一位年轻的亚洲女性模特，五官自然、妆容清爽。服装必须贴合身体，肩线、腰线、垂坠与褶皱走向符合真实穿着的物理关系，光影方向与场景一致。画面中不出现文字、水印、品牌标识、价格与促销标签；不臆造参考图中没有的配饰；不要把多个视角拼进同一张图。只输出一张真实、可直接发布的成图，人物是画面主角，构图留出呼吸空间。",
     aspectRatio: "3:4",
     thumb: "flat-to-model",
+    preview: "/template-previews/flat-to-model.jpg",
     slots: [
       { id: "garment", label: "服装平铺图", description: "平铺或挂拍的服装正面，尽量无遮挡", required: true },
       { id: "model", label: "模特参考", description: "可选，用于锁定模特的脸型、体型与气质", required: false },
@@ -38,6 +39,7 @@ export const FASHION_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张写实换装图。严格保持模特的脸、发型、肤色、体型和身体比例；严格保持服装的颜色、版型、图案、面料与结构。服装应自然贴合身体，遮挡、褶皱、手脚和光影关系真实。",
     aspectRatio: "3:4",
     thumb: "model-tryon",
+    preview: "/template-previews/model-tryon.jpg",
     slots: [
       { id: "model", label: "模特图", description: "用于锁定人物身份和体型", required: true },
       { id: "garment", label: "服装图", description: "要穿到模特身上的目标服装", required: true },
@@ -65,6 +67,7 @@ export const FASHION_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张真实的对镜自拍图。模特站在全身镜或落地镜前用手机自拍，画面是镜子里的映像。严格保持参考图中服装的颜色、图案、版型、面料质感与所有细节完全不变；提供模特参考图时保持其脸、发型、肤色和体型，没有提供时默认生成一位年轻的亚洲女性模特。手机可以自然遮挡部分面部，手臂与手机的角度符合真实自拍的物理关系，镜面反射与室内光线一致。竖版构图，完整展示整体穿搭。画面中不出现文字、水印、品牌标识与促销标签，不臆造参考图中没有的配饰。只输出一张真实、可直接发布的成图。",
     aspectRatio: "3:4",
     thumb: "mirror-selfie",
+    preview: "/template-previews/mirror-selfie.jpg",
     slots: [
       { id: "look", label: "模特上身图", description: "模特穿着目标服装的照片，也可直接传服装平铺图", required: true },
       { id: "style", label: "场景参考", description: "可选，用于确定镜子样式与室内风格", required: false },
@@ -93,6 +96,7 @@ export const FASHION_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张真实的门店场景穿搭图。模特在服装店内或店门口自然活动。严格保持参考图中服装的颜色、图案、版型、面料质感与所有细节完全不变；提供模特参考图时保持其脸、发型、肤色和体型，没有提供时默认生成一位年轻的亚洲女性模特。店内陈设、光线与人物身上的光影方向保持一致，人物是画面主角，陈设不喧宾夺主。画面中不出现可辨认的真实品牌名称、店招文字、价格牌与促销标签，也不要水印，不臆造参考图中没有的配饰。只输出一张真实、可直接发布的成图。",
     aspectRatio: "3:4",
     thumb: "storefront",
+    preview: "/template-previews/storefront.jpg",
     slots: [
       { id: "look", label: "模特上身图", description: "模特穿着目标服装的照片，也可直接传服装平铺图", required: true },
       { id: "style", label: "场景参考", description: "可选，用于确定门店风格与陈设", required: false },
@@ -122,6 +126,7 @@ export const FASHION_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张真实的户外街拍穿搭图。严格保持参考图中服装的颜色、图案、版型、面料质感与所有细节完全不变；提供模特参考图时保持其脸、发型、肤色和体型，没有提供时默认生成一位年轻的亚洲女性模特。环境光线与季节要和服装厚薄相匹配，人物与背景的透视、景深自然，衣服的垂坠与风感真实。画面中不出现文字、水印、可辨认的品牌标识与车牌，不臆造参考图中没有的配饰。只输出一张真实、可直接发布的成图，人物是画面主角。",
     aspectRatio: "3:4",
     thumb: "outdoor-street",
+    preview: "/template-previews/outdoor-street.jpg",
     slots: [
       { id: "look", label: "模特上身图", description: "模特穿着目标服装的照片，也可直接传服装平铺图", required: true },
       { id: "style", label: "场景参考", description: "可选，用于确定环境与季节氛围", required: false },
@@ -151,6 +156,7 @@ export const FASHION_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "生成一张有摄影质感的人像写真。严格保持参考图中服装的颜色、图案、版型、面料质感与所有细节完全不变；提供模特参考图时保持其脸、发型、肤色和体型，没有提供时默认生成一位年轻的亚洲女性模特。光线、景深与情绪都为人物服务，肤色自然不过度磨皮，构图取中景或全身并留出呼吸空间。画面中不出现文字、水印、品牌标识与促销标签，不臆造参考图中没有的配饰。只输出一张真实、可直接发布的成图。",
     aspectRatio: "3:4",
     thumb: "portrait-studio",
+    preview: "/template-previews/portrait-studio.jpg",
     slots: [
       { id: "look", label: "模特上身图", description: "模特穿着目标服装的照片，也可直接传服装平铺图", required: true },
       { id: "style", label: "风格参考", description: "可选，用于确定摄影风格与色调", required: false },

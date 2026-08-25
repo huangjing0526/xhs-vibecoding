@@ -100,8 +100,20 @@ function TemplateCard({
             : "border-line bg-surface hover:border-brand-300 hover:shadow-card"
         }`}
       >
-        <div className="relative aspect-[4/3] border-b border-line">
-          <TemplateThumb thumb={template.thumb} active={selected} />
+        <div className="relative aspect-[4/5] overflow-hidden border-b border-line">
+          {/* 有样例就用模板自己跑出来的图，挑模板时看真实产出比看示意图直观；自建模板没样例，回落示意图 */}
+          {template.preview ? (
+            <Image
+              src={template.preview}
+              alt={`${template.name}的产出样例`}
+              fill
+              sizes="(min-width: 1280px) 300px, (min-width: 640px) 45vw, 90vw"
+              className={`object-cover transition-opacity ${selected ? "" : "opacity-90 group-hover:opacity-100"}`}
+              unoptimized
+            />
+          ) : (
+            <TemplateThumb thumb={template.thumb} active={selected} />
+          )}
           {selected && (
             <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-brand-500 text-white shadow-brand">
               <Check size={13} />

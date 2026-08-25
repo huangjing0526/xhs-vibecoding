@@ -10,6 +10,7 @@ export const CREATIVE_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "保持主体身份、轮廓和关键内容不变，只借鉴风格参考图的构图、配色、光线、材质表现与视觉氛围。不要复制参考图中的人物、品牌、文字或独特标识。",
     aspectRatio: "1:1",
     thumb: "style-transfer",
+    preview: "/template-previews/style-transfer.jpg",
     slots: [
       { id: "subject", label: "主体图", description: "最终图片必须保留的主体", required: true },
       { id: "style", label: "风格参考", description: "用于参考构图、颜色和光线", required: true },
@@ -24,6 +25,7 @@ export const CREATIVE_TEMPLATES: ImageFactoryTemplate[] = [
     prompt: "从参考图提炼一套统一的视觉语言，生成可复用的素材。保持参考图的配色、材质感、光线氛围与构图逻辑；不要复制参考图中的人物、文字、logo 或任何独特标识。画面要留出足够干净的空白区域，方便后续叠加标题与文字。质感真实细腻，避免塑料感与过度渲染。画面中不出现任何文字、水印与品牌标识。只输出一张图片。",
     aspectRatio: "3:4",
     thumb: "brand-kit",
+    preview: "/template-previews/brand-kit.jpg",
     slots: [
       { id: "reference", label: "视觉参考", description: "用于提炼配色、材质与氛围的参考图", required: true },
     ],

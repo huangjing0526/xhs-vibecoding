@@ -78,6 +78,29 @@ L3 场景预设 scenePresets   一句话画面描述，点选后写进「补充�
 `research/AI女装带货提示词合集/女装【AI图文】700+提示词合集` 共 988 条，按 19 类场景分好。
 提炼时去重、压到 30-60 字、剥掉具体服装与品牌文字。**只提取场景结构，用自己的服装图和模特图重新生成。**
 
+## 卡片预览图
+
+模板卡上是这个模板**真实跑出来的产出**，不是示意图——挑模板时看效果比看图标直观。
+
+```
+.local/image-factory/samples/<模板id>/*.png   原图（不进 git，本机跑出来的）
+public/template-previews/<模板id>.jpg          卡片预览（进 git，600×750、共约 730 KB）
+lib/imageFactory/templates/*.ts                模板的 preview 字段指向它
+```
+
+换样例或加模板后重出预览图：
+
+```bash
+node scripts/image-factory/build-previews.mjs                       # 各模板用目录里第一张
+node scripts/image-factory/build-previews.mjs --pick <id>=<文件名>   # 指定某张
+```
+
+卡片图区是 `aspect-[4/5]`，脚本按 4:5 裁切、纵向偏上 18%（人像模板保住脸和上半身）。
+没有 preview 的模板（自建的）回落到 `TemplateThumb` 的内联 SVG 示意图。
+
+同一分类里**别用同一件商品**，否则几张卡长得一样、等于没有预览。电商那几个分别用了
+深蓝长裙 / 红花印花 / 薄荷绿百褶 / 白蕾丝，顺带也验证了模板对印花、褶皱、蕾丝的保持能力。
+
 ## 样例产出
 
 每个模板至少留一张真机跑出来的样例，路径 `.local/image-factory/samples/<模板id>/<预设或视角>.png`
