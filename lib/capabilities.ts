@@ -133,7 +133,7 @@ const AREA_TABLE = {
   projects: {
     label: "项目",
     hint: "在做的每一件交付",
-    subtitle: "一条选题就是一个项目，点进去从选题写到发布。",
+    subtitle: "图文从选题写到发布，视频从对标结构到逐镜出片——每条都是一次交付。",
     icon: FolderOpen,
     tint: "from-brand-50",
   },

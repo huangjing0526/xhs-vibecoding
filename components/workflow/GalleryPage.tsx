@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Plus, Scissors, Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import CanvasPage from "@/components/workflow/CanvasPage";
 import TemplateEditor from "@/components/workflow/ImageTemplateEditor";
@@ -11,7 +11,7 @@ import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
 import { Input } from "@/components/ui/Field";
 import EmptyState from "@/components/ui/EmptyState";
-import { AREAS, toolSections, type AreaId } from "@/lib/capabilities";
+import { AREAS, TOOL_AREAS, toolSections, type AreaId } from "@/lib/capabilities";
 import { groupInOrder } from "@/lib/collections";
 import {
   imageTemplateCategories,
@@ -392,11 +392,18 @@ export function TemplateGallery({
       recentKind="template"
       searchPlaceholder="搜模板名或用途"
       action={
-        // 模板的两条来源：自己建一个，或去拆一条真实的对标沉淀成模板
+        // 模板的来源：自己建一个，或用「沉淀模板」区的工具去拆——该分区的成员在这里自动长出入口，
+        // 图标与动词都取自 AREAS（动词是 hint 的第一段，约定见 lib/capabilities 的 ToolCategory 注释）
         <>
-          <Button size="sm" variant="secondary" onClick={() => onOpenArea("extract")} icon={<Scissors size={14} />}>
-            拆一条
-          </Button>
+          {TOOL_AREAS.filter((id) => AREAS[id].category === "沉淀模板").map((id) => {
+            const meta = AREAS[id];
+            const Icon = meta.icon;
+            return (
+              <Button key={id} size="sm" variant="secondary" onClick={() => onOpenArea(id)} icon={<Icon size={14} />}>
+                {meta.hint.split(" · ")[0]}
+              </Button>
+            );
+          })}
           <Button
             size="sm"
             variant="secondary"
