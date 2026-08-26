@@ -13,3 +13,8 @@ export function groupInOrder<T, K>(items: T[], keyOf: (item: T) => K): Array<{ k
   });
   return groups;
 }
+
+/** 按 createdAt 倒序的通用比较器：作品、产物这类「新的在前」列表共用，别各写一遍 localeCompare。 */
+export function byCreatedAtDesc(left: { createdAt: string }, right: { createdAt: string }): number {
+  return right.createdAt.localeCompare(left.createdAt);
+}

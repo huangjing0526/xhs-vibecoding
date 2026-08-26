@@ -1,6 +1,7 @@
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { JOB_ROOT, isSafeSegment, type WorkRecord } from "@/app/api/image-factory/_shared";
+import { byCreatedAtDesc } from "@/lib/collections";
 import type { WorkEntry } from "@/lib/imageFactory";
 
 /**
@@ -75,24 +76,26 @@ export async function listWorks(): Promise<WorkEntry[]> {
     throw error;
   }
 
-  const records: WorkRecord[] = [];
-  for (const jobId of runs) {
-    if (!isSafeSegment(jobId)) continue;
-    const own = await readMeta(jobId, "");
-    if (own) records.push(own);
+  // 各运行目录互不依赖，并行读——串行时几十个 job 的几百次 fs 调用是列表接口的长尾
+  const perRun = await Promise.all(
+    runs.filter(isSafeSegment).map(async (jobId) => {
+      const records: WorkRecord[] = [];
+      const own = await readMeta(jobId, "");
+      if (own) records.push(own);
 
-    const children = await readdir(path.join(JOB_ROOT, jobId), { withFileTypes: true }).catch(() => []);
-    for (const child of children) {
-      // inputs 存的是参考图，不是产出，不进作品列表
-      if (!child.isDirectory() || child.name === "inputs" || !isSafeSegment(child.name)) continue;
-      const meta = await readMeta(jobId, child.name);
-      if (meta) records.push(meta);
-    }
-  }
+      const children = await readdir(path.join(JOB_ROOT, jobId), { withFileTypes: true }).catch(() => []);
+      const metas = await Promise.all(
+        children
+          // inputs 存的是参考图，不是产出，不进作品列表
+          .filter((child) => child.isDirectory() && child.name !== "inputs" && isSafeSegment(child.name))
+          .map((child) => readMeta(jobId, child.name)),
+      );
+      for (const meta of metas) if (meta) records.push(meta);
+      return records;
+    }),
+  );
 
-  return records
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-    .map(toWorkEntry);
+  return perRun.flat().sort(byCreatedAtDesc).map(toWorkEntry);
 }
 
 export async function readWorkImage(

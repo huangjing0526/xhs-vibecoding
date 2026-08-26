@@ -1,18 +1,12 @@
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
-import { deleteWork, isWorkLocation, listWorks } from "@/app/api/image-factory/_works";
+import { deleteWork, isWorkLocation } from "@/app/api/image-factory/_works";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  try {
-    return apiOk({ works: await listWorks() }, "作品读取成功");
-  } catch (error) {
-    return apiError(error, "imageFactory.works.list", "作品读取失败");
-  }
-}
-
+// 列表已由 /api/works 聚合端点统一提供（图片 + 视频），这里只留删除——
+// 删除按存储归属就近：图片作品的产物目录归图片工厂管。
 export async function DELETE(request: NextRequest) {
   const params = new URL(request.url).searchParams;
   const jobId = params.get("job") || "";

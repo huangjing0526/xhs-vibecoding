@@ -148,6 +148,29 @@ export interface ShotClip {
   framePath: string;
 }
 
+/**
+ * 视频作品：一镜成片在作品库里的视图，由 ShotClip 投影而来。
+ * Omit 掉的两个盘上路径不外发，取流走 clipUrl；删除与重跑归项目所有，作品库只看、只下载。
+ */
+export type VideoWork = Omit<ShotClip, "videoPath" | "framePath"> & {
+  kind: "video";
+  /** 列表键：projectId/shotOrder */
+  id: string;
+  projectId: string;
+  projectTitle: string;
+  /** 取流地址（clip 端点），浏览器按需拉 */
+  videoUrl: string;
+};
+
+/**
+ * 某一镜成片的取流地址。URL 形状只在这里拼一次，服务端投影与客户端播放共用；
+ * version 用于重跑覆盖同名文件后顶掉浏览器缓存（+1 即失效）。
+ */
+export function clipUrl(projectId: string, shotOrder: number, version?: number): string {
+  const base = `/api/video-factory/clip?projectId=${encodeURIComponent(projectId)}&shot=${shotOrder}`;
+  return version ? `${base}&v=${version}` : base;
+}
+
 /** 拆片带过来的结构骨架：只有结构，没有原视频的画面与原句。 */
 export interface BenchmarkSkeleton {
   platform: string;
@@ -261,6 +284,12 @@ export interface VideoProject {
   script: ScriptDraft | null;
   storyboard: Storyboard | null;
   clips: ShotClip[];
+}
+
+/** 一条项目做到哪一步了。项目页与工厂里「最近的项目」共用同一套说法，不各写一遍三元。 */
+export function describeProjectProgress(project: VideoProject): string {
+  const stage = project.storyboard ? `${project.storyboard.shots.length} 镜` : project.script ? "已出脚本" : "只有选题";
+  return project.clips.length > 0 ? `${stage} · 已生成 ${project.clips.length} 镜` : stage;
 }
 
 /** 引擎下可选的驱动模型。形状与 lib/imageFactory 的 ImageCliModel 一致，但不跨模块引用——

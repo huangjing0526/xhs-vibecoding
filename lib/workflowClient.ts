@@ -22,9 +22,9 @@ import type {
   LibraryAssetEntry,
   LibraryKind,
   ModelAssetEntry,
-  WorkEntry,
 } from "@/lib/imageFactory";
 import type { LocalDocCategory, LocalDocFileSummary } from "@/lib/localDocs";
+import type { AnyWork } from "@/lib/works";
 import type { ExtractedClue } from "@/lib/clueIntake";
 import type { VideoExtractResult } from "@/lib/videoExtract";
 import type {
@@ -547,10 +547,10 @@ export async function generateImage(
   return parseApiResponse<ImageGenerationResult>(response, "目标图生成失败");
 }
 
-/** 作品：本机跑出来的全部产出，按时间倒序。 */
-export async function listWorks(): Promise<{ works: WorkEntry[] }> {
-  const response = await fetch("/api/image-factory/works", { cache: "no-store" });
-  return parseApiResponse<{ works: WorkEntry[] }>(response, "作品读取失败");
+/** 作品：本机跑出来的全部产出（图片 + 视频成片），聚合端点一次拿全，按时间倒序。 */
+export async function listWorks(): Promise<{ works: AnyWork[] }> {
+  const response = await fetch("/api/works", { cache: "no-store" });
+  return parseApiResponse<{ works: AnyWork[] }>(response, "作品读取失败");
 }
 
 /** 作品：把一件产出连同它的产物目录一起删掉。 */
