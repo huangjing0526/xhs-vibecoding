@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { Download, Sparkles, Trash2, X } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
 import Card from "@/components/ui/Card";
 import ModalOverlay from "@/components/ui/ModalOverlay";
+import AssetThumb from "@/components/workflow/AssetThumb";
 import ModelCardRow from "@/components/workflow/ModelCardRow";
 import { groupInOrder } from "@/lib/collections";
 import type { ImageTemplateView, ModelAssetEntry, ModelProfile } from "@/lib/imageFactory";
@@ -25,61 +26,6 @@ const LABEL_ALIASES: Record<string, string[]> = {
 function findAsset(view: ImageTemplateView, assets: ModelAssetEntry[]): ModelAssetEntry | undefined {
   const candidates = [view.label, ...(LABEL_ALIASES[view.label] || [])];
   return assets.find((asset) => candidates.includes(asset.sourceLabel));
-}
-
-function AssetTile({
-  label,
-  asset,
-  fileName,
-  onOpen,
-  onDelete,
-}: {
-  label: string;
-  asset?: ModelAssetEntry;
-  fileName: string;
-  onOpen: (asset: ModelAssetEntry) => void;
-  onDelete: (asset: ModelAssetEntry) => void;
-}) {
-  if (!asset) {
-    return (
-      <div className="overflow-hidden rounded-2xl border border-dashed border-line-strong bg-soft">
-        <div className="flex aspect-square items-center justify-center px-2 text-center text-[10px] leading-4 text-faint">
-          库里还没有这个角度
-        </div>
-        <div className="truncate px-2 py-1.5 text-[11px] font-bold text-faint">{label}</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="group overflow-hidden rounded-2xl border border-line bg-surface">
-      <div className="relative aspect-square bg-soft">
-        <button type="button" onClick={() => onOpen(asset)} className="absolute inset-0" aria-label={`看大图：${label}`}>
-          <Image src={asset.imageUrl} alt={label} fill sizes="200px" className="object-cover" />
-        </button>
-        <div className="pointer-events-none absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
-          <a
-            href={asset.imageUrl}
-            download={fileName}
-            onClick={(event) => event.stopPropagation()}
-            className="rounded-lg bg-black/55 p-1.5 text-white"
-            aria-label={`下载${label}`}
-          >
-            <Download size={12} />
-          </a>
-          <button
-            type="button"
-            onClick={() => onDelete(asset)}
-            className="rounded-lg bg-black/55 p-1.5 text-white hover:bg-danger"
-            aria-label={`从模特库移除${label}`}
-          >
-            <Trash2 size={12} />
-          </button>
-        </div>
-      </div>
-      <div className="truncate px-2 py-1.5 text-[11px] font-bold text-muted">{label}</div>
-    </div>
-  );
 }
 
 export default function ModelLibraryBoard({
@@ -167,10 +113,11 @@ export default function ModelLibraryBoard({
               </h3>
               <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-5">
                 {group.items.map(({ view, asset }) => (
-                  <AssetTile
+                  <AssetThumb
                     key={view.id}
                     label={view.label}
                     asset={asset}
+                    missingHint="库里还没有这个角度"
                     fileName={`${profile.name}-${view.label}${asset?.extension || ".jpg"}`}
                     onOpen={(picked) => setZoomed({ asset: picked, label: view.label })}
                     onDelete={onDelete}
@@ -188,7 +135,7 @@ export default function ModelLibraryBoard({
               </h3>
               <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-5">
                 {extras.map((asset) => (
-                  <AssetTile
+                  <AssetThumb
                     key={asset.id}
                     label={asset.sourceLabel || "未标注"}
                     asset={asset}

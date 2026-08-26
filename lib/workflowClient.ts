@@ -748,3 +748,23 @@ export async function deleteVideoProject(projectId: string): Promise<{ id: strin
     "项目删除失败"
   );
 }
+
+export interface IntentClientResult {
+  area: string;
+  reason: string;
+  /** 复述出来的「要做什么」，由调用方带进目标工具。 */
+  brief: string;
+  /** 原话里的链接，没有就是空串。 */
+  url: string;
+  usedFallback: boolean;
+  provider: string;
+}
+
+/** 首页输入框：把一句自然语言判成「去哪个区」。 */
+export async function routeIntent(text: string, signal?: AbortSignal): Promise<IntentClientResult> {
+  return workflowRequest<IntentClientResult>(
+    "/api/intent",
+    { method: "POST", signal, body: JSON.stringify({ text }) },
+    "没看懂这句话要做什么"
+  );
+}

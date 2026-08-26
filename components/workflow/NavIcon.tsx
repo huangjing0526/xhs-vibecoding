@@ -1,23 +1,7 @@
-import { BarChart3, Clapperboard, Eraser, Film, Flame, Images, Inbox, PenLine, Radar, Scissors, ShieldCheck } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-import type { WorkbenchAreaId } from "@/components/workflow/WorkbenchShell";
+import { AREAS, type AreaId } from "@/lib/capabilities";
 
-/** 侧栏导航图标，按区 id 收敛——新增区时类型层会强制补图标。 */
-const ICONS: Record<WorkbenchAreaId, LucideIcon> = {
-  workbench: PenLine,
-  library: Inbox,
-  images: Images,
-  video: Clapperboard,
-  videoFactory: Film,
-  quality: ShieldCheck,
-  review: BarChart3,
-  rewrite: Flame,
-  blogger: Radar,
-  extract: Scissors,
-  watermark: Eraser,
-};
-
-export default function NavIcon({ id, size = 17 }: { id: WorkbenchAreaId; size?: number }) {
-  const Icon = ICONS[id];
+/** 区图标的唯一出口：图标本身声明在能力目录里，新增区时类型层会强制补齐。 */
+export default function NavIcon({ id, size = 17 }: { id: AreaId; size?: number }) {
+  const Icon = AREAS[id].icon;
   return <Icon size={size} strokeWidth={1.9} aria-hidden="true" />;
 }

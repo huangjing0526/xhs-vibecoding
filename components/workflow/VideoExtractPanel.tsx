@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
@@ -24,6 +24,9 @@ interface VideoExtractPanelProps {
   onGoBlogger: () => void;
   /** 把结构骨架送进视频工厂，接着写自己的脚本 */
   onSendToVideoFactory: (skeleton: BenchmarkSkeleton) => void;
+  /** 首页那句话里抠出来的链接，进来即填进输入框 */
+  incomingUrl?: string | null;
+  onUrlConsumed?: () => void;
 }
 
 function formatDuration(sec: number): string {
@@ -157,10 +160,19 @@ export default function VideoExtractPanel({
   onSinkToDaoku,
   onGoBlogger,
   onSendToVideoFactory,
+  incomingUrl,
+  onUrlConsumed,
 }: VideoExtractPanelProps) {
   const [input, setInput] = useState("");
   const [result, setResult] = useState<VideoExtractResult | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
+
+  // 首页带来的链接直接填进去。输入框里已经有东西就不动——手上那条没拆完，不该被顶掉。
+  useEffect(() => {
+    if (!incomingUrl) return;
+    setInput((current) => current.trim() || incomingUrl);
+    onUrlConsumed?.();
+  }, [incomingUrl, onUrlConsumed]);
 
   const handleExtract = async () => {
     const text = input.trim();

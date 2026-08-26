@@ -47,6 +47,7 @@ import {
   BUILT_IN_IMAGE_TEMPLATES,
   groupModelProfiles,
   IMAGE_FACTORY_STORAGE_KEY,
+  loadCustomImageTemplates,
   type CliProviderStatus,
   type ImageCliProvider,
   type ImageFactoryTemplate,
@@ -92,17 +93,6 @@ interface ModelIdentity {
   traits: string;
 }
 
-function loadCustomTemplates(): ImageFactoryTemplate[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(localStorage.getItem(IMAGE_FACTORY_STORAGE_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.warn("[ImageFactory] 自建模板读取失败", { action: "imageFactory.loadTemplates", error });
-    return [];
-  }
-}
-
 /** 一次运行里的一个生成任务：一个产出类型 × 一个视角（没有视角的产出就是它自己）。 */
 interface GenerationJob {
   /** 唯一标识，同时当后端产物子目录名，多产出同跑时互不覆盖 */
@@ -126,7 +116,21 @@ function buildFileName(job: GenerationJob): string {
   return `${today}-${job.template.name}${viewPart}`;
 }
 
-export default function ImageFactory({ onUseAsCover }: { onUseAsCover?: (dataUrl: string) => void }) {
+export default function ImageFactory({
+  onUseAsCover,
+  incomingTemplateId,
+  onTemplateConsumed,
+  incomingBrief,
+  onBriefConsumed,
+}: {
+  onUseAsCover?: (dataUrl: string) => void;
+  /** 从模板目录点进来时带的模板 id，进来即选中它。 */
+  incomingTemplateId?: string | null;
+  onTemplateConsumed?: () => void;
+  /** 首页那句话判成「做图」时带过来的要求，填进当前产出的补充要求。 */
+  incomingBrief?: string | null;
+  onBriefConsumed?: () => void;
+}) {
   const tasks = useAbortableTasks();
   const [customTemplates, setCustomTemplates] = useState<ImageFactoryTemplate[]>([]);
   /** 当前 tab 的产出类型，永远参与本次生成 */
@@ -267,8 +271,24 @@ export default function ImageFactory({ onUseAsCover }: { onUseAsCover?: (dataUrl
     }
   }, [applyProviders]);
 
+  // 从模板目录带着一个模板进来：选中它，随即把入参交还给调用方，避免切走再回来又被强制选回去
   useEffect(() => {
-    setCustomTemplates(loadCustomTemplates());
+    if (!incomingTemplateId) return;
+    setActiveTemplateId(incomingTemplateId);
+    onTemplateConsumed?.();
+  }, [incomingTemplateId, onTemplateConsumed]);
+
+  // 首页带来的要求填进补充要求。已经写过的不覆盖——手打的永远比转述的准。
+  useEffect(() => {
+    if (!incomingBrief) return;
+    setPromptByTemplate((current) =>
+      current[activeTemplateId] ? current : { ...current, [activeTemplateId]: incomingBrief },
+    );
+    onBriefConsumed?.();
+  }, [incomingBrief, activeTemplateId, onBriefConsumed]);
+
+  useEffect(() => {
+    setCustomTemplates(loadCustomImageTemplates());
     setOutputDir(localStorage.getItem(OUTPUT_DIR_STORAGE_KEY) || "");
     try {
       const saved = JSON.parse(localStorage.getItem(ENGINE_STORAGE_KEY) || "{}");

@@ -1,8 +1,7 @@
 "use client";
 
-import Image from "next/image";
 import { Check } from "lucide-react";
-import TemplateThumb from "@/components/workflow/TemplateThumb";
+import TemplatePreview from "@/components/workflow/TemplatePreview";
 import { groupInOrder } from "@/lib/collections";
 import type { ImageFactoryTemplate } from "@/lib/imageFactory";
 
@@ -49,11 +48,7 @@ export default function ImageTemplateTabs({
                   }`}
                 >
                   <div className="relative aspect-[4/3] border-b border-line bg-soft">
-                    {template.preview ? (
-                      <Image src={template.preview} alt="" fill sizes="88px" className="object-cover" unoptimized />
-                    ) : (
-                      <TemplateThumb thumb={template.thumb} active={active} />
-                    )}
+                    <TemplatePreview template={template} sizes="88px" active={active} />
                     {queued && (
                       <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-brand-500 text-white">
                         <Check size={10} strokeWidth={3} />

@@ -76,6 +76,9 @@ interface VideoFactoryProps {
   /** 从「链接拆片」送过来的结构骨架；消费后由父级清空，避免切回来又灌一次。 */
   incomingSkeleton: BenchmarkSkeleton | null;
   onSkeletonConsumed: () => void;
+  /** 首页那句话判成「做视频」时带过来的要求，填进「这条视频讲什么」的主题 */
+  incomingTopic?: string | null;
+  onTopicConsumed?: () => void;
 }
 
 interface FrameCandidate {
@@ -252,7 +255,13 @@ function FramePicker({
   );
 }
 
-export default function VideoFactory({ onNotice, incomingSkeleton, onSkeletonConsumed }: VideoFactoryProps) {
+export default function VideoFactory({
+  onNotice,
+  incomingSkeleton,
+  onSkeletonConsumed,
+  incomingTopic,
+  onTopicConsumed,
+}: VideoFactoryProps) {
   const [project, setProject] = useState<VideoProject>(EMPTY_PROJECT);
   const [projects, setProjects] = useState<VideoProject[]>([]);
   const [step, setStep] = useState<VideoFactoryStepId>("source");
@@ -307,6 +316,18 @@ export default function VideoFactory({ onNotice, incomingSkeleton, onSkeletonCon
     onSkeletonConsumed();
     onNotice({ type: "success", message: "结构骨架已送进视频工厂，填一下你自己的选题" });
   }, [incomingSkeleton, onSkeletonConsumed, onNotice]);
+
+  // 首页带来的要求填进主题。已经填过的不覆盖，也不新开项目——它只是一句话，不值得顶掉手上那条。
+  useEffect(() => {
+    if (!incomingTopic) return;
+    setProject((current) =>
+      current.topic.topic.trim()
+        ? current
+        : { ...current, topic: { ...current.topic, topic: incomingTopic } },
+    );
+    setStep("source");
+    onTopicConsumed?.();
+  }, [incomingTopic, onTopicConsumed]);
 
   const refreshProviders = useCallback(async () => {
     setIsLoadingProviders(true);

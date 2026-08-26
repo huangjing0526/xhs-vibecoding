@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, Download, FileText, Plus, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowLeft, Download, FileText, Plus, RefreshCw, Sparkles, X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import CollapsiblePanel from "@/components/ui/CollapsiblePanel";
 import EmptyState from "@/components/ui/EmptyState";
@@ -21,11 +21,14 @@ import BloggerResearch from "@/components/workflow/BloggerResearch";
 import VideoExtractPanel from "@/components/workflow/VideoExtractPanel";
 import RewriteStudio from "@/components/workflow/RewriteStudio";
 import VideoStudio from "@/components/workflow/VideoStudio";
-import WorkbenchShell, {
-  type WorkbenchAreaId,
-  type WorkbenchNavGroup,
-  type WorkbenchNavItem,
-} from "@/components/workflow/WorkbenchShell";
+import WorkbenchShell from "@/components/workflow/WorkbenchShell";
+import AssetLibrary from "@/components/workflow/AssetLibrary";
+import CanvasPage from "@/components/workflow/CanvasPage";
+import GalleryPage from "@/components/workflow/GalleryPage";
+import HomeHub from "@/components/home/HomeHub";
+import { AREAS, COMMAND_AREAS, PLAIN_AREAS, type AreaId } from "@/lib/capabilities";
+import { pushRecent, readRecent, type RecentEntry } from "@/lib/recentUsed";
+import { ROUTABLE_AREAS } from "@/lib/intentRouting";
 import PageHeader from "@/components/workflow/PageHeader";
 import NoteList, { getNoteStatus } from "@/components/workflow/NoteList";
 import NoteEditor from "@/components/workflow/NoteEditor";
@@ -92,6 +95,7 @@ import {
   rewriteInline,
   saveTopic,
   syncWorkflowData,
+  routeIntent,
   type DeletableKind,
   type WorkflowBootstrapResult,
   type WorkflowMode,
@@ -106,37 +110,6 @@ import type { Notice } from "./types";
 // 对标博主道库选项：源自模块常量，全程不变，提到组件外避免每次渲染重建
 const DAOKU_OPTIONS = DEMO_BLOGGER_PROFILES.map((profile) => ({ bloggerId: profile.id, name: profile.name }));
 
-// 每个区的单一事实源（按 id 收敛）：所属分组、侧栏标签 / 副标题、页头副标题。
-// 侧栏导航与页头标题都从这里派生，杜绝「nav 标签 ≠ 页头标题」的漂移。
-// 分组按「用户做内容的流程」切，而非按工具类型：内容流程是顺着走的流水线，
-// AI 工具是随时可调、不打断主流程的能力。
-type AreaGroup = "内容流程" | "AI 工具";
-interface AreaDef {
-  /** 省略 = 侧栏置顶的独立入口，不归任何组。 */
-  group?: AreaGroup;
-  label: string;
-  hint?: string;
-  subtitle: string;
-}
-const AREAS: Record<WorkbenchAreaId, AreaDef> = {
-  workbench: { label: "工作台", hint: "写笔记 · 从选题到发布", subtitle: "选一篇笔记，从选题到发布一条龙" },
-  library: { group: "内容流程", label: "素材库", hint: "攒料 · 出选题", subtitle: "攒料、提炼、导入——所有选题的来源。" },
-  images: { group: "内容流程", label: "图片工厂", hint: "模特 · 电商图 · 封面", subtitle: "模特资产、电商图、封面底图——全部由本机 CLI 生成。" },
-  video: { group: "内容流程", label: "视频脚本", hint: "口播 · 分镜", subtitle: "把笔记转成口播 / 分镜视频脚本。" },
-  videoFactory: {
-    group: "内容流程",
-    label: "视频工厂",
-    hint: "改写 · 分镜 · 出片",
-    subtitle: "对标结构改写成自己的脚本，拆成分镜，再逐镜生成 AI 视频。",
-  },
-  quality: { group: "内容流程", label: "发布检查", hint: "质检 · 发布", subtitle: "发布前规则质检与兜底修复。" },
-  review: { group: "内容流程", label: "数据复盘", hint: "看数据 · 拿建议", subtitle: "已发布笔记的数据表现与改进建议。" },
-  rewrite: { group: "AI 工具", label: "爆款优化", subtitle: "对标道库改写，贴近爆款结构。" },
-  blogger: { group: "AI 工具", label: "对标拆解", subtitle: "拆解对标博主，沉淀可复用的道库。" },
-  extract: { group: "AI 工具", label: "链接拆片", subtitle: "粘抖音/小红书链接，提取视频 + 口播脚本并拆解结构。" },
-  watermark: { group: "AI 工具", label: "视频去水印", subtitle: "去掉 AI 生成视频的水印（豆包 / Gemini 等）。" },
-};
-
 /**
  * 图片工厂默认就是 AI 生图：产出类型在 ImageFactory 内部排成一排 tab，一眼看完能做哪些图。
  * 叠字排版是 AI 底图之后的下一环——中文标题交给 AI 画必糊，所以底图与文字层分开，
@@ -150,20 +123,27 @@ const TEXT_LAYER_TABS: Array<{ value: ImageMode; label: string; subtitle: string
 const TEXT_LAYER_OPTIONS = TEXT_LAYER_TABS.map(({ value, label }) => ({ value, label }));
 const AI_IMAGE_SUBTITLE = "上传素材、选产出类型与生成模型，用本机订阅 CLI 一次生成多张目标图。";
 
-// 侧栏导航，从 AREAS 派生：AREA_ORDER 是 Record 键的完整列表，
-// 新增区 id 时类型层会强制补 AREAS，从而保证它一定有导航入口。
-const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "images", "video", "videoFactory", "quality", "review", "rewrite", "blogger", "extract", "watermark"];
-const GROUP_ORDER: AreaGroup[] = ["内容流程", "AI 工具"];
-const toNavItem = (id: WorkbenchAreaId): WorkbenchNavItem => ({
-  id,
-  label: AREAS[id].label,
-  hint: AREAS[id].hint,
-});
-const NAV_LEAD_ITEMS: WorkbenchNavItem[] = AREA_ORDER.filter((id) => !AREAS[id].group).map(toNavItem);
-const NAV_GROUPS: WorkbenchNavGroup[] = GROUP_ORDER.map((title) => ({
-  title,
-  items: AREA_ORDER.filter((id) => AREAS[id].group === title).map(toNavItem),
-}));
+/**
+ * 从首页那句话带过来的要求。
+ * 目标工具只吃得下其中一部分（拆片只要链接、生图只要一句要求），剩下的原话留在页顶，
+ * 让人照着填——比丢掉它、或硬塞进不匹配的字段都诚实。
+ */
+function HandoffBanner({ brief, onDismiss }: { brief: string; onDismiss: () => void }) {
+  return (
+    <div className="flex items-start gap-2 rounded-2xl border border-brand-200 bg-brand-50 px-3.5 py-2.5">
+      <Sparkles size={14} className="mt-0.5 shrink-0 text-brand-500" aria-hidden="true" />
+      <p className="min-w-0 flex-1 text-xs font-semibold leading-5 text-ink">本次要求：{brief}</p>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="shrink-0 rounded-lg p-1 text-faint transition-colors hover:text-ink"
+        aria-label="关掉这条要求"
+      >
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
 
 // 单页工具区统一的滚动容器：软色画布 + 居中定宽，让区内的白卡浮起来
 function ToolScroll({ children }: { children: ReactNode }) {
@@ -175,7 +155,7 @@ function ToolScroll({ children }: { children: ReactNode }) {
 }
 
 // 工具页的「当前笔记」上下文条：工具页脱离了三栏，用它提示正在处理哪篇
-function NoteContextBar({ note, onGoWorkbench }: { note: ContentCard | null; onGoWorkbench: () => void }) {
+function NoteContextBar({ note, onGoProjects }: { note: ContentCard | null; onGoProjects: () => void }) {
   return (
     <div className="flex items-center gap-2 rounded-2xl border border-line bg-surface px-4 py-2.5 text-xs shadow-card">
       <span className="shrink-0 font-bold text-faint">当前笔记</span>
@@ -184,7 +164,7 @@ function NoteContextBar({ note, onGoWorkbench }: { note: ContentCard | null; onG
       </span>
       <button
         type="button"
-        onClick={onGoWorkbench}
+        onClick={onGoProjects}
         className="ml-auto shrink-0 rounded-lg px-1.5 font-bold text-brand-500 transition-colors hover:text-brand-600"
       >
         切换
@@ -194,14 +174,14 @@ function NoteContextBar({ note, onGoWorkbench }: { note: ContentCard | null; onG
 }
 
 // 工具页无笔记时的空态：把用户引回工作台选一篇
-function EmptyNote({ hint, onGoWorkbench }: { hint: string; onGoWorkbench: () => void }) {
+function EmptyNote({ hint, onGoProjects }: { hint: string; onGoProjects: () => void }) {
   return (
     <EmptyState
       icon={<FileText size={22} />}
       title={hint}
       action={
-        <Button variant="primary" onClick={onGoWorkbench}>
-          去工作台选笔记
+        <Button variant="primary" onClick={onGoProjects}>
+          去项目页选笔记
         </Button>
       }
     />
@@ -216,10 +196,10 @@ function ToolPage({
   subtitle,
   ready = true,
   emptyHint,
-  onGoWorkbench,
+  onGoProjects,
   children,
 }: {
-  area: WorkbenchAreaId;
+  area: AreaId;
   /** 传入则显示「当前笔记」上下文条；对标拆解这类与具体笔记无关的页不传。 */
   note?: ContentCard | null;
   /** 覆写页头副标题；分段切换的区（图片工厂）按当前段换文案。 */
@@ -227,7 +207,7 @@ function ToolPage({
   /** false 时显示空态而非 children（缺笔记 / 缺草稿）。 */
   ready?: boolean;
   emptyHint?: string;
-  onGoWorkbench: () => void;
+  onGoProjects: () => void;
   children: ReactNode;
 }) {
   const meta = AREAS[area];
@@ -236,9 +216,9 @@ function ToolPage({
       <PageHeader
         title={meta.label}
         subtitle={subtitle || meta.subtitle}
-        meta={note !== undefined ? <NoteContextBar note={note} onGoWorkbench={onGoWorkbench} /> : undefined}
+        meta={note !== undefined ? <NoteContextBar note={note} onGoProjects={onGoProjects} /> : undefined}
       />
-      {ready ? children : <EmptyNote hint={emptyHint || ""} onGoWorkbench={onGoWorkbench} />}
+      {ready ? children : <EmptyNote hint={emptyHint || ""} onGoProjects={onGoProjects} />}
     </ToolScroll>
   );
 }
@@ -324,8 +304,18 @@ export default function WorkflowDashboard() {
   const [contentImageTemplate, setContentImageTemplate] = useState<ContentImageTemplateType>("flowchart");
   const [contentImagePlan, setContentImagePlan] = useState<ContentImagePlan | null>(null);
   const [review, setReview] = useState<ReviewResult | null>(null);
-  // 当前工作区，默认落地工作台；可选值见 WorkbenchAreaId
-  const [area, setArea] = useState<WorkbenchAreaId>("workbench");
+  // 当前工作区，默认落地首页；可选值见 lib/capabilities 的 AreaId
+  const [area, setArea] = useState<AreaId>("home");
+  // 从模板目录带进图片工厂的模板，工厂接住后立刻清空——否则来回切区会重复选回去
+  const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null);
+  const [recent, setRecent] = useState<RecentEntry[]>([]);
+  const [isRoutingIntent, setIsRoutingIntent] = useState(false);
+  // 首页那句话的三份去处：横幅给人看，另外两个是目标工具真正吃得下的起手参数。
+  // 各自独立而不是塞一个对象，是因为消费者不同、清空时机也不同（谁接住谁清）。
+  const [handoff, setHandoff] = useState<{ area: AreaId; brief: string } | null>(null);
+  const [pendingExtractUrl, setPendingExtractUrl] = useState<string | null>(null);
+  const [pendingImageBrief, setPendingImageBrief] = useState<string | null>(null);
+  const [pendingVideoTopic, setPendingVideoTopic] = useState<string | null>(null);
   const [bloggerDistillation, setBloggerDistillation] = useState<BloggerDistillation | null>(null);
   // 拆片页送往视频工厂的结构骨架，视频工厂接住后立刻清空——否则来回切区会重复灌一次
   const [videoSkeleton, setVideoSkeleton] = useState<BenchmarkSkeleton | null>(null);
@@ -434,7 +424,7 @@ export default function WorkflowDashboard() {
   const handleUseDemo = useCallback(() => {
     setWorkflowMode("demo");
     applySnapshot(DEMO_SNAPSHOT, DEMO_SELECTED_MATERIAL_IDS);
-    setArea("workbench");
+    setArea("projects");
     setCoverPlan(null);
     setCoverDataUrl("");
     setImageTab("cover");
@@ -447,7 +437,7 @@ export default function WorkflowDashboard() {
     const nextSnapshot = createMarkdownDemoSnapshot(markdown);
     setWorkflowMode("demo");
     applySnapshot(nextSnapshot, [nextSnapshot.materials[0]?.recordId || ""]);
-    setArea("workbench");
+    setArea("projects");
     setCoverPlan(null);
     setCoverDataUrl("");
     setImageTab("content");
@@ -751,7 +741,7 @@ export default function WorkflowDashboard() {
       }));
       setSelectedTopic(result.cards[0] || null);
       setSelectedDraft(null);
-      setArea("workbench");
+      setArea("note");
       setNotice({
         type: "success",
         message: shouldWriteBack ? "已基于已选素材生成选题，并写回飞书" : "已基于 Demo 素材生成选题",
@@ -1064,6 +1054,61 @@ export default function WorkflowDashboard() {
     setContentImageDataUrl("");
   }, [usableDrafts]);
 
+  // 「最近使用」是本机偏好，挂载后再读，避免服务端渲染时读 localStorage
+  useEffect(() => {
+    setRecent(readRecent());
+  }, []);
+
+  // 打开一个区并记一笔「最近使用」。结构页（首页/目录/项目）不算「用过一个工具」，不记。
+  const openArea = useCallback((id: AreaId) => {
+    setArea(id);
+    if (AREAS[id].category) setRecent(pushRecent("area", id));
+  }, []);
+
+  // 从模板目录点一个模板：带着它落进图片工厂的 AI 生图段
+  const openTemplate = useCallback((templateId: string) => {
+    setPendingTemplateId(templateId);
+    setImageTab("ai");
+    setArea("images");
+    setRecent(pushRecent("template", templateId));
+  }, []);
+
+  // 打开一篇笔记：选中它并进详情页，列表与详情是两级，选中即跳转
+  const openNote = useCallback(
+    (topic: ContentCard) => {
+      handleSelectNote(topic);
+      setArea("note");
+    },
+    [handleSelectNote],
+  );
+
+  // 首页输入框：一句话判去哪个区。后端判不出来时已回落到关键词规则，这里只兜「回了个不认识的区」。
+  const handleRouteIntent = useCallback(
+    async (text: string) => {
+      setIsRoutingIntent(true);
+      try {
+        const result = await routeIntent(text);
+        const target = ROUTABLE_AREAS.find((id) => id === result.area);
+        if (!target) {
+          setNotice({ type: "error", message: "没看懂这句话要做什么，换个说法或从下面挑一个入口" });
+          return;
+        }
+        openArea(target);
+        setHandoff({ area: target, brief: result.brief });
+        // 只把目标工具真接得住的那一样递过去，接不住的不硬塞
+        if (target === "extract" && result.url) setPendingExtractUrl(result.url);
+        if (target === "images") setPendingImageBrief(result.brief);
+        if (target === "videoFactory") setPendingVideoTopic(result.brief);
+        setNotice({ type: "success", message: `${result.reason}，已打开「${AREAS[target].label}」` });
+      } catch (error) {
+        setFriendlyError("意图识别", error);
+      } finally {
+        setIsRoutingIntent(false);
+      }
+    },
+    [openArea, setFriendlyError, setNotice],
+  );
+
   const boundDaokuName = DAOKU_OPTIONS.find(
     (option) => option.bloggerId === topicDaokuMap[selectedTopic?.topicId || ""]
   )?.name;
@@ -1089,14 +1134,14 @@ export default function WorkflowDashboard() {
 
   // ⌘K 命令表：分区跳转 + 笔记切换 + 高频动作，全部收在一个入口
   const commands: Command[] = useMemo(() => {
-    const areaCommands: Command[] = AREA_ORDER.map((id) => ({
+    const areaCommands: Command[] = COMMAND_AREAS.map((id) => ({
       id: `area-${id}`,
       group: "跳转",
       label: AREAS[id].label,
       hint: AREAS[id].hint,
       keywords: AREAS[id].subtitle,
       icon: <NavIcon id={id} size={15} />,
-      run: () => setArea(id),
+      run: () => openArea(id),
     }));
 
     const noteCommands: Command[] = usableTopics.slice(0, 30).map((topic) => ({
@@ -1106,10 +1151,7 @@ export default function WorkflowDashboard() {
       hint: getNoteStatus(topic, usableDrafts),
       keywords: topic.painPoint,
       icon: <FileText size={15} />,
-      run: () => {
-        handleSelectNote(topic);
-        setArea("workbench");
-      },
+      run: () => openNote(topic),
     }));
 
     const actionCommands: Command[] = [
@@ -1136,10 +1178,10 @@ export default function WorkflowDashboard() {
         run: () => {
           if (!selectedTopic) {
             setNotice({ type: "error", message: "先选一篇笔记再生成草稿" });
-            setArea("workbench");
+            setArea("projects");
             return;
           }
-          setArea("workbench");
+          setArea("note");
           handleGenerateDraft();
         },
       },
@@ -1159,9 +1201,10 @@ export default function WorkflowDashboard() {
   }, [
     handleGenerateCover,
     handleGenerateDraft,
-    handleSelectNote,
     loadSnapshot,
+    openArea,
     openCover,
+    openNote,
     selectedTopic,
     setNotice,
     usableDrafts,
@@ -1173,135 +1216,180 @@ export default function WorkflowDashboard() {
     <>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} />
       <WorkbenchShell
-        leadItems={NAV_LEAD_ITEMS}
-        groups={NAV_GROUPS}
         area={area}
-        onAreaChange={setArea}
+        onAreaChange={openArea}
+        onCreate={() => setAddingTopic(true)}
         workflowMode={workflowMode}
         aiProvider={bootstrapConfig?.aiProvider ?? null}
         syncing={isSyncing}
         syncLabel={workflowMode === "demo" ? "重载 Demo" : "同步飞书"}
         onSync={loadSnapshot}
         onOpenCommandPalette={() => setPaletteOpen(true)}
+        plain={PLAIN_AREAS.includes(area)}
+        banner={
+          handoff?.area === area ? (
+            <HandoffBanner brief={handoff.brief} onDismiss={() => setHandoff(null)} />
+          ) : null
+        }
       >
-        {area === "workbench" && (
+        {area === "home" && (
+          <HomeHub
+            onOpenArea={openArea}
+            onOpenTemplate={openTemplate}
+            onSubmitIntent={handleRouteIntent}
+            intentPending={isRoutingIntent}
+          />
+        )}
+
+        {(area === "tools" || area === "templates") && (
+          <GalleryPage
+            kind={area}
+            recent={recent}
+            onOpenArea={openArea}
+            onOpenTemplate={openTemplate}
+          />
+        )}
+
+        {area === "assets" && (
+          <CanvasPage title={AREAS.assets.label} subtitle={AREAS.assets.subtitle}>
+            <AssetLibrary onNotice={setNotice} />
+          </CanvasPage>
+        )}
+
+        {area === "projects" && (
+          <NoteList
+            variant="page"
+            notes={usableTopics}
+            drafts={usableDrafts}
+            selectedTopicId={selectedTopic?.topicId ?? null}
+            onSelect={openNote}
+            onNew={() => setAddingTopic(true)}
+            onGenerateFromMaterials={() => openArea("library")}
+          />
+        )}
+
+        {area === "note" && (
           <div className="flex h-full flex-col">
             <div className="shrink-0 border-b border-line bg-surface px-4 py-3 md:px-6">
-              <PageHeader
-                variant="bar"
-                title={AREAS.workbench.label}
-                subtitle={
-                  selectedTopic
-                    ? selectedTopic.titleCandidates[0] || selectedTopic.coreViewpoint
-                    : AREAS.workbench.subtitle
-                }
-                action={
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={() => setAddingTopic(true)}
-                    icon={<Plus size={14} strokeWidth={2.6} />}
-                  >
-                    新建笔记
-                  </Button>
-                }
-              />
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setArea("projects")}
+                  icon={<ArrowLeft size={15} />}
+                >
+                  项目
+                </Button>
+                <div className="min-w-0 flex-1">
+                  <PageHeader
+                    variant="bar"
+                    title={AREAS.note.label}
+                    subtitle={
+                      selectedTopic
+                        ? selectedTopic.titleCandidates[0] || selectedTopic.coreViewpoint
+                        : AREAS.note.subtitle
+                    }
+                    action={
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => setAddingTopic(true)}
+                        icon={<Plus size={14} strokeWidth={2.6} />}
+                      >
+                        新建笔记
+                      </Button>
+                    }
+                  />
+                </div>
+              </div>
               {selectedTopic && (
                 <div className="mt-3 overflow-x-auto pb-0.5">
                   <PipelineRail steps={pipelineSteps} />
                 </div>
               )}
             </div>
-            <div className="flex min-h-0 flex-1">
-              <div className="hidden w-72 shrink-0 border-r border-line md:block">
-                <NoteList
-                  notes={usableTopics}
-                  drafts={usableDrafts}
-                  selectedTopicId={selectedTopic?.topicId ?? null}
-                  onSelect={handleSelectNote}
-                  onNew={() => setAddingTopic(true)}
-                  onGenerateFromMaterials={() => setArea("library")}
-                />
+            {selectedTopic || selectedDraft ? (
+              <div className="flex min-h-0 flex-1">
+                <div className="min-w-0 flex-1">
+                  <NoteEditor
+                    selectedTopic={selectedTopic}
+                    selectedDraft={selectedDraft}
+                    boundDaokuName={boundDaokuName}
+                    isGenerating={isGeneratingDrafts}
+                    isSaving={isSavingDraft}
+                    onGenerateDraft={handleGenerateDraft}
+                    onCancelGenerate={() => tasks.cancel("drafts")}
+                    onInlineRewrite={handleInlineRewrite}
+                    onCancelInlineRewrite={() => tasks.cancel("inlineRewrite")}
+                    isRewriting={isRewritingInline}
+                    onSaveDraft={handleSaveDraft}
+                    onOpenRewrite={() => openArea("rewrite")}
+                  />
+                </div>
+                <div className="hidden w-80 shrink-0 border-l border-line lg:block">
+                  <NoteInspector
+                    topic={selectedTopic}
+                    draft={selectedDraft}
+                    onEditTopic={() => selectedTopic && handleEditTopic(selectedTopic)}
+                    onDeleteTopic={() => selectedTopic && handleDeleteTopic(selectedTopic)}
+                    sourceSummary={selectedTopic?.sourceMaterial || ""}
+                    onOpenLibrary={() => openArea("library")}
+                    daokuOptions={DAOKU_OPTIONS}
+                    topicDaokuMap={topicDaokuMap}
+                    onBindDaoku={handleBindDaoku}
+                    bloggerReady={bloggerReady}
+                    onOpenBlogger={() => openArea("blogger")}
+                    coverDataUrl={coverDataUrl}
+                    onOpenCover={openCover}
+                    videoReady={videoReady}
+                    onOpenVideo={() => openArea("video")}
+                    quality={qualityResult}
+                    onOpenQuality={() => openArea("quality")}
+                    onPublish={() => {
+                      if (selectedDraft) handlePublishDraft(selectedDraft);
+                    }}
+                    publishing={isPublishingDraft}
+                  />
+                </div>
               </div>
-              <div className="min-w-0 flex-1">
-                <NoteEditor
-                  selectedTopic={selectedTopic}
-                  selectedDraft={selectedDraft}
-                  boundDaokuName={boundDaokuName}
-                  isGenerating={isGeneratingDrafts}
-                  isSaving={isSavingDraft}
-                  onGenerateDraft={handleGenerateDraft}
-                  onCancelGenerate={() => tasks.cancel("drafts")}
-                  onInlineRewrite={handleInlineRewrite}
-                  onCancelInlineRewrite={() => tasks.cancel("inlineRewrite")}
-                  isRewriting={isRewritingInline}
-                  onSaveDraft={handleSaveDraft}
-                  onOpenRewrite={() => setArea("rewrite")}
-                />
-              </div>
-              <div className="hidden w-80 shrink-0 border-l border-line lg:block">
-                <NoteInspector
-                  topic={selectedTopic}
-                  draft={selectedDraft}
-                  onEditTopic={() => selectedTopic && handleEditTopic(selectedTopic)}
-                  onDeleteTopic={() => selectedTopic && handleDeleteTopic(selectedTopic)}
-                  sourceSummary={selectedTopic?.sourceMaterial || ""}
-                  onOpenLibrary={() => setArea("library")}
-                  daokuOptions={DAOKU_OPTIONS}
-                  topicDaokuMap={topicDaokuMap}
-                  onBindDaoku={handleBindDaoku}
-                  bloggerReady={bloggerReady}
-                  onOpenBlogger={() => setArea("blogger")}
-                  coverDataUrl={coverDataUrl}
-                  onOpenCover={openCover}
-                  videoReady={videoReady}
-                  onOpenVideo={() => setArea("video")}
-                  quality={qualityResult}
-                  onOpenQuality={() => setArea("quality")}
-                  onPublish={() => {
-                    if (selectedDraft) handlePublishDraft(selectedDraft);
-                  }}
-                  publishing={isPublishingDraft}
-                />
-              </div>
-            </div>
+            ) : (
+              <EmptyNote hint="还没选中笔记" onGoProjects={() => setArea("projects")} />
+            )}
           </div>
         )}
 
         {area === "library" && (
-          <ToolScroll>
-            <PageHeader
-              title={AREAS.library.label}
-              subtitle={AREAS.library.subtitle}
-              action={
-                <div className="flex items-center gap-2">
-                  {isGeneratingTopics && (
-                    <Button variant="ghost" size="lg" onClick={() => tasks.cancel("topics")}>
-                      取消
-                    </Button>
-                  )}
-                  <Button
-                    variant="ai"
-                    size="lg"
-                    onClick={() => handleGenerateTopics()}
-                    disabled={selectedMaterials.length === 0}
-                    loading={isGeneratingTopics}
-                    icon={<Sparkles size={16} />}
-                  >
-                    {isGeneratingTopics ? "生成中" : `生成选题（${selectedMaterials.length}）`}
+          <CanvasPage
+            title={AREAS.library.label}
+            subtitle={AREAS.library.subtitle}
+            action={
+              <div className="flex items-center gap-2">
+                {isGeneratingTopics && (
+                  <Button variant="ghost" onClick={() => tasks.cancel("topics")}>
+                    取消
                   </Button>
-                </div>
-              }
-            />
-            <div className="space-y-3">
+                )}
+                <Button
+                  variant="ai"
+                  onClick={() => handleGenerateTopics()}
+                  disabled={selectedMaterials.length === 0}
+                  loading={isGeneratingTopics}
+                  icon={<Sparkles size={16} />}
+                >
+                  {isGeneratingTopics ? "生成中" : `生成选题（${selectedMaterials.length}）`}
+                </Button>
+              </div>
+            }
+          >
+            <div className="mt-6 space-y-3">
               <WorkflowOnboarding
                 mode={workflowMode}
                 config={bootstrapConfig}
                 onUseDemo={handleUseDemo}
                 onLoadMarkdown={handleLoadMarkdownDemo}
                 onConnectFeishu={handleConnectFeishu}
-                onOpenSource={() => setArea("workbench")}
-                onDismiss={() => setArea("workbench")}
+                onOpenSource={() => setArea("projects")}
+                onDismiss={() => setArea("projects")}
               />
               <CollapsiblePanel title="录入与提炼" hint="线索采集、选题池、本地文档——三选一导入">
                 <div className="space-y-3 p-5">
@@ -1360,7 +1448,7 @@ export default function WorkflowDashboard() {
                 onNotice={setNotice}
               />
             </div>
-          </ToolScroll>
+          </CanvasPage>
         )}
 
         {area === "review" && (
@@ -1386,7 +1474,7 @@ export default function WorkflowDashboard() {
                 ? AI_IMAGE_SUBTITLE
                 : TEXT_LAYER_TABS.find((tab) => tab.value === imageTab)?.subtitle
             }
-            onGoWorkbench={() => setArea("workbench")}
+            onGoProjects={() => setArea("projects")}
           >
             {imageTab !== "ai" && (
               <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -1403,6 +1491,10 @@ export default function WorkflowDashboard() {
             )}
             {imageTab === "ai" ? (
               <ImageFactory
+                incomingTemplateId={pendingTemplateId}
+                onTemplateConsumed={() => setPendingTemplateId(null)}
+                incomingBrief={pendingImageBrief}
+                onBriefConsumed={() => setPendingImageBrief(null)}
                 onUseAsCover={(dataUrl) => {
                   // AI 只出底图，标题仍由本地排版叠上去：底图直接落进封面配置的背景位
                   setCoverConfig((current) => ({ ...current, backgroundImage: dataUrl }));
@@ -1462,7 +1554,7 @@ export default function WorkflowDashboard() {
             note={selectedTopic}
             ready={Boolean(selectedTopic || selectedDraft)}
             emptyHint="做视频前，先在工作台选一篇笔记。"
-            onGoWorkbench={() => setArea("workbench")}
+            onGoProjects={() => setArea("projects")}
           >
             <VideoStudio
               selectedTopic={selectedTopic}
@@ -1481,7 +1573,7 @@ export default function WorkflowDashboard() {
             note={selectedTopic}
             ready={Boolean(selectedTopic || selectedDraft)}
             emptyHint="改写前，先在工作台选一篇笔记。"
-            onGoWorkbench={() => setArea("workbench")}
+            onGoProjects={() => setArea("projects")}
           >
             <RewriteStudio
               selectedTopic={selectedTopic}
@@ -1493,7 +1585,7 @@ export default function WorkflowDashboard() {
         )}
 
         {area === "blogger" && (
-          <ToolPage area="blogger" onGoWorkbench={() => setArea("workbench")}>
+          <ToolPage area="blogger" onGoProjects={() => setArea("projects")}>
             <BloggerResearch
               selectedDistillation={bloggerDistillation}
               onDistillationChange={setBloggerDistillation}
@@ -1502,19 +1594,23 @@ export default function WorkflowDashboard() {
         )}
 
         {area === "videoFactory" && (
-          <ToolPage area="videoFactory" onGoWorkbench={() => setArea("workbench")}>
+          <ToolPage area="videoFactory" onGoProjects={() => setArea("projects")}>
             <VideoFactory
               onNotice={setNotice}
               incomingSkeleton={videoSkeleton}
               onSkeletonConsumed={() => setVideoSkeleton(null)}
+              incomingTopic={pendingVideoTopic}
+              onTopicConsumed={() => setPendingVideoTopic(null)}
             />
           </ToolPage>
         )}
 
         {area === "extract" && (
-          <ToolPage area="extract" onGoWorkbench={() => setArea("workbench")}>
+          <ToolPage area="extract" onGoProjects={() => setArea("projects")}>
             <VideoExtractPanel
               onNotice={setNotice}
+              incomingUrl={pendingExtractUrl}
+              onUrlConsumed={() => setPendingExtractUrl(null)}
               onSinkToDaoku={setBloggerDistillation}
               onGoBlogger={() => setArea("blogger")}
               onSendToVideoFactory={(skeleton) => {
@@ -1526,7 +1622,7 @@ export default function WorkflowDashboard() {
         )}
 
         {area === "watermark" && (
-          <ToolPage area="watermark" onGoWorkbench={() => setArea("workbench")}>
+          <ToolPage area="watermark" onGoProjects={() => setArea("projects")}>
             <WatermarkStudio />
           </ToolPage>
         )}
@@ -1537,7 +1633,7 @@ export default function WorkflowDashboard() {
             note={selectedTopic}
             ready={Boolean(selectedDraft)}
             emptyHint="质检需要一篇草稿，先在工作台生成草稿。"
-            onGoWorkbench={() => setArea("workbench")}
+            onGoProjects={() => setArea("projects")}
           >
             <QualityGate
               result={qualityResult}

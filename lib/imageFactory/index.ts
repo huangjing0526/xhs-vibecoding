@@ -18,3 +18,18 @@ export const BUILT_IN_IMAGE_TEMPLATES: ImageFactoryTemplate[] = [
 ];
 
 export const IMAGE_FACTORY_STORAGE_KEY = "vibenote.image-factory.templates.v1";
+
+/**
+ * 自建模板存在本机浏览器里。图片工厂与模板目录都要读它，
+ * 各写一份必然漂移，所以读取收在这里，两边共用。
+ */
+export function loadCustomImageTemplates(): ImageFactoryTemplate[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(IMAGE_FACTORY_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn("[ImageFactory] 自建模板读取失败", { action: "imageFactory.loadTemplates", error });
+    return [];
+  }
+}
