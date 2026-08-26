@@ -10,13 +10,10 @@ import {
   ImagePlus,
   Layers,
   Loader2,
-  Maximize2,
   Pencil,
-  Plus,
   Sparkles,
   Trash2,
   Type,
-  UserRound,
   X,
 } from "lucide-react";
 import Badge from "@/components/ui/Badge";
@@ -25,34 +22,31 @@ import Callout from "@/components/ui/Callout";
 import Card from "@/components/ui/Card";
 import DirectoryField from "@/components/workflow/DirectoryField";
 import ImageEngineCard from "@/components/workflow/ImageEngineCard";
-import ImageTemplateList from "@/components/workflow/ImageTemplateList";
 import TemplateSpecCard from "@/components/workflow/TemplateSpecCard";
-import SegmentedControl from "@/components/workflow/SegmentedControl";
-import TemplateThumb from "@/components/workflow/TemplateThumb";
-import ModelLibraryBoard from "@/components/workflow/ModelLibraryBoard";
-import ModelLibraryPicker, { type ModelPick } from "@/components/workflow/ModelLibraryPicker";
-import ModelTemplateStrip from "@/components/workflow/ModelTemplateStrip";
 import TemplateEditor, { PreviewLightbox } from "@/components/workflow/ImageTemplateEditor";
 import { useAbortableTasks } from "@/components/workflow/useAbortableTasks";
 import { groupInOrder } from "@/lib/collections";
 import { downloadImageAsset } from "@/lib/imageWorkflow";
 import {
-  deleteModelAsset,
+  loadProviders,
+  pickUsableProvider,
+  readEnginePreference,
+  writeEnginePreference,
+} from "@/lib/enginePreference";
+import {
   generateImage,
-  getImageProviders,
   isAbortError,
-  listModelAssets,
   saveGeneratedImage,
   saveLibraryAssets,
 } from "@/lib/workflowClient";
 import {
   aspectRatioStyle,
   BUILT_IN_IMAGE_TEMPLATES,
-  CUSTOM_TEMPLATE_CATEGORY,
-  groupModelProfiles,
-  IMAGE_FACTORY_STORAGE_KEY,
+  deleteCustomImageTemplate,
+  imageTemplateCategories,
   LIBRARY_COPY,
   loadCustomImageTemplates,
+  saveCustomImageTemplate,
   type CliProviderStatus,
   type ImageCliProvider,
   type ImageFactoryTemplate,
@@ -60,26 +54,10 @@ import {
   type ImageTemplateSlot,
   type ImageTemplateView,
   type LibraryKind,
-  type ModelAssetEntry,
-  type ModelProfile,
 } from "@/lib/imageFactory";
 
 const GENERATE_TASK_KEY = "imageFactory.generate";
 const OUTPUT_DIR_STORAGE_KEY = "vibenote.image-factory.output-dir.v1";
-const ENGINE_STORAGE_KEY = "vibenote.image-factory.engine.v1";
-
-/** 模特库里的图存在服务端，塞回上传槽位前先取回来包成 File，走的还是同一条 multipart 链路。 */
-async function modelAssetToFile(entry: ModelAssetEntry): Promise<File> {
-  const blob = await (await fetch(entry.imageUrl)).blob();
-  return new File([blob], `model-${entry.id}${entry.extension}`, { type: blob.type || "image/png" });
-}
-
-/**
- * CLI 状态检查要 spawn 好几个子进程，代价不小；而它在一次会话里几乎不变。
- * 切换产出类型会反复重渲染本组件，用一份模块级短缓存挡住重复探测，手动刷新仍然直连。
- */
-const PROVIDER_CACHE_TTL_MS = 60_000;
-let providerCache: { at: number; providers: CliProviderStatus[] } | null = null;
 
 /** 入库默认名：同一次运行出的多张图归到同一个主体名下，主体叫什么按库走。 */
 function defaultAssetName(kind: LibraryKind): string {
@@ -91,12 +69,6 @@ interface SelectedInput {
   slotId: string;
   file: File;
   previewUrl: string;
-}
-
-/** 选中的模特身份：图 + 描述一起交给后端，跨产出跨场景才是同一个人。 */
-interface ModelIdentity {
-  name: string;
-  traits: string;
 }
 
 /** 一次运行里的一个生成任务：一个产出类型 × 一个视角（没有视角的产出就是它自己）。 */
@@ -126,6 +98,7 @@ export default function ImageFactory({
   onUseAsCover,
   incomingTemplateId,
   onTemplateConsumed,
+  onBackToTemplates,
   incomingBrief,
   onBriefConsumed,
 }: {
@@ -133,23 +106,18 @@ export default function ImageFactory({
   /** 从模板目录点进来时带的模板 id，进来即选中它。 */
   incomingTemplateId?: string | null;
   onTemplateConsumed?: () => void;
+  /** 回模板目录换一个模板——这里不再自带目录，挑模板只有那一处。 */
+  onBackToTemplates: () => void;
   /** 首页那句话判成「做图」时带过来的要求，填进当前产出的补充要求。 */
   incomingBrief?: string | null;
   onBriefConsumed?: () => void;
 }) {
   const tasks = useAbortableTasks();
   const [customTemplates, setCustomTemplates] = useState<ImageFactoryTemplate[]>([]);
-  /**
-   * 列表 ⇄ 详情两级：进来先看「能做哪些图」，点一张才进配置。
-   * 17 个模板平铺在一条横滚 tab 里挑不动，配置区又长，两件事挤一屏只会互相打架。
-   */
-  const [view, setView] = useState<"list" | "detail">("list");
-  /** 详情页正在配的产出类型，永远参与本次生成 */
+  /** 正在配的产出类型，永远参与本次生成。挑哪个模板由模板目录决定，这里只管跑。 */
   const [activeTemplateId, setActiveTemplateId] = useState(BUILT_IN_IMAGE_TEMPLATES[0].id);
   /** 额外加入本次批次的产出，配好一种就攒一种，最后一起跑 */
   const [batchIds, setBatchIds] = useState<string[]>([]);
-  /** libraryFirst 的产出分两条路：直接用库里现成的，或者上传参考图生成 */
-  const [assetMode, setAssetMode] = useState<"library" | "generate">("library");
   const [selectedInputs, setSelectedInputs] = useState<Record<string, SelectedInput>>({});
   /** 产出 -> 勾选的视图；没记录过的视为全选，省掉一次初始化 */
   const [viewPicks, setViewPicks] = useState<Record<string, string[]>>({});
@@ -169,13 +137,6 @@ export default function ImageFactory({
   const [editingTemplate, setEditingTemplate] = useState<ImageFactoryTemplate | null>(null);
   const [previewTemplate, setPreviewTemplate] = useState<ImageFactoryTemplate | null>(null);
   const [outputDir, setOutputDir] = useState("");
-  const [modelAssets, setModelAssets] = useState<ModelAssetEntry[]>([]);
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
-  const [modelsLoaded, setModelsLoaded] = useState(false);
-  /** 正在为哪个槽位挑模特；null 表示选择器关着 */
-  const [pickingSlot, setPickingSlot] = useState<ImageTemplateSlot | null>(null);
-  /** 从库里选中的那位模特，生成时随图一起发给后端 */
-  const [modelIdentity, setModelIdentity] = useState<ModelIdentity | null>(null);
   /**
    * 入库的名称与特征描述按库各存一份。
    * 一个批次里可能同时跑出模特图和商品图，两边共用一个输入框的话，
@@ -189,11 +150,14 @@ export default function ImageFactory({
 
   const templates = useMemo(() => [...BUILT_IN_IMAGE_TEMPLATES, ...customTemplates], [customTemplates]);
   const activeTemplate = templates.find((item) => item.id === activeTemplateId) || templates[0];
-  /** 本次要跑的产出：当前 tab + 攒在批次里的，按模板表顺序排，结果区顺序才稳定 */
-  const runTemplates = useMemo(
-    () => templates.filter((item) => item.id === activeTemplate?.id || batchIds.includes(item.id)),
-    [templates, activeTemplate?.id, batchIds],
+  /** 「这一批要跑它吗」只有这一条判据，下面两个列表都从它派生，免得反面写错。 */
+  const inRun = useCallback(
+    (template: ImageFactoryTemplate) => template.id === activeTemplate?.id || batchIds.includes(template.id),
+    [activeTemplate?.id, batchIds],
   );
+
+  /** 本次要跑的产出：当前 tab + 攒在批次里的，按模板表顺序排，结果区顺序才稳定 */
+  const runTemplates = useMemo(() => templates.filter(inRun), [templates, inRun]);
 
   const pickedViews = useCallback(
     (template: ImageFactoryTemplate) => {
@@ -229,9 +193,6 @@ export default function ImageFactory({
 
   // 每次渲染都新建一个空数组的话，下面按它分组的 useMemo 等于没缓存
   const activeViews = useMemo(() => activeTemplate?.views || [], [activeTemplate]);
-  /** 当前这批产出里要不要选模特；有就把模特库摆到台面上，而不是藏在弹窗后面 */
-  const modelSlot = activeSlots.find((slot) => slot.fromModelLibrary) || null;
-  const modelProfiles = useMemo(() => groupModelProfiles(modelAssets), [modelAssets]);
   const viewGroups = useMemo(() => groupInOrder(activeViews, (view) => view.group || ""), [activeViews]);
 
   const customPrompt = activeTemplate ? promptByTemplate[activeTemplate.id] || "" : "";
@@ -253,8 +214,11 @@ export default function ImageFactory({
     : scenePresets;
   const activePicks = activeTemplate ? pickedViews(activeTemplate).map((view) => view.id) : [];
   const inBatch = activeTemplate ? batchIds.includes(activeTemplate.id) : false;
-  const showLibraryBoard = Boolean(activeTemplate?.libraryFirst) && assetMode === "library";
-
+  /** 还能加进这一批的产出，按分类分好组——分组是渲染下拉时的真开销，别留在 JSX 里每次重算 */
+  const addableGroups = useMemo(
+    () => groupInOrder(templates.filter((item) => !inRun(item)), (item) => item.category),
+    [templates, inRun],
+  );
   const requiredReady = activeSlots.filter((slot) => slot.required).every((slot) => Boolean(selectedInputs[slot.id]));
   const selectedProvider = providers.find((item) => item.id === provider);
   const providerReady = Boolean(selectedProvider?.available && selectedProvider.authenticated);
@@ -276,24 +240,13 @@ export default function ImageFactory({
 
   const applyProviders = useCallback((list: CliProviderStatus[]) => {
     setProviders(list);
-    setProvider((current) => {
-      const chosen = list.find((item) => item.id === current);
-      if (chosen?.available && chosen.authenticated) return current;
-      return list.find((item) => item.available && item.authenticated)?.id || current;
-    });
+    setProvider((current) => pickUsableProvider(list, current));
   }, []);
 
   const refreshProviders = useCallback(async (force = false) => {
-    if (!force && providerCache && Date.now() - providerCache.at < PROVIDER_CACHE_TTL_MS) {
-      applyProviders(providerCache.providers);
-      setIsLoadingProviders(false);
-      return;
-    }
     setIsLoadingProviders(true);
     try {
-      const data = await getImageProviders();
-      providerCache = { at: Date.now(), providers: data.providers };
-      applyProviders(data.providers);
+      applyProviders(await loadProviders(force));
     } catch (error) {
       console.error("[ImageFactory] CLI 状态检查失败", { action: "imageFactory.providers", error });
     } finally {
@@ -301,13 +254,22 @@ export default function ImageFactory({
     }
   }, [applyProviders]);
 
+  /**
+   * 换一个模板要跑的那套：切 id、清掉上一个模板的结果。
+   * 模板目录是唯一的入口，所以这里只有一个调用点，但清理动作漏一样都会串味，还是收成一个函数。
+   */
+  const selectTemplate = useCallback((templateId: string) => {
+    setActiveTemplateId(templateId);
+    setResults([]);
+    setErrorMessage("");
+  }, []);
+
   // 从模板目录带着一个模板进来：选中它，随即把入参交还给调用方，避免切走再回来又被强制选回去
   useEffect(() => {
     if (!incomingTemplateId) return;
-    setActiveTemplateId(incomingTemplateId);
-    setView("detail");
+    selectTemplate(incomingTemplateId);
     onTemplateConsumed?.();
-  }, [incomingTemplateId, onTemplateConsumed]);
+  }, [incomingTemplateId, onTemplateConsumed, selectTemplate]);
 
   // 首页带来的要求填进补充要求。已经写过的不覆盖——手打的永远比转述的准。
   useEffect(() => {
@@ -321,15 +283,10 @@ export default function ImageFactory({
   useEffect(() => {
     setCustomTemplates(loadCustomImageTemplates());
     setOutputDir(localStorage.getItem(OUTPUT_DIR_STORAGE_KEY) || "");
-    try {
-      const saved = JSON.parse(localStorage.getItem(ENGINE_STORAGE_KEY) || "{}");
-      if (typeof saved.model === "string") setModel(saved.model);
-      if (saved.provider === "codex" || saved.provider === "grok" || saved.provider === "gemini") {
-        setProvider(saved.provider);
-      }
-    } catch (error) {
-      console.warn("[ImageFactory] 引擎偏好读取失败", { action: "imageFactory.loadEngine", error });
-    }
+    // 首页那个选择器写的是同一份偏好，所以从首页选完进来，这里已经是选好的
+    const saved = readEnginePreference();
+    setProvider(saved.provider);
+    setModel(saved.model);
   }, []);
 
   useEffect(() => {
@@ -344,10 +301,7 @@ export default function ImageFactory({
   }, []);
 
   const rememberEngine = (next: { provider?: ImageCliProvider; model?: string }) => {
-    localStorage.setItem(
-      ENGINE_STORAGE_KEY,
-      JSON.stringify({ provider: next.provider ?? provider, model: next.model ?? model }),
-    );
+    writeEnginePreference({ provider: next.provider ?? provider, model: next.model ?? model });
   };
 
   const selectProvider = (next: ImageCliProvider) => {
@@ -360,40 +314,6 @@ export default function ImageFactory({
   const selectModel = (next: string) => {
     setModel(next);
     rememberEngine({ model: next });
-  };
-
-  // 列表只有元数据，图片由 <Image> 各自按需取，所以要选模特的产出一进来就拉一次
-  const refreshModelAssets = useCallback(async () => {
-    setIsLoadingModels(true);
-    setLibraryError("");
-    try {
-      const data = await listModelAssets();
-      setModelAssets(data.models);
-    } catch (error) {
-      console.error("[ImageFactory] 模特库读取失败", { action: "imageFactory.models.list", error });
-      setLibraryError(error instanceof Error ? error.message : "模特库读取失败");
-    } finally {
-      setModelsLoaded(true);
-      setIsLoadingModels(false);
-    }
-  }, []);
-
-  // 要选模特的产出一进来就把库读出来，模特模板条不能等用户先点开弹窗
-  useEffect(() => {
-    if (modelSlot && !modelsLoaded && !isLoadingModels) refreshModelAssets();
-  }, [modelSlot, modelsLoaded, isLoadingModels, refreshModelAssets]);
-
-  const openModelLibrary = (slot: ImageTemplateSlot) => {
-    setPickingSlot(slot);
-    refreshModelAssets();
-  };
-
-  const selectTemplate = (templateId: string) => {
-    setActiveTemplateId(templateId);
-    setView("detail");
-    setAssetMode(templates.find((item) => item.id === templateId)?.libraryFirst ? "library" : "generate");
-    setResults([]);
-    setErrorMessage("");
   };
 
   const toggleBatch = () => {
@@ -449,45 +369,6 @@ export default function ImageFactory({
     setResults([]);
   };
 
-  const pickModelAsset = async (slot: ImageTemplateSlot, pick: ModelPick) => {
-    try {
-      selectInput(slot.id, await modelAssetToFile(pick.asset));
-      setModelIdentity({ name: pick.name, traits: pick.traits });
-      setPickingSlot(null);
-    } catch (error) {
-      console.error("[ImageFactory] 模特图载入失败", {
-        action: "imageFactory.models.pick",
-        modelId: pick.asset.id,
-        slotId: slot.id,
-        error,
-      });
-      setLibraryError("这张模特图读不出来，换一张或重新生成");
-    }
-  };
-
-  /** 从模特模板条选一位：拿她最能锁脸的那张填进槽位，体貌描述一并带上。 */
-  const selectModelProfile = async (profile: ModelProfile) => {
-    if (!modelSlot) return;
-    try {
-      selectInput(modelSlot.id, await modelAssetToFile(profile.cover));
-      setModelIdentity({ name: profile.name, traits: profile.traits });
-    } catch (error) {
-      console.error("[ImageFactory] 模特图载入失败", {
-        action: "imageFactory.models.selectProfile",
-        modelId: profile.cover.id,
-        slotId: modelSlot.id,
-        error,
-      });
-      setLibraryError("这位模特的图读不出来，换一位或去模特库里挑一张");
-    }
-  };
-
-  /** 库里缺的角度交给生成那条路：锁定的模特不变，只把缺的视角勾上。 */
-  const generateMissingViews = (viewIds: string[]) => {
-    pickViews(viewIds);
-    setAssetMode("generate");
-  };
-
   /** 整组或单张都走这一条：一次请求存完，服务端只读写一次索引。 */
   const saveToLibrary = async (kind: LibraryKind, items: RunResult[]) => {
     const pending = items.filter((item) => !assetSaveState[item.job.key]);
@@ -531,17 +412,6 @@ export default function ImageFactory({
     }
   };
 
-  const removeModelAsset = async (entry: ModelAssetEntry) => {
-    if (!window.confirm(`确认把「${entry.name}」的这张图从模特库移除吗？`)) return;
-    try {
-      await deleteModelAsset(entry.id);
-      setModelAssets((current) => current.filter((item) => item.id !== entry.id));
-    } catch (error) {
-      console.error("[ImageFactory] 移除模特失败", { action: "imageFactory.models.delete", modelId: entry.id, error });
-      setLibraryError(error instanceof Error ? error.message : "移除模特失败");
-    }
-  };
-
   const removeInput = (slotId: string) => {
     setSelectedInputs((current) => {
       const next = { ...current };
@@ -549,16 +419,15 @@ export default function ImageFactory({
       delete next[slotId];
       return next;
     });
-    // 槽位空了就没有那位模特了，身份描述不能继续跟着跑
-    if (activeSlots.find((slot) => slot.id === slotId)?.fromModelLibrary) setModelIdentity(null);
   };
 
   const saveTemplate = (template: ImageFactoryTemplate) => {
-    const next = customTemplates.some((item) => item.id === template.id)
-      ? customTemplates.map((item) => item.id === template.id ? template : item)
-      : [...customTemplates, template];
-    setCustomTemplates(next);
-    localStorage.setItem(IMAGE_FACTORY_STORAGE_KEY, JSON.stringify(next));
+    try {
+      setCustomTemplates(saveCustomImageTemplate(template));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "模板没能存进本机");
+      return;
+    }
     // 编辑时删掉的视图要从勾选里清掉，新增的视图默认选上
     setViewPicks({ ...viewPicks, [template.id]: (template.views || []).map((view) => view.id) });
     setActiveTemplateId(template.id);
@@ -568,11 +437,10 @@ export default function ImageFactory({
   const deleteTemplate = (templateId: string) => {
     const template = customTemplates.find((item) => item.id === templateId);
     if (!template || !window.confirm(`确认删除自定义产出“${template.name}”吗？`)) return;
-    const next = customTemplates.filter((item) => item.id !== templateId);
-    setCustomTemplates(next);
-    localStorage.setItem(IMAGE_FACTORY_STORAGE_KEY, JSON.stringify(next));
+    setCustomTemplates(deleteCustomImageTemplate(templateId));
     setBatchIds((current) => current.filter((id) => id !== templateId));
-    if (activeTemplateId === templateId) setActiveTemplateId(BUILT_IN_IMAGE_TEMPLATES[0].id);
+    // 删的正是手上这个：这里没有目录可退，送回模板目录重挑
+    if (activeTemplateId === templateId) onBackToTemplates();
   };
 
   /**
@@ -609,12 +477,7 @@ export default function ImageFactory({
           formData.set("viewLabel", job.view.label);
           formData.set("viewHint", job.view.hint);
         }
-        // 只有真用到模特槽位的产出才带身份，商品白底图不需要也不该被人物描述干扰
-        const usesModelSlot = job.template.slots.some((slot) => slot.fromModelLibrary && selectedInputs[slot.id]);
-        if (modelIdentity && usesModelSlot) {
-          formData.set("identityName", modelIdentity.name);
-          formData.set("identityTraits", modelIdentity.traits);
-        }
+        // 每个视角都把同一份上传素材再发一次：身份、服装这些一致性全靠这张参考图
         job.template.slots.forEach((slot) => {
           const input = selectedInputs[slot.id];
           if (!input) return;
@@ -674,39 +537,7 @@ export default function ImageFactory({
     downloadImageAsset(result.imageDataUrl, `${job.template.name}${viewPart}-${result.jobId}${result.extension}`);
   };
 
-  const newTemplateDraft = () => ({
-    id: `custom-${Date.now().toString(36)}`,
-    name: "新产出",
-    category: CUSTOM_TEMPLATE_CATEGORY,
-    description: "",
-    prompt: "",
-    aspectRatio: "1:1",
-    slots: [{ id: "subject", label: "主体图", description: "", required: true }],
-  });
-
   if (!activeTemplate) return null;
-
-  // 第一级：只挑模板，不做配置
-  if (view === "list") {
-    return (
-      <div className="space-y-4">
-        <ImageTemplateList
-          templates={templates}
-          batchIds={batchIds}
-          onSelect={selectTemplate}
-          onCreate={() => setEditingTemplate(newTemplateDraft())}
-        />
-        {editingTemplate && (
-          <TemplateEditor
-            template={editingTemplate}
-            categories={[...new Set(templates.map((item) => item.category))]}
-            onCancel={() => setEditingTemplate(null)}
-            onSave={saveTemplate}
-          />
-        )}
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4">
@@ -715,9 +546,9 @@ export default function ImageFactory({
           <div className="flex min-w-0 items-center gap-2.5">
             <button
               type="button"
-              onClick={() => setView("list")}
+              onClick={onBackToTemplates}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-faint hover:bg-soft hover:text-ink"
-              aria-label="返回模板列表"
+              aria-label="回模板目录换一个"
             >
               <ArrowLeft size={16} />
             </button>
@@ -757,31 +588,8 @@ export default function ImageFactory({
         </div>
       </Card>
 
-      {activeTemplate.libraryFirst && (
-        <SegmentedControl
-          value={assetMode}
-          options={[
-            { value: "library", label: "用内置模特", description: "库里已有全部角度，选中直接取图" },
-            { value: "generate", label: "生成新的", description: "上传参考图，按选中的视角生成" },
-          ]}
-          onChange={setAssetMode}
-          ariaLabel="模特来源"
-        />
-      )}
-
-      {showLibraryBoard ? (
-        <ModelLibraryBoard
-          profiles={modelProfiles}
-          loading={isLoadingModels}
-          errorMessage={libraryError}
-          selectedName={modelIdentity?.name || ""}
-          views={activeViews}
-          onSelect={selectModelProfile}
-          onDelete={removeModelAsset}
-          onGenerateMissing={generateMissingViews}
-        />
-      ) : (
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.62fr)]">
+      {/* 左边是要动手的三步，右边只放参考——操作永远在视线落点上，1024 宽就能并排 */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.6fr)]">
         <div className="space-y-4">
           <Card>
             <div className="flex flex-wrap items-end justify-between gap-3">
@@ -798,19 +606,6 @@ export default function ImageFactory({
               )}
             </div>
 
-            {modelSlot && (
-              <div className="mt-4">
-                <ModelTemplateStrip
-                  profiles={modelProfiles}
-                  loading={isLoadingModels}
-                  activeName={modelIdentity?.name || ""}
-                  onSelect={selectModelProfile}
-                  onClear={() => removeInput(modelSlot.id)}
-                  onManage={() => openModelLibrary(modelSlot)}
-                />
-              </div>
-            )}
-
             {/* 只有一个槽位时不铺满整列：4:3 的框拉到一整列宽就有半屏高，把下面的配置全顶出视野 */}
             <div className={`mt-4 grid gap-3 ${activeSlots.length > 1 ? "sm:grid-cols-2" : "max-w-[340px]"}`}>
               {activeSlots.map((slot) => {
@@ -822,52 +617,31 @@ export default function ImageFactory({
                         <Image src={input.previewUrl} alt={`${slot.label}预览`} fill sizes="420px" className="object-cover" unoptimized />
                         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-3 pb-3 pt-8 text-white">
                           <div className="text-xs font-bold">{slot.label}</div>
-                          <div className="mt-0.5 truncate text-[10px] text-white/70">
-                            {slot.fromModelLibrary && modelIdentity ? `模特：${modelIdentity.name}` : input.file.name}
-                          </div>
+                          <div className="mt-0.5 truncate text-[10px] text-white/70">{input.file.name}</div>
                         </div>
-                        <div className="absolute right-2 top-2 flex gap-1.5">
-                          {slot.fromModelLibrary && (
-                            <button type="button" onClick={() => openModelLibrary(slot)} className="rounded-full bg-black/55 p-1.5 text-white" aria-label={`从模特库换一位${slot.label}`}>
-                              <UserRound size={13} />
-                            </button>
-                          )}
-                          <button type="button" onClick={() => removeInput(slot.id)} className="rounded-full bg-black/55 p-1.5 text-white" aria-label={`移除${slot.label}`}>
-                            <X size={13} />
-                          </button>
-                        </div>
+                        <button type="button" onClick={() => removeInput(slot.id)} className="absolute right-2 top-2 rounded-full bg-black/55 p-1.5 text-white" aria-label={`移除${slot.label}`}>
+                          <X size={13} />
+                        </button>
                       </div>
                     ) : (
-                      <div className="flex aspect-[4/3] flex-col">
-                        <label className="flex flex-1 cursor-pointer flex-col items-center justify-center p-5 text-center hover:bg-brand-50/50">
-                          <ImagePlus size={26} className="text-brand-400" />
-                          <span className="mt-2.5 text-sm font-bold text-ink">
-                            {slot.label}
-                            {slot.required && <span className="text-danger"> *</span>}
-                          </span>
-                          <span className="mt-1 text-[11px] leading-4 text-faint">{slot.description || "点击选择图片"}</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="sr-only"
-                            onChange={(event) => {
-                              const file = event.target.files?.[0];
-                              if (file) selectInput(slot.id, file);
-                              event.target.value = "";
-                            }}
-                          />
-                        </label>
-                        {slot.fromModelLibrary && (
-                          <button
-                            type="button"
-                            onClick={() => openModelLibrary(slot)}
-                            className="flex items-center justify-center gap-1.5 border-t border-dashed border-line-strong py-2 text-[11px] font-bold text-brand-600 hover:bg-brand-50"
-                          >
-                            <UserRound size={13} />
-                            从模特库选
-                          </button>
-                        )}
-                      </div>
+                      <label className="flex aspect-[4/3] cursor-pointer flex-col items-center justify-center p-5 text-center hover:bg-brand-50/50">
+                        <ImagePlus size={26} className="text-brand-400" />
+                        <span className="mt-2.5 text-sm font-bold text-ink">
+                          {slot.label}
+                          {slot.required && <span className="text-danger"> *</span>}
+                        </span>
+                        <span className="mt-1 text-[11px] leading-4 text-faint">{slot.description || "点击选择图片"}</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="sr-only"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) selectInput(slot.id, file);
+                            event.target.value = "";
+                          }}
+                        />
+                      </label>
                     )}
                   </div>
                 );
@@ -967,6 +741,8 @@ export default function ImageFactory({
                   <button type="button" onClick={() => pickViews([])} className="rounded-lg px-2 py-1 text-[11px] font-bold text-faint hover:text-danger">清空</button>
                 </div>
               </div>
+              {/* 样例里的那张脸是示意角度用的，不说清楚容易被当成「我会得到这个人」 */}
+              <p className="mt-1.5 text-[11px] leading-4 text-faint">样例只示意这个角度长什么样，实际出图用你上传的素材。</p>
               {viewGroups.map((group) => (
                 <div key={group.key || "all"} className="mt-3">
                   {/* 分了组的模板（九宫格 / 三视图）给一键，13 个格子一个个点太蠢 */}
@@ -1227,10 +1003,21 @@ export default function ImageFactory({
                     key={template.id}
                     className={`flex items-center gap-2 rounded-xl px-2.5 py-2 ${isActive ? "bg-brand-50" : "bg-soft"}`}
                   >
-                    <span className={`min-w-0 flex-1 truncate text-xs font-bold ${isActive ? "text-brand-700" : "text-muted"}`}>
+                    {/*
+                      批次里的另一种：点一下切过去接着配。
+                      只切当前项——results 是整批共有的，用 selectTemplate 会把已经跑出来的全清掉。
+                    */}
+                    <button
+                      type="button"
+                      disabled={isActive}
+                      onClick={() => setActiveTemplateId(template.id)}
+                      className={`min-w-0 flex-1 truncate text-left text-xs font-bold ${
+                        isActive ? "text-brand-700" : "text-muted hover:text-ink"
+                      }`}
+                    >
                       {template.name}
                       {isActive && <span className="ml-1.5 font-normal text-faint">当前</span>}
-                    </span>
+                    </button>
                     <span className="shrink-0 text-[10px] text-faint">{count} 张</span>
                     {!isActive && (
                       <button
@@ -1246,9 +1033,38 @@ export default function ImageFactory({
                 );
               })}
             </div>
+
+            {/*
+              只往这一批里再加一种，不是第二个模板目录：没有样例、没有分类锚点，看模板去「模板」区。
+              做成下拉而不是「回目录挑一个」，是因为回目录会把这个页面卸载——
+              已经传好的素材、填好的补充要求、勾好的视角全没了，「素材只传一次」就成了空话。
+            */}
+            {addableGroups.length > 0 && (
+              <select
+                aria-label="再加一种产出到本次批次"
+                value=""
+                onChange={(event) => {
+                  const templateId = event.target.value;
+                  if (templateId) setBatchIds((current) => [...current, templateId]);
+                }}
+                className="mt-2 w-full rounded-xl border border-dashed border-line bg-surface px-3 py-2 text-[11px] font-bold text-muted outline-none transition focus:border-brand-300"
+              >
+                <option value="">+ 再加一种一起跑</option>
+                {addableGroups.map((group) => (
+                  <optgroup key={group.key} label={group.key}>
+                    {group.items.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            )}
+
             {batchIds.length === 0 && (
               <p className="mt-2 text-[10px] leading-4 text-faint">
-                想一次出多种图，就在上面配好一种点「加入批次」，再切下一种。素材只传一次。
+                想一次出多种图，就在上面配好一种，再从这里加下一种。素材只传一次。
               </p>
             )}
           </Card>
@@ -1264,26 +1080,13 @@ export default function ImageFactory({
           />
         </div>
       </div>
-      )}
 
       {previewTemplate && <PreviewLightbox template={previewTemplate} onClose={() => setPreviewTemplate(null)} />}
-
-      {pickingSlot && (
-        <ModelLibraryPicker
-          slotLabel={pickingSlot.label}
-          assets={modelAssets}
-          loading={isLoadingModels}
-          errorMessage={libraryError}
-          onPick={(pick) => pickModelAsset(pickingSlot, pick)}
-          onDelete={removeModelAsset}
-          onClose={() => setPickingSlot(null)}
-        />
-      )}
 
       {editingTemplate && (
         <TemplateEditor
           template={editingTemplate}
-          categories={[...new Set(templates.map((item) => item.category))]}
+          categories={imageTemplateCategories(customTemplates)}
           onCancel={() => setEditingTemplate(null)}
           onSave={saveTemplate}
         />

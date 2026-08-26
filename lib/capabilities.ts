@@ -15,6 +15,7 @@ import {
   Scissors,
   Shapes,
   ShieldCheck,
+  Type,
   Sparkles,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -23,7 +24,27 @@ import type { LucideIcon } from "lucide-react";
  * 全站能力目录的单一事实源。
  * 侧栏图标轨、首页卡片、工具目录、命令面板、页头标题全部从这里派生——
  * 新增一个区只改这一个文件，杜绝「导航标签 ≠ 页头标题 ≠ 首页卡片文案」的三处漂移。
+ *
+ * 五个名词各站生产链的一格，判据互斥，一件东西只可能落一格：
+ *   素材  外面进来、还没变成任何东西的原料（线索 / 文档 / 拆来的稿子）
+ *   模板  别人做成什么样 + 怎么做成的，可复刻的范例（样例 + 结构 + 槽位）
+ *   资产  我的、会反复用的、复刻时填进模板槽位的东西（模特 / 产品 / 场景）
+ *   作品  跑出来的产出
+ *   项目  一次交付，只引用上面四者，自己不存内容
+ * 由此推出两条硬规则。它们不靠人记——都由类型或派生代码兜住：
+ *   ① 库（素材/模板/资产/作品）不带 category，永远不进「工具」目录——工具只放动词。
+ *      靠 AREAS 的类型强制：给库补 category 是类型错误，不是「下次注意」。
+ *   ② 一个区在首页最多出现一次。靠 homeToolAreas() 现算，不靠三张手写表恰好不相交。
  */
+
+/**
+ * 四个名词区（存东西的地方），与动词能力相对。
+ * 它们不许带 category，也就永远不会在「工具」目录里再出现一次——
+ * 声明在 AREAS 之前，好让下面的类型把这条规则钉死。
+ * 这里只管「谁是名词区」，摆在侧栏的哪一段由 RAIL_GROUPS 自己说了算。
+ */
+export const LIBRARY_AREAS = ["library", "templates", "assets", "works"] as const;
+export type LibraryAreaId = (typeof LIBRARY_AREAS)[number];
 
 /** 一个可导航的区。结构页（首页/目录/项目/笔记）与能力页（工具）共用一套 id。 */
 export type AreaId =
@@ -36,6 +57,7 @@ export type AreaId =
   | "assets"
   | "works"
   | "images"
+  | "textLayer"
   | "video"
   | "videoFactory"
   | "quality"
@@ -45,9 +67,12 @@ export type AreaId =
   | "extract"
   | "watermark";
 
-/** 工具目录的分区，数组顺序即分类 tab 与页面分区的先后。 */
-export type ToolCategory = "写笔记" | "做图" | "做视频" | "优化与复盘";
-export const TOOL_CATEGORY_ORDER: ToolCategory[] = ["写笔记", "做图", "做视频", "优化与复盘"];
+/**
+ * 工具目录的分区，数组顺序即分类 tab 与页面分区的先后。
+ * 只放动词——会跑出东西的能力。名词库（素材/模板/资产/作品）在侧栏下段，不进这里。
+ */
+export type ToolCategory = "做图" | "做视频" | "优化与复盘";
+export const TOOL_CATEGORY_ORDER: ToolCategory[] = ["做图", "做视频", "优化与复盘"];
 
 export interface AreaDef {
   label: string;
@@ -64,7 +89,12 @@ export interface AreaDef {
   needsNote?: boolean;
 }
 
-export const AREAS: Record<AreaId, AreaDef> = {
+/**
+ * 库不许声明 category——它们是名词，不进动词目录。
+ * 用 satisfies 把这条规则钉在字面量上：给 assets 补一个 category 会当场编译不过；
+ * 而导出的类型仍是统一的 Record<AreaId, AreaDef>，下游读 category 不用先分辨这是哪一类区。
+ */
+const AREA_TABLE = {
   home: {
     label: "首页",
     hint: "说一句就开工",
@@ -81,15 +111,15 @@ export const AREAS: Record<AreaId, AreaDef> = {
   },
   templates: {
     label: "模板",
-    hint: "内置出图模板",
-    subtitle: "挑一个模板直接开做，会带着它进图片工厂。",
+    hint: "照着做 · 可复刻的范例",
+    subtitle: "别人做成什么样、怎么做成的。挑一个「照这个做」，换上你自己的素材重新生成。",
     icon: Shapes,
     tint: "from-soft",
   },
   projects: {
     label: "项目",
-    hint: "所有笔记",
-    subtitle: "每条选题就是一篇笔记，点进去从选题写到发布。",
+    hint: "在做的每一件交付",
+    subtitle: "一条选题就是一个项目，点进去从选题写到发布。",
     icon: FolderOpen,
     tint: "from-brand-50",
   },
@@ -101,27 +131,24 @@ export const AREAS: Record<AreaId, AreaDef> = {
     tint: "from-brand-50",
   },
   library: {
-    label: "素材库",
-    hint: "攒料 · 出选题",
-    subtitle: "攒料、提炼、导入——所有选题的来源。",
+    label: "素材",
+    hint: "外面进来的原料",
+    subtitle: "线索、日报、本地文档——还没变成任何东西的原料，在这里提炼成选题。",
     icon: Inbox,
-    category: "写笔记",
     tint: "from-brand-50",
   },
   assets: {
-    label: "资产库",
-    hint: "模特 · 产品 · 场景",
-    subtitle: "反复要用的模特、产品与场景参考图，存在本机，生成时随时取。",
+    label: "资产",
+    hint: "我的模特 · 产品 · 场景",
+    subtitle: "会反复用的自有要素，存在本机。复刻模板时，缺的槽位从这里取。",
     icon: Library,
-    category: "做图",
     tint: "from-soft",
   },
   works: {
     label: "作品",
-    hint: "跑出来的图",
-    subtitle: "本机跑出来的全部产出，按模板翻，好用的存进资产库反复用。",
+    hint: "跑出来的产出",
+    subtitle: "本机跑出来的全部产出，按模板翻。好用的存进资产，下次生成直接取。",
     icon: Sparkles,
-    category: "做图",
     tint: "from-soft",
   },
   images: {
@@ -129,6 +156,14 @@ export const AREAS: Record<AreaId, AreaDef> = {
     hint: "模特 · 电商图 · 封面",
     subtitle: "模特资产、电商图、封面底图——全部由本机 CLI 生成。",
     icon: Images,
+    category: "做图",
+    tint: "from-soft",
+  },
+  textLayer: {
+    label: "叠字排版",
+    hint: "封面 · 配图 · 字不糊",
+    subtitle: "给图配上标题排版。文字层在本机渲染，不经过生成模型，所以字不会糊。",
+    icon: Type,
     category: "做图",
     tint: "from-soft",
   },
@@ -151,8 +186,8 @@ export const AREAS: Record<AreaId, AreaDef> = {
   },
   extract: {
     label: "链接拆片",
-    hint: "扒结构 · 出脚本",
-    subtitle: "粘抖音/小红书链接，提取视频 + 口播脚本并拆解结构。",
+    hint: "拆一条 · 沉成模板",
+    subtitle: "粘抖音/小红书链接，只拆结构与节奏，沉淀成可复刻的模板——不搬运原画面原句。",
     icon: Scissors,
     category: "做视频",
     tint: "from-sunken",
@@ -176,8 +211,8 @@ export const AREAS: Record<AreaId, AreaDef> = {
   },
   blogger: {
     label: "对标拆解",
-    hint: "拆博主 · 沉道库",
-    subtitle: "拆解对标博主，沉淀可复用的道库。",
+    hint: "拆博主 · 沉成模板",
+    subtitle: "拆解对标博主的选题结构，沉淀成可复刻的道库模板。",
     icon: Radar,
     category: "优化与复盘",
     tint: "from-brand-100",
@@ -199,7 +234,10 @@ export const AREAS: Record<AreaId, AreaDef> = {
     category: "优化与复盘",
     tint: "from-brand-100",
   },
-};
+} satisfies Record<LibraryAreaId, Omit<AreaDef, "category">> &
+  Record<Exclude<AreaId, LibraryAreaId>, AreaDef>;
+
+export const AREAS: Record<AreaId, AreaDef> = AREA_TABLE;
 
 const ALL_AREAS = Object.keys(AREAS) as AreaId[];
 
@@ -214,26 +252,48 @@ export function toolSections(): Array<{ category: ToolCategory; items: AreaId[] 
   })).filter((section) => section.items.length > 0);
 }
 
-/** 左侧图标轨。「创建」是动作不是区，单独由外壳处理，不进这个列表。 */
-export const RAIL_AREAS: AreaId[] = ["home", "tools", "templates", "projects", "library", "assets", "works"];
+/**
+ * 左侧图标轨，分三段，顺序即一条活的走法：
+ *   从哪开工 —— 首页说一句话、模板照着做、工具自己挑能力
+ *   东西放哪 —— 素材（原料）、作品（跑出来的）、资产（反复用的）
+ *   做给谁   —— 项目，一次交付的容器，收在最后
+ * 「创建」是动作不是区，单独由外壳处理，不进这个列表。
+ */
+export const RAIL_GROUPS: AreaId[][] = [
+  ["home", "templates", "tools"],
+  ["library", "works", "assets"],
+  ["projects"],
+];
+
+export const RAIL_AREAS: AreaId[] = RAIL_GROUPS.flat();
 
 /**
  * 直接坐在画布上的页：自己排版式，不套那张浮起的白面板。
- * 与「有没有 category」不是同一回事——笔记详情页同样没有 category，但要白面板。
+ * 眼下与 RAIL_AREAS 恰好同集合，但两者判据不同（笔记详情页没有 category 也要白面板），
+ * 所以分开写。改其中一个之前先想清楚要不要连着改另一个。
  */
 export const PLAIN_AREAS: AreaId[] = ["home", "tools", "templates", "projects", "library", "assets", "works"];
 
 /** ⌘K 可跳转的区：侧栏大类 + 全部能力。笔记详情页要先选一篇，不在其中。 */
 export const COMMAND_AREAS: AreaId[] = Array.from(new Set<AreaId>([...RAIL_AREAS, ...TOOL_AREAS]));
 
-/** 首页场景卡：覆盖六种最常见的开工方式，一行摆得下。 */
-export const HOME_SCENES: AreaId[] = ["projects", "images", "videoFactory", "blogger", "extract", "review"];
+/** 首页场景卡：最常见的开工方式，四个库都在其中——首页要教会人这条生产链。 */
+export const HOME_SCENES: AreaId[] = ["templates", "projects", "library", "assets", "works", "images"];
 
 /** 首页两张主推大卡：一条完整流水线一张，写清中间几步，避免「点进去才知道要干嘛」。 */
 export const HOME_FEATURED: Array<{ id: AreaId; title: string; desc: string; steps: string[] }> = [
   { id: "library", title: "一键成篇", desc: "攒的料直接变成能发的笔记", steps: ["素材", "选题", "草稿", "封面"] },
-  { id: "videoFactory", title: "爆款视频", desc: "借对标结构，用自己的素材出片", steps: ["对标", "脚本", "分镜", "出片"] },
+  { id: "videoFactory", title: "爆款视频", desc: "借对标结构，用自己的素材出片", steps: ["模板", "脚本", "分镜", "出片"] },
 ];
 
-/** 首页小工具网格：只放真实存在的能力，不摆没做的。 */
-export const HOME_TOOLS: AreaId[] = ["images", "assets", "extract", "rewrite", "video", "quality"];
+/**
+ * 首页小工具网格里该摆哪些能力。
+ * 现算而不是手写一张表：场景卡和主推大卡上已经露过面的一律排掉，
+ * 「一个区在首页最多出现一次」这条规则就永远不会因为谁忘了同步而破。
+ * recommended = 没露过面的动词能力；all = 全部动词能力里没露过面的（同一套判据，只是范围不同）。
+ */
+export function homeToolAreas(scope: "recommended" | "all"): AreaId[] {
+  const shown = new Set<AreaId>([...HOME_SCENES, ...HOME_FEATURED.map((item) => item.id)]);
+  const rest = TOOL_AREAS.filter((id) => !shown.has(id));
+  return scope === "all" ? rest : rest.slice(0, 6);
+}

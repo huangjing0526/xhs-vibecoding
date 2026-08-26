@@ -62,3 +62,59 @@ export function aspectRatioStyle(ratio?: string): { aspectRatio: string } {
   const [width, height] = (ratio || "").split(/[:/]/).map(Number);
   return width > 0 && height > 0 ? { aspectRatio: `${width} / ${height}` } : { aspectRatio: "1 / 1" };
 }
+
+/**
+ * 自建模板的写入口。
+ * 图片工厂和模板目录都能新建/删除，各写一遍 localStorage 必然漂移，所以写也跟读一样收在这里。
+ *
+ * 不收「当前列表」参数、自己读一遍再写：调用方手上那份可能已经过时（两个页面各存一份 state），
+ * 而且一旦有 current 参数，写就会被顺手塞进 setState 的更新函数里——更新函数必须是纯的，
+ * StrictMode 下会跑两遍。让模块自己拥有存储，这个坑就不存在。
+ */
+export function saveCustomImageTemplate(template: ImageFactoryTemplate): ImageFactoryTemplate[] {
+  const current = loadCustomImageTemplates();
+  const next = current.some((item) => item.id === template.id)
+    ? current.map((item) => (item.id === template.id ? template : item))
+    : [...current, template];
+  persistCustomImageTemplates(next);
+  return next;
+}
+
+export function deleteCustomImageTemplate(templateId: string): ImageFactoryTemplate[] {
+  const next = loadCustomImageTemplates().filter((item) => item.id !== templateId);
+  persistCustomImageTemplates(next);
+  return next;
+}
+
+/** 写失败就抛：存不下还告诉人「已保存」，比报错更糟。调用方负责把话说给用户听。 */
+function persistCustomImageTemplates(templates: ImageFactoryTemplate[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(IMAGE_FACTORY_STORAGE_KEY, JSON.stringify(templates));
+  } catch (error) {
+    console.error("[ImageFactory] 自建模板写入失败", {
+      action: "imageFactory.saveTemplates",
+      count: templates.length,
+      error,
+    });
+    throw error;
+  }
+}
+
+/** 新建自建模板的空白草稿，图片工厂与模板目录共用一份，免得两处字段对不上。 */
+export function newCustomImageTemplate(): ImageFactoryTemplate {
+  return {
+    id: `custom-${Date.now().toString(36)}`,
+    name: "新模板",
+    category: CUSTOM_TEMPLATE_CATEGORY,
+    description: "",
+    prompt: "",
+    aspectRatio: "1:1",
+    slots: [{ id: "subject", label: "主体图", description: "", required: true }],
+  };
+}
+
+/** 自建模板编辑器的分类候选：内置分类 + 已有自建分类，去重。两处挂编辑器，别各算各的。 */
+export function imageTemplateCategories(customTemplates: ImageFactoryTemplate[]): string[] {
+  return [...new Set([...BUILT_IN_IMAGE_TEMPLATES, ...customTemplates].map((item) => item.category))];
+}

@@ -28,8 +28,6 @@ export interface ImageTemplateSlot {
   label: string;
   description: string;
   required: boolean;
-  /** 填了就允许从模特库直接选一张已存的模特图，省掉重新上传。 */
-  fromModelLibrary?: boolean;
 }
 
 /** 多视图模板的一个输出视角，一个视角对应一次 CLI 生成。 */
@@ -73,11 +71,6 @@ export interface ImageFactoryTemplate {
   preview?: string;
   /** 产出的是哪种可复用参考素材，结果区据此给出「存入 X 库」入口；不填表示产出不入库。 */
   producesAsset?: LibraryKind;
-  /**
-   * 库里可能已经有现成的，进来先给「直接选现成的」，其次才是生成。
-   * 模特这种一次做齐、反复复用的资产，默认让人再生成一遍是纯浪费。
-   */
-  libraryFirst?: boolean;
   /** 产出后能交给下一环继续加工；cover 表示可拿去封面编辑器叠标题。 */
   handoff?: "cover";
   builtIn?: boolean;

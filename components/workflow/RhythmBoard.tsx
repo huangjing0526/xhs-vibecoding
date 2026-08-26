@@ -8,15 +8,19 @@ import Callout from "@/components/ui/Callout";
 import Card, { CardHeader } from "@/components/ui/Card";
 import Stat from "@/components/ui/Stat";
 import {
+  FAST_CUT_SEC,
   RHYTHM_THRESHOLDS,
   RISK_LABEL,
   RISK_SEVERITY,
   RISK_WHY,
+  SHOT_TONE_BAR,
   VERDICT_LABEL,
+  describeRhythm,
   formatTimecode,
   rhythmShotCount,
   riskyShots,
   shotSeverity,
+  shotTone,
   summarizeRhythm,
   tallyRisks,
   type BenchmarkRhythm,
@@ -24,10 +28,8 @@ import {
   type ReplicabilityReport,
   type ReplicabilityVerdict,
   type ShotRisk,
+  type ShotTone,
 } from "@/lib/videoFactory";
-
-/** 快切的门槛：短于这个长度的镜头是爆款开场的标志性手法，值得单独标出来。 */
-const FAST_CUT_SEC = 2;
 
 interface RhythmBoardProps {
   rhythm: BenchmarkRhythm | null;
@@ -50,19 +52,6 @@ interface RhythmBoardProps {
   screening: boolean;
 }
 
-type ShotTone = "fast" | "normal" | "long";
-
-function shotTone(shot: BenchmarkShot): ShotTone {
-  if (shot.plan.kind === "split") return "long";
-  return shot.durationSec < FAST_CUT_SEC ? "fast" : "normal";
-}
-
-// 颜色只编码一件事：这一镜有多快。快切深、常规浅、长镜发暖——节奏条才能一眼读出来
-const TONE_BAR: Record<ShotTone, string> = {
-  fast: "bg-brand-500",
-  normal: "bg-brand-200",
-  long: "bg-warn/60",
-};
 const TONE_LABEL: Record<ShotTone, string> = {
   fast: "快切",
   normal: "常规",
@@ -109,7 +98,7 @@ function RhythmBar({
                 aria-pressed={selected === shot.order}
                 style={{ flexGrow: shot.durationSec, flexBasis: 0 }}
                 className={`relative min-w-[7px] border-r border-surface/70 transition-opacity last:border-r-0 hover:opacity-80 ${
-                  TONE_BAR[tone]
+                  SHOT_TONE_BAR[tone]
                 } ${selected === shot.order ? "ring-2 ring-inset ring-ink" : ""}`}
               >
                 {wide && (
@@ -142,7 +131,7 @@ function RhythmBar({
       <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] font-semibold text-faint">
         {(["fast", "normal", "long"] as ShotTone[]).map((tone) => (
           <span key={tone} className="flex items-center gap-1.5">
-            <span className={`h-2.5 w-4 rounded-sm ${TONE_BAR[tone]}`} />
+            <span className={`h-2.5 w-4 rounded-sm ${SHOT_TONE_BAR[tone]}`} />
             {TONE_LABEL[tone]}
             {tone === "fast" && `（<${FAST_CUT_SEC} 秒）`}
             {tone === "long" && "（要拆段）"}
@@ -397,18 +386,15 @@ export default function RhythmBoard({
 
         {saved.length > 0 && (
           <div className="mt-5 border-t border-line pt-4">
-            <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-faint">拆过的节奏</div>
+            {/* 这是流程内的「给手上这条项目换一条节奏」，不是目录——浏览全部模板在「模板」区 */}
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-faint">换一条已存的节奏</div>
             <div className="space-y-2">
               {saved.map((item) => {
-                const stat = summarizeRhythm(item);
                 return (
                   <div key={item.id} className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-2.5">
                     <button type="button" onClick={() => onPickSaved(item)} className="min-w-0 flex-1 text-left">
                       <span className="block truncate text-sm font-bold text-ink">{item.sourceLabel}</span>
-                      <span className="mt-0.5 block text-[11px] text-faint">
-                        {item.shots.length} 镜 · {formatTimecode(item.totalDurationSec)} · 平均 {stat.averageSec}s
-                        {stat.openingCuts >= 2 && ` · 开场 ${stat.openingCuts} 连切`}
-                      </span>
+                      <span className="mt-0.5 block text-[11px] text-faint">{describeRhythm(item)}</span>
                     </button>
                     <Button size="sm" variant="danger" onClick={() => onDeleteSaved(item.id)} icon={<Trash2 size={13} />}>
                       删除

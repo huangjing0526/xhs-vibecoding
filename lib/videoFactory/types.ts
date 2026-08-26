@@ -12,7 +12,7 @@ import type { BenchmarkRhythm } from "./benchmark";
  * 生成引擎。照 SHOT_DURATIONS 的路子从常量数组派生类型，
  * 免得联合类型、运行时白名单、引擎卡片三处各写一份再悄悄漂移。
  */
-export const VIDEO_GEN_PROVIDERS = ["grok-cli", "doubao", "manual"] as const;
+export const VIDEO_GEN_PROVIDERS = ["grok-cli", "gemini-veo", "doubao", "manual"] as const;
 export type VideoGenProviderId = (typeof VIDEO_GEN_PROVIDERS)[number];
 
 /**
@@ -26,13 +26,50 @@ export function isUploadProvider(value: unknown): value is UploadProviderId {
   return UPLOAD_PROVIDERS.includes(value as UploadProviderId);
 }
 
-/** 单个镜头的时长档位。grok 的 image_to_video 只认 6 和 10 秒，分镜必须按这两档切。 */
-export const SHOT_DURATIONS = [6, 10] as const;
+/**
+ * 所有引擎档位的并集，只用来收窄类型。
+ * 「这个引擎实际支持哪几档」由下面的 PROVIDER_CAPS 说了算——
+ * 各家档位对不上（grok 6/10、Veo 4/6/8），拿并集去校验等于没校验。
+ */
+export const SHOT_DURATIONS = [4, 6, 8, 10] as const;
 export type ShotDuration = (typeof SHOT_DURATIONS)[number];
 
-/** 图生视频的分辨率档位，两个引擎都只有这两档。 */
-export const SHOT_RESOLUTIONS = ["480p", "720p"] as const;
+export const SHOT_RESOLUTIONS = ["480p", "720p", "1080p"] as const;
 export type ShotResolution = (typeof SHOT_RESOLUTIONS)[number];
+
+/** 出片比例。grok 的 image_to_video 没有这个参数（跟随首帧图），只有 Veo 认。 */
+export const SHOT_ASPECT_RATIOS = ["16:9", "9:16"] as const;
+export type ShotAspectRatio = (typeof SHOT_ASPECT_RATIOS)[number];
+
+/** 一个生成引擎能接受的参数范围。 */
+export interface VideoGenCapability {
+  /** 可选时长档位；空数组表示这条通道不由我们发起生成（片子在别处做好再传回来） */
+  durations: readonly ShotDuration[];
+  resolutions: readonly ShotResolution[];
+  /** 不支持指定比例的引擎为空数组——比例跟随首帧图 */
+  aspectRatios: readonly ShotAspectRatio[];
+}
+
+/**
+ * 各引擎的参数范围。
+ *
+ * 这张表决定分镜能切成几秒，所以引擎必须在拆分镜之前就定下来，
+ * 而不是等到出片那一步才选——否则拆好的分镜换个引擎就有一半时长非法。
+ */
+export const PROVIDER_CAPS: Record<VideoGenProviderId, VideoGenCapability> = {
+  // 实测：image_to_video 只有 6/10 秒两档，480p/720p，比例跟随首帧图
+  "grok-cli": { durations: [6, 10], resolutions: ["480p", "720p"], aspectRatios: [] },
+  // Veo 3.1：durationSeconds 只认 4/6/8；4k 档没验证过，先不放出来
+  "gemini-veo": { durations: [4, 6, 8], resolutions: ["720p", "1080p"], aspectRatios: ["16:9", "9:16"] },
+  // 回传通道：片子在别处生成，时长按传回来的文件实际长度记，不受档位约束
+  doubao: { durations: [], resolutions: [], aspectRatios: [] },
+  manual: { durations: [], resolutions: [], aspectRatios: [] },
+};
+
+/** 由我们发起生成的引擎（有档位约束的那些），与回传通道相对。 */
+export function isGenerativeProvider(id: VideoGenProviderId): boolean {
+  return PROVIDER_CAPS[id].durations.length > 0;
+}
 
 /** 改写后脚本里的一段，与拆片拆出的 stage 一一对应。 */
 export interface ScriptSegment {
@@ -178,6 +215,12 @@ export interface VideoProject {
   rhythm: BenchmarkRhythm | null;
   /** 绑定的角色与产品参考图，生成每一镜首帧时自动带上 */
   cast: ProjectCast;
+  /**
+   * 这条片子用哪个引擎出片。
+   * 分镜的时长档位由它决定，所以它必须先于 storyboard 定下来，并且跟着项目走。
+   * 老项目没有这个字段，读取时回落到 grok-cli——那是加这个字段之前唯一能生成的引擎。
+   */
+  genProvider: VideoGenProviderId;
   script: ScriptDraft | null;
   storyboard: Storyboard | null;
   clips: ShotClip[];

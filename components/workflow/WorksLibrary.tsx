@@ -253,7 +253,7 @@ function WorkDetail({
       setName("");
       setTraits("");
     } catch (error) {
-      console.error("[WorksLibrary] 存入素材库失败", { action: "works.saveToLibrary", kind, workId: work.id, error });
+      console.error("[WorksLibrary] 存入资产库失败", { action: "works.saveToLibrary", kind, workId: work.id, error });
       onNotice({ type: "error", message: error instanceof Error ? error.message : `存入${copy.label}失败` });
     } finally {
       setSaving(false);

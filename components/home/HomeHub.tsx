@@ -1,15 +1,15 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ArrowRight, ChevronRight } from "lucide-react";
 import PromptHero from "@/components/home/PromptHero";
 import TemplatePreview from "@/components/workflow/TemplatePreview";
+import { toImageTemplateCard, type TemplateCard } from "@/lib/templates";
 import {
   AREAS,
   HOME_FEATURED,
   HOME_SCENES,
-  HOME_TOOLS,
-  TOOL_AREAS,
+  homeToolAreas,
   type AreaId,
 } from "@/lib/capabilities";
 import { BUILT_IN_IMAGE_TEMPLATES } from "@/lib/imageFactory";
@@ -59,12 +59,13 @@ export default function HomeHub({
   intentPending,
 }: {
   onOpenArea: (id: AreaId) => void;
-  onOpenTemplate: (templateId: string) => void;
+  onOpenTemplate: (card: TemplateCard) => void;
   onSubmitIntent: (text: string) => void;
   intentPending: boolean;
 }) {
   const [tab, setTab] = useState<"recommended" | "all">("recommended");
-  const tools = tab === "recommended" ? HOME_TOOLS : TOOL_AREAS;
+  // 两个 tab 都排掉上面已经摆过的区——切到「全部」不该看到刚刚在场景卡里点过的那几个
+  const tools = useMemo(() => homeToolAreas(tab), [tab]);
 
   return (
     <div className="mx-auto max-w-6xl px-5 pb-12 pt-6 md:pt-10">
@@ -167,7 +168,7 @@ export default function HomeHub({
             <button
               key={template.id}
               type="button"
-              onClick={() => onOpenTemplate(template.id)}
+              onClick={() => onOpenTemplate(toImageTemplateCard(template))}
               title={template.description}
               className="overflow-hidden rounded-2xl border border-line bg-surface text-left transition-all duration-150 hover:border-brand-300 hover:shadow-card"
             >

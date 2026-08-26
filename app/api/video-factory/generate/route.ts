@@ -11,7 +11,16 @@ import {
   projectDir,
   runCommand,
 } from "@/app/api/video-factory/_shared";
-import { SHOT_RESOLUTIONS, snapShotDuration, type ShotClip, type ShotResolution } from "@/lib/videoFactory";
+import { generateVeoVideo } from "@/lib/engines/gemini/video";
+import { listGeminiModels } from "@/lib/engines/gemini/models";
+import {
+  PROVIDER_CAPS,
+  snapShotDuration,
+  type ShotAspectRatio,
+  type ShotClip,
+  type ShotResolution,
+  type VideoGenProviderId,
+} from "@/lib/videoFactory";
 
 // 调本机 grok CLI 出片，必须走 nodejs runtime。
 export const runtime = "nodejs";
@@ -53,6 +62,18 @@ ${options.outputPath}
 不要修改第一帧图片，不要在工作目录之外创建交付文件。完成后确认目标文件真实存在，并只输出该路径。`;
 }
 
+/**
+ * Veo 必须显式指定模型。前端正常会带上，这里只兜没带的情况：
+ * 现探一次目录取第一个正式版，理由与图片工厂那处相同——写死的 id 迟早会下线。
+ */
+async function resolveVeoModel(model: string): Promise<string> {
+  if (model) return model;
+  const catalog = await listGeminiModels();
+  const fallback = catalog.video[0]?.id;
+  if (!fallback) throw new Error("没探到可用的 Veo 模型，检查 GEMINI_API_KEY 是否有效");
+  return fallback;
+}
+
 /** 递归找目录下最新的 mp4，用于 grok 没照做复制时兜底捞产物。 */
 async function findFreshVideo(root: string, since: number, depth = 0): Promise<{ file: string; mtime: number } | null> {
   if (depth > 4) return null;
@@ -88,11 +109,26 @@ export async function POST(request: NextRequest) {
     projectId = String(formData.get("projectId") || "").trim();
     shotOrder = Number(formData.get("shotOrder") || 0);
     const motionPrompt = String(formData.get("videoPrompt") || "").trim();
-    const durationSec = snapShotDuration(formData.get("durationSec"));
-    const rawResolution = String(formData.get("resolution") || "480p").trim();
-    const resolution: ShotResolution = SHOT_RESOLUTIONS.includes(rawResolution as ShotResolution)
+
+    // 引擎决定档位，所以要先定它再收其余参数。没带就是 grok-cli——加这个字段之前的老调用都是它
+    const rawProvider = String(formData.get("provider") || "grok-cli").trim();
+    if (rawProvider !== "grok-cli" && rawProvider !== "gemini-veo") {
+      return apiBadRequest("这个引擎不能由工作台直接出片");
+    }
+    const provider: VideoGenProviderId = rawProvider;
+    const caps = PROVIDER_CAPS[provider];
+
+    const durationSec = snapShotDuration(formData.get("durationSec"), provider);
+    const rawResolution = String(formData.get("resolution") || "").trim();
+    const resolution: ShotResolution = caps.resolutions.includes(rawResolution as ShotResolution)
       ? (rawResolution as ShotResolution)
-      : "480p";
+      : caps.resolutions[0];
+    const rawAspect = String(formData.get("aspectRatio") || "").trim();
+    const aspectRatio = caps.aspectRatios.includes(rawAspect as ShotAspectRatio)
+      ? (rawAspect as ShotAspectRatio)
+      : undefined;
+    const model = String(formData.get("model") || "").trim();
+    if (model && !/^[A-Za-z0-9._:\/-]{1,64}$/.test(model)) return apiBadRequest("模型名不合法");
 
     if (!isSafeSegment(projectId)) return apiBadRequest("项目 id 不合法");
     if (!Number.isInteger(shotOrder) || shotOrder < 1 || shotOrder > 99) return apiBadRequest("镜号不合法");
@@ -133,47 +169,62 @@ export async function POST(request: NextRequest) {
     }
 
     const outputPath = clipPath(projectId, shotOrder);
-    const prompt = buildVideoPrompt({ framePath: frame, outputPath, motionPrompt, durationSec, resolution });
-    const promptFile = path.join(dir, `prompt-${String(shotOrder).padStart(2, "0")}.txt`);
-    await writeFile(promptFile, prompt, "utf8");
 
     console.info("[VideoFactory] 开始图生视频", {
       action: "videoFactory.generate",
       projectId,
       shotOrder,
+      provider,
       durationSec,
       resolution,
     });
 
-    const startedAt = Date.now();
-    await runGrok(
-      [
-        "--no-auto-update",
-        "--cwd", dir,
-        "--sandbox", "workspace",
-        "--permission-mode", "bypassPermissions",
-        "--no-subagents",
-        "--disable-web-search",
-        "--prompt-file", promptFile,
-        "--output-format", "plain",
-      ],
-      dir,
-    );
+    if (provider === "gemini-veo") {
+      // Veo 直接吃运动提示词：它不是 agent，不需要「用什么工具、把文件复制到哪」那套交代
+      await generateVeoVideo({
+        model: await resolveVeoModel(model),
+        prompt: motionPrompt || "让画面自然地动起来，主体保持稳定不变形",
+        framePath: frame,
+        durationSec,
+        resolution,
+        aspectRatio,
+        outputPath,
+      });
+    } else {
+      const prompt = buildVideoPrompt({ framePath: frame, outputPath, motionPrompt, durationSec, resolution });
+      const promptFile = path.join(dir, `prompt-${String(shotOrder).padStart(2, "0")}.txt`);
+      await writeFile(promptFile, prompt, "utf8");
 
-    // grok 有时会把片子留在会话目录里没复制过来，兜底自己捞一次
-    let produced = await stat(outputPath).then((info) => info.isFile(), () => false);
-    if (!produced) {
-      const found = await findFreshVideo(GROK_SESSION_ROOT, startedAt);
-      if (found) {
-        await copyFile(found.file, outputPath);
-        produced = true;
+      const startedAt = Date.now();
+      await runGrok(
+        [
+          "--no-auto-update",
+          "--cwd", dir,
+          "--sandbox", "workspace",
+          "--permission-mode", "bypassPermissions",
+          "--no-subagents",
+          "--disable-web-search",
+          "--prompt-file", promptFile,
+          "--output-format", "plain",
+        ],
+        dir,
+      );
+
+      // grok 有时会把片子留在会话目录里没复制过来，兜底自己捞一次
+      let produced = await stat(outputPath).then((info) => info.isFile(), () => false);
+      if (!produced) {
+        const found = await findFreshVideo(GROK_SESSION_ROOT, startedAt);
+        if (found) {
+          await copyFile(found.file, outputPath);
+          produced = true;
+        }
       }
+      if (!produced) throw new Error("grok 已结束，但没找到生成的视频文件");
     }
-    if (!produced) throw new Error("grok 已结束，但没找到生成的视频文件");
 
     const clip: ShotClip = {
       shotOrder,
-      provider: "grok-cli",
+      provider,
       videoPath: outputPath,
       durationSec,
       resolution,

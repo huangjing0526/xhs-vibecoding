@@ -12,9 +12,8 @@ export const MODEL_TEMPLATES: ImageFactoryTemplate[] = [
     thumb: "model-asset",
     preview: "/template-previews/model-asset.jpg",
     producesAsset: "models",
-    libraryFirst: true,
     slots: [
-      { id: "model", label: "模特参考", description: "可选，传了就锁定这张脸；不传按文字描述新生成一位", required: false, fromModelLibrary: true },
+      { id: "model", label: "模特参考", description: "可选，传了就锁定这张脸；不传按文字描述新生成一位", required: false },
     ],
     // 规格来自实拍档案的做法：九宫格头部锁身份，定妆主图当门面，全身三视图供换装用。
     // 头肩与全身都走 9:16 竖幅——这套资产是拿去铺抖音的，定妆主图留 3:4 当图文门面。
@@ -52,7 +51,7 @@ export const MODEL_TEMPLATES: ImageFactoryTemplate[] = [
     preview: "/template-previews/model-poses.jpg",
     producesAsset: "models",
     slots: [
-      { id: "model", label: "模特图", description: "已定妆的模特照，用于锁定人物身份与服装", required: true, fromModelLibrary: true },
+      { id: "model", label: "模特图", description: "已定妆的模特照，用于锁定人物身份与服装", required: true },
       { id: "style", label: "场景参考", description: "可选，用于确定背景与拍摄风格", required: false },
     ],
     views: [

@@ -75,6 +75,9 @@ interface VideoFactoryProps {
   onNotice: (notice: Notice) => void;
   /** 从「链接拆片」送过来的结构骨架；消费后由父级清空，避免切回来又灌一次。 */
   incomingSkeleton: BenchmarkSkeleton | null;
+  /** 模板目录点「照这个做」带来的整条节奏，接住即开新项目并套上。 */
+  incomingRhythm?: BenchmarkRhythm | null;
+  onRhythmConsumed?: () => void;
   onSkeletonConsumed: () => void;
   /** 首页那句话判成「做视频」时带过来的要求，填进「这条视频讲什么」的主题 */
   incomingTopic?: string | null;
@@ -92,6 +95,7 @@ const EMPTY_PROJECT: VideoProject = {
   title: "",
   createdAt: "",
   updatedAt: "",
+  genProvider: "grok-cli",
   skeleton: null,
   topic: { topic: "", product: "", sellingPoints: "", audience: "" },
   targetDurationSec: DEFAULT_TARGET_DURATION_SEC,
@@ -259,6 +263,8 @@ export default function VideoFactory({
   onNotice,
   incomingSkeleton,
   onSkeletonConsumed,
+  incomingRhythm,
+  onRhythmConsumed,
   incomingTopic,
   onTopicConsumed,
 }: VideoFactoryProps) {
@@ -302,20 +308,46 @@ export default function VideoFactory({
   const script = project.script;
   const storyboard = project.storyboard;
 
+  /**
+   * 开一条全新的项目。
+   * 这套动作有四个调用点（两处外部送进来、删掉当前项目、手点「新建一条」），
+   * 其中 savedRef.current = "" 是承重的——漏掉它，自动存盘会以为这条崭新的项目已经存过。
+   */
+  const startFreshProject = useCallback(
+    (patch: Partial<VideoProject>, rhythm: BenchmarkRhythm | null, message?: string) => {
+      setProject({ ...EMPTY_PROJECT, ...patch });
+      setDetectedRhythm(rhythm);
+      setStep("source");
+      savedRef.current = "";
+      if (message) onNotice({ type: "success", message });
+    },
+    [onNotice],
+  );
+
   // 拆片页送过来的结构骨架：直接开一个新项目接住，不覆盖手上正在做的那条
   useEffect(() => {
     if (!incomingSkeleton) return;
-    setProject({
-      ...EMPTY_PROJECT,
-      title: incomingSkeleton.title ? `对标《${incomingSkeleton.title}》` : "未命名视频",
-      skeleton: incomingSkeleton,
-    });
-    setDetectedRhythm(null);
-    setStep("source");
-    savedRef.current = "";
+    startFreshProject(
+      {
+        title: incomingSkeleton.title ? `对标《${incomingSkeleton.title}》` : "未命名视频",
+        skeleton: incomingSkeleton,
+      },
+      null,
+      "结构骨架已送进视频工厂，填一下你自己的选题",
+    );
     onSkeletonConsumed();
-    onNotice({ type: "success", message: "结构骨架已送进视频工厂，填一下你自己的选题" });
-  }, [incomingSkeleton, onSkeletonConsumed, onNotice]);
+  }, [incomingSkeleton, onSkeletonConsumed, startFreshProject]);
+
+  // 模板目录点「照这个做」：开一个新项目，直接套上这条节奏
+  useEffect(() => {
+    if (!incomingRhythm) return;
+    startFreshProject(
+      { title: `照《${incomingRhythm.sourceLabel}》的节奏`, rhythm: incomingRhythm },
+      incomingRhythm,
+      "已套用这条节奏，填一下你自己的选题——只借结构，画面和原句都要换成自己的",
+    );
+    onRhythmConsumed?.();
+  }, [incomingRhythm, onRhythmConsumed, startFreshProject]);
 
   // 首页带来的要求填进主题。已经填过的不覆盖，也不新开项目——它只是一句话，不值得顶掉手上那条。
   useEffect(() => {
@@ -737,11 +769,7 @@ export default function VideoFactory({
   const handleDeleteProject = async (projectId: string) => {
     try {
       await deleteVideoProject(projectId);
-      if (projectId === project.id) {
-        setProject(EMPTY_PROJECT);
-        savedRef.current = "";
-        setStep("source");
-      }
+      if (projectId === project.id) startFreshProject({}, null);
       refreshProjects();
       onNotice({ type: "success", message: "项目已删除" });
     } catch (error) {
@@ -800,12 +828,7 @@ export default function VideoFactory({
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => {
-                setProject(EMPTY_PROJECT);
-                setDetectedRhythm(null);
-                savedRef.current = "";
-                setStep("source");
-              }}
+              onClick={() => startFreshProject({}, null)}
             >
               新建一条
             </Button>

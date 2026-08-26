@@ -15,22 +15,16 @@ export interface IntentResult {
   url: string;
 }
 
-/** 可被路由到的区。结构页（首页/目录/笔记详情）不在其中——它们不是「要做的事」。 */
-export const ROUTABLE_AREAS: AreaId[] = [
-  "projects",
-  "library",
-  "assets",
-  "images",
-  "templates",
-  "video",
-  "videoFactory",
-  "extract",
-  "watermark",
-  "rewrite",
-  "blogger",
-  "quality",
-  "review",
-];
+/**
+ * 不是「要做的事」的三个结构页：首页是入口，工具是目录，笔记详情得先选一篇。
+ * 除它们之外的区一律可路由——写成排除法而不是白名单，
+ * 新增一个区就自动能被一句话叫到，不会像从前那样漏掉「作品」还没人发现。
+ */
+const NOT_A_TASK: AreaId[] = ["home", "tools", "note"];
+
+export const ROUTABLE_AREAS: AreaId[] = (Object.keys(AREAS) as AreaId[]).filter(
+  (id) => !NOT_A_TASK.includes(id),
+);
 
 export const DEFAULT_INTENT_AREA: AreaId = "projects";
 
@@ -49,6 +43,7 @@ const RULES: Array<{ area: AreaId; keywords: string[] }> = [
   { area: "rewrite", keywords: ["改写", "优化", "爆款", "润色", "标题"] },
   { area: "quality", keywords: ["质检", "检查", "违规", "能发吗", "发布前"] },
   { area: "review", keywords: ["复盘", "数据", "效果", "阅读量", "涨粉"] },
+  { area: "works", keywords: ["跑出来的", "出过的图", "作品", "历史产出", "之前生成"] },
   { area: "library", keywords: ["素材", "攒料", "选题", "灵感", "导入"] },
   { area: "projects", keywords: ["笔记", "写", "草稿", "正文", "文案"] },
 ];

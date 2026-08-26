@@ -27,7 +27,8 @@ const MAX_CLIP_DURATION_SEC = 600;
  * 之前这两种情况都回落成 6，等于把一个编出来的数字写进数据，还看不出来。
  */
 function resolveDuration(raw: FormDataEntryValue | null): number | null {
-  if (raw === null || String(raw).trim() === "") return snapShotDuration(raw);
+  // 老调用没带时长，按当年唯一能生成的引擎的档位兜底——这条路径只为兼容历史数据
+  if (raw === null || String(raw).trim() === "") return snapShotDuration(raw, "grok-cli");
   const seconds = Number(raw);
   if (!(seconds > 0) || seconds > MAX_CLIP_DURATION_SEC) return null;
   return Math.round(seconds * 10) / 10;

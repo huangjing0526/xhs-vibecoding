@@ -3,6 +3,7 @@
 import { useState, type KeyboardEvent } from "react";
 import { Send, Sparkles } from "lucide-react";
 import Button from "@/components/ui/Button";
+import EnginePicker from "@/components/home/EnginePicker";
 import { Textarea } from "@/components/ui/Field";
 
 /** 示例只写「要做的事」，不写内容本身——输入框判的是去哪儿，不是写什么。 */
@@ -58,11 +59,13 @@ export default function PromptHero({
           placeholder="例：把这条抖音链接拆成脚本 / 给这篇笔记做封面 / 出一组电商商品图"
           className="border-0 bg-transparent px-4 py-3 focus:bg-transparent focus:ring-0"
         />
-        <div className="flex items-center gap-2 px-2 pb-1 pt-1">
+        <div className="flex flex-wrap items-center gap-2 px-2 pb-1 pt-1">
           <span className="flex items-center gap-1.5 text-[11px] font-semibold text-faint">
             <Sparkles size={13} aria-hidden="true" />
             按 ⌘ + Enter 发送
           </span>
+          {/* 引擎与模型选在这里，进图片工厂就是选好的——两处读写同一份偏好 */}
+          <EnginePicker />
           <Button
             variant="ai"
             className="ml-auto"

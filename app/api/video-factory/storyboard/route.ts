@@ -5,9 +5,12 @@ import {
   buildStoryboardPrompt,
   createFallbackStoryboard,
   normalizeStoryboard,
+  replanRhythm,
+  VIDEO_GEN_PROVIDERS,
   type BenchmarkRhythm,
   type ScriptDraft,
   type Storyboard,
+  type VideoGenProviderId,
 } from "@/lib/videoFactory";
 
 export const runtime = "nodejs";
@@ -17,6 +20,8 @@ interface StoryboardRequest {
   visualStyle?: string;
   /** 套用的对标节奏模板，有就按它的镜头数与时长切 */
   rhythm?: BenchmarkRhythm | null;
+  /** 项目选定的出片引擎，决定每镜能切成几秒 */
+  genProvider?: VideoGenProviderId;
 }
 
 export async function POST(request: NextRequest) {
@@ -27,20 +32,28 @@ export async function POST(request: NextRequest) {
       return apiBadRequest("先出一版脚本再拆分镜");
     }
 
-    const fallback = createFallbackStoryboard(script);
+    const genProvider: VideoGenProviderId = VIDEO_GEN_PROVIDERS.includes(body.genProvider as VideoGenProviderId)
+      ? (body.genProvider as VideoGenProviderId)
+      : "grok-cli";
+
+    // 节奏模板里的 plan 是切镜时按别的引擎算的，套进这个项目前先按本项目的引擎重算，
+    // 否则提示词里会写着「这一镜生成 10 秒」而该引擎最长只有 8 秒
+    const rhythm = body.rhythm ? replanRhythm(body.rhythm, genProvider) : null;
+
+    const fallback = createFallbackStoryboard(script, genProvider);
     const ai = await generateWorkflowJson<Storyboard>({
       action: "videoFactory.storyboard",
-      prompt: buildStoryboardPrompt(script, { visualStyle: body.visualStyle, rhythm: body.rhythm }),
+      prompt: buildStoryboardPrompt(script, { visualStyle: body.visualStyle, rhythm }),
       fallback,
       maxTokens: 4000,
     });
-    const storyboard = normalizeStoryboard(ai.result, fallback);
+    const storyboard = normalizeStoryboard(ai.result, fallback, genProvider);
 
     return apiOk(
       { storyboard, usedFallback: ai.usedFallback, provider: ai.provider },
       ai.usedFallback
         ? "未配置 AI，已按脚本分段一段一镜，提示词请手动补"
-        : body.rhythm
+        : rhythm
           ? `已按对标节奏拆成 ${storyboard.shots.length} 个镜头`
           : `已拆成 ${storyboard.shots.length} 个镜头`
     );

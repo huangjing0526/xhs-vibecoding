@@ -3,7 +3,7 @@ import path from "node:path";
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import { BENCHMARK_ROOT, benchmarkDir, isSafeSegment, newProjectId, runCommand } from "@/app/api/video-factory/_shared";
-import { RHYTHM_THRESHOLDS, cutsToShots, type BenchmarkRhythm } from "@/lib/videoFactory";
+import { PROVIDER_CAPS, RHYTHM_THRESHOLDS, cutsToShots, type BenchmarkRhythm } from "@/lib/videoFactory";
 
 // 跑本机 ffmpeg / ffprobe，必须 nodejs runtime。
 export const runtime = "nodejs";
@@ -108,7 +108,9 @@ export async function POST(request: NextRequest) {
     if (!info.durationSec) return apiBadRequest("读不出视频时长，换个文件试试");
 
     const cuts = await detectCuts(source, threshold);
-    const shots = cutsToShots(cuts, info.durationSec);
+    // 节奏模板是跨项目复用的，这里存的 plan 只是按默认引擎算的一种落法；
+    // 真正套进某个项目时会按那个项目的引擎 replanRhythm 一次，所以这里不必纠结选谁。
+    const shots = cutsToShots(cuts, info.durationSec, PROVIDER_CAPS["grok-cli"].durations);
 
     // 缩略图逐镜抽，多的就不抽了——纯粹是白等
     for (const shot of shots.slice(0, MAX_THUMBNAILS)) {

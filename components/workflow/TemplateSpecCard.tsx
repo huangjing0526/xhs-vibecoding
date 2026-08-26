@@ -61,6 +61,9 @@ export default function TemplateSpecCard({
         />
         {views.length > 0 && <SpecRow label="输出视图" value={`${views.length} 个视角，在左边逐个勾`} />}
       </dl>
+
+      {/* 样例里出现的人和物只是这个模板跑出来的一次结果，不是你会拿到的那个 */}
+      <p className="mt-3 text-[10px] leading-4 text-faint">样例只示意产出的结构与角度，实际出图用你在左边上传的素材。</p>
     </Card>
   );
 }

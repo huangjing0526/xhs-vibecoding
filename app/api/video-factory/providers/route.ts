@@ -4,6 +4,9 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { apiOk } from "@/app/api/feishu/_utils";
+import { readGeminiKey } from "@/lib/engines/gemini";
+import { listGeminiModels } from "@/lib/engines/gemini/models";
+import { readQuotaState } from "@/lib/engines/gemini/quota";
 import type { VideoGenProviderStatus } from "@/lib/videoFactory";
 
 export const runtime = "nodejs";
@@ -68,11 +71,48 @@ function describeGrok(version: string | null, loggedIn: boolean, optOut: boolean
   return "已登录，可用 image_to_video 出片（每镜 6/10 秒，480p/720p）";
 }
 
+/**
+ * Veo 探的是 API key，跟本机装没装 gemini CLI 无关——
+ * 个人账号登录 CLI 会被 Code Assist 拒掉，但 AI Studio 的 key 走的是另一条路，是通的。
+ */
+async function detectVeo(): Promise<VideoGenProviderStatus> {
+  const base = { id: "gemini-veo" as const, name: "Google · Veo 3.1", available: false, authenticated: false };
+
+  if (!readGeminiKey()) {
+    return { ...base, message: "未配置 GEMINI_API_KEY，在 .env.local 里填上即可启用" };
+  }
+
+  try {
+    const [catalog, quota] = await Promise.all([listGeminiModels(), readQuotaState()]);
+    if (!catalog.video.length) {
+      return { ...base, available: true, message: "这个 key 下没有可用的 Veo 模型" };
+    }
+    return {
+      ...base,
+      available: true,
+      // 额度用完不算「未认证」：key 是好的，只是今天跑不了，翻成未登录会把人引去查 key
+      authenticated: true,
+      message: quota
+        ? quota.message
+        : `API key 可用，${catalog.video.length} 个 Veo 模型（每镜 4/6/8 秒，720p/1080p）`,
+    };
+  } catch (error) {
+    console.error("[VideoFactory] Veo 探测失败", {
+      userId: "local",
+      action: "videoFactory.providers.veo",
+      error,
+    });
+    const message = error instanceof Error ? error.message : "探测失败";
+    return { ...base, available: true, message: `Veo 探测失败：${message}` };
+  }
+}
+
 export async function GET() {
-  const [grokVersion, grokModels, auth] = await Promise.all([
+  const [grokVersion, grokModels, auth, veo] = await Promise.all([
     commandOutput("grok", ["--version"]),
     commandOutput("grok", ["--no-auto-update", "models"]),
     readGrokAuthState(),
+    detectVeo(),
   ]);
 
   // models 探测要联网，token 刷新那几秒会失败；本机有凭据就别急着说人家没登录，
@@ -90,6 +130,7 @@ export async function GET() {
       version: grokVersion || undefined,
       message: describeGrok(grokVersion, loggedIn, optOut),
     },
+    veo,
     {
       id: "doubao",
       name: "豆包（网页端 + 下载器）",

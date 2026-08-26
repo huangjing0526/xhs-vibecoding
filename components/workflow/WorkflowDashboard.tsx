@@ -25,7 +25,7 @@ import WorkbenchShell from "@/components/workflow/WorkbenchShell";
 import AssetLibrary from "@/components/workflow/AssetLibrary";
 import CanvasPage from "@/components/workflow/CanvasPage";
 import WorksLibrary from "@/components/workflow/WorksLibrary";
-import GalleryPage from "@/components/workflow/GalleryPage";
+import { TemplateGallery, ToolsGallery } from "@/components/workflow/GalleryPage";
 import HomeHub from "@/components/home/HomeHub";
 import { AREAS, COMMAND_AREAS, PLAIN_AREAS, type AreaId } from "@/lib/capabilities";
 import { pushRecent, readRecent, type RecentEntry } from "@/lib/recentUsed";
@@ -103,7 +103,8 @@ import {
   type WorkflowSnapshot,
 } from "@/lib/workflowClient";
 import type { VideoPlan } from "@/lib/videoWorkflow";
-import type { BenchmarkSkeleton } from "@/lib/videoFactory";
+import type { BenchmarkRhythm, BenchmarkSkeleton } from "@/lib/videoFactory";
+import { templateTarget, type TemplateCard } from "@/lib/templates";
 import VideoFactory from "./VideoFactory";
 import SourceWorkspace from "./SourceWorkspace";
 import type { Notice } from "./types";
@@ -116,7 +117,6 @@ const DAOKU_OPTIONS = DEMO_BLOGGER_PROFILES.map((profile) => ({ bloggerId: profi
  * 叠字排版是 AI 底图之后的下一环——中文标题交给 AI 画必糊，所以底图与文字层分开，
  * 从底图点「拿去叠标题」才切到这里。
  */
-type ImageTab = ImageMode | "ai";
 const TEXT_LAYER_TABS: Array<{ value: ImageMode; label: string; subtitle: string }> = [
   { value: "cover", label: "封面叠字", subtitle: "把 AI 底图配上标题排版，文字层本地渲染，字不会糊。" },
   { value: "content", label: "配图叠字", subtitle: "把正文配图配上文字排版。" },
@@ -295,12 +295,13 @@ export default function WorkflowDashboard() {
   const [selectedDraft, setSelectedDraft] = useState<DraftNote | null>(null);
   const [coverConfig, setCoverConfig] = useState<CoverConfig>({ ...DEFAULT_COVER_CONFIG });
   const [coverPlan, setCoverPlan] = useState<CoverPlan | null>(null);
-  const [imageTab, setImageTab] = useState<ImageTab>("ai");
+  /** 叠字排版区里的两种叠法。AI 生图是另一个区，不再挤进这个状态。 */
+  const [imageTab, setImageTab] = useState<ImageMode>("cover");
 
-  // 别处的「去做封面」入口：进图片工厂并落在封面那一段
+  // 别处的「去做封面」入口：进叠字排版并落在封面那一段
   const openCover = useCallback(() => {
     setImageTab("cover");
-    setArea("images");
+    setArea("textLayer");
   }, []);
   const [contentImageTemplate, setContentImageTemplate] = useState<ContentImageTemplateType>("flowchart");
   const [contentImagePlan, setContentImagePlan] = useState<ContentImagePlan | null>(null);
@@ -309,6 +310,9 @@ export default function WorkflowDashboard() {
   const [area, setArea] = useState<AreaId>("home");
   // 从模板目录带进图片工厂的模板，工厂接住后立刻清空——否则来回切区会重复选回去
   const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null);
+  // 同上，走视频那条线。带整条节奏而不是 id：目录手上本来就有，传 id 会让工厂再查一次库，
+  // 那次查询扑空时这个 id 会一直挂着，等下一次进视频工厂再触发，把人正做着的项目冲掉。
+  const [pendingRhythm, setPendingRhythm] = useState<BenchmarkRhythm | null>(null);
   const [recent, setRecent] = useState<RecentEntry[]>([]);
   const [isRoutingIntent, setIsRoutingIntent] = useState(false);
   // 首页那句话的三份去处：横幅给人看，另外两个是目标工具真正吃得下的起手参数。
@@ -1066,12 +1070,16 @@ export default function WorkflowDashboard() {
     if (AREAS[id].category) setRecent(pushRecent("area", id));
   }, []);
 
-  // 从模板目录点一个模板：带着它落进图片工厂的 AI 生图段
-  const openTemplate = useCallback((templateId: string) => {
-    setPendingTemplateId(templateId);
-    setImageTab("ai");
-    setArea("images");
-    setRecent(pushRecent("template", templateId));
+  /**
+   * 模板目录点「照这个做」：按模板类型送进对应的工厂。
+   * 模板目录是挑模板的唯一入口，工厂只负责跑，所以分发只有这一处。
+   */
+  const openTemplate = useCallback((card: TemplateCard) => {
+    // 落哪个区由 templateTarget 说了算，这里只把工厂起手要的东西交出去
+    if (card.kind === "rhythm") setPendingRhythm(card.rhythm);
+    else setPendingTemplateId(card.id);
+    setArea(templateTarget(card));
+    setRecent(pushRecent("template", card.id));
   }, []);
 
   // 打开一篇笔记：选中它并进详情页，列表与详情是两级，选中即跳转
@@ -1242,13 +1250,10 @@ export default function WorkflowDashboard() {
           />
         )}
 
-        {(area === "tools" || area === "templates") && (
-          <GalleryPage
-            kind={area}
-            recent={recent}
-            onOpenArea={openArea}
-            onOpenTemplate={openTemplate}
-          />
+        {area === "tools" && <ToolsGallery recent={recent} onOpenArea={openArea} />}
+
+        {area === "templates" && (
+          <TemplateGallery recent={recent} onOpenArea={openArea} onOpenTemplate={openTemplate} />
         )}
 
         {area === "assets" && (
@@ -1472,44 +1477,42 @@ export default function WorkflowDashboard() {
         )}
 
         {area === "images" && (
-          // AI 生图不针对某一篇笔记，那一段不传 note 就不显示「当前笔记」条
+          // AI 生图不针对某一篇笔记，不传 note 就不显示「当前笔记」条
+          <ToolPage area="images" subtitle={AI_IMAGE_SUBTITLE} onGoProjects={() => setArea("projects")}>
+            <ImageFactory
+              incomingTemplateId={pendingTemplateId}
+              onTemplateConsumed={() => setPendingTemplateId(null)}
+              onBackToTemplates={() => setArea("templates")}
+              incomingBrief={pendingImageBrief}
+              onBriefConsumed={() => setPendingImageBrief(null)}
+              onUseAsCover={(dataUrl) => {
+                // AI 只出底图，标题仍由本地排版叠上去：底图落进封面配置的背景位，再转去叠字
+                setCoverConfig((current) => ({ ...current, backgroundImage: dataUrl }));
+                openCover();
+              }}
+            />
+          </ToolPage>
+        )}
+
+        {area === "textLayer" && (
           <ToolPage
-            area="images"
-            note={imageTab === "ai" ? undefined : selectedTopic}
-            subtitle={
-              imageTab === "ai"
-                ? AI_IMAGE_SUBTITLE
-                : TEXT_LAYER_TABS.find((tab) => tab.value === imageTab)?.subtitle
-            }
+            area="textLayer"
+            note={selectedTopic}
+            subtitle={TEXT_LAYER_TABS.find((tab) => tab.value === imageTab)?.subtitle}
             onGoProjects={() => setArea("projects")}
           >
-            {imageTab !== "ai" && (
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                <Button variant="secondary" onClick={() => setImageTab("ai")} icon={<ArrowLeft size={15} />}>
-                  回到 AI 生图
-                </Button>
-                <SegmentedControl
-                  options={TEXT_LAYER_OPTIONS}
-                  value={imageTab}
-                  onChange={setImageTab}
-                  ariaLabel="叠字类型"
-                />
-              </div>
-            )}
-            {imageTab === "ai" ? (
-              <ImageFactory
-                incomingTemplateId={pendingTemplateId}
-                onTemplateConsumed={() => setPendingTemplateId(null)}
-                incomingBrief={pendingImageBrief}
-                onBriefConsumed={() => setPendingImageBrief(null)}
-                onUseAsCover={(dataUrl) => {
-                  // AI 只出底图，标题仍由本地排版叠上去：底图直接落进封面配置的背景位
-                  setCoverConfig((current) => ({ ...current, backgroundImage: dataUrl }));
-                  setImageTab("cover");
-                }}
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={() => setArea("images")} icon={<ArrowLeft size={15} />}>
+                去 AI 生图
+              </Button>
+              <SegmentedControl
+                options={TEXT_LAYER_OPTIONS}
+                value={imageTab}
+                onChange={setImageTab}
+                ariaLabel="叠字类型"
               />
-            ) : (
-              <div className="space-y-3">
+            </div>
+            <div className="space-y-3">
                 <CoverStudio
                   topics={usableTopics}
                   drafts={usableDrafts}
@@ -1550,8 +1553,7 @@ export default function WorkflowDashboard() {
                     )}
                   </div>
                 )}
-              </div>
-            )}
+            </div>
           </ToolPage>
         )}
 
@@ -1606,6 +1608,8 @@ export default function WorkflowDashboard() {
               onNotice={setNotice}
               incomingSkeleton={videoSkeleton}
               onSkeletonConsumed={() => setVideoSkeleton(null)}
+              incomingRhythm={pendingRhythm}
+              onRhythmConsumed={() => setPendingRhythm(null)}
               incomingTopic={pendingVideoTopic}
               onTopicConsumed={() => setPendingVideoTopic(null)}
             />

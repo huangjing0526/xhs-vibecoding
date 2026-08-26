@@ -6,7 +6,15 @@
  */
 
 import { rhythmShotCount, rhythmToPlanLines, type BenchmarkRhythm } from "./benchmark";
-import { SHOT_DURATIONS, type ScriptDraft, type Shot, type ShotDuration, type Storyboard } from "./types";
+import {
+  PROVIDER_CAPS,
+  SHOT_DURATIONS,
+  type ScriptDraft,
+  type Shot,
+  type ShotDuration,
+  type Storyboard,
+  type VideoGenProviderId,
+} from "./types";
 
 const str = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
 
@@ -33,10 +41,30 @@ export function applyCameraMove(videoPrompt: string, move: CameraMove): string {
   return rest ? `${move.motion}，${rest}` : move.motion;
 }
 
-/** 把任意时长吸附到引擎支持的档位，越界一律回落到 6 秒。 */
-export function snapShotDuration(value: unknown): ShotDuration {
+/**
+ * 引擎能用的时长档位，从小到大。
+ * 回传通道没有档位约束，这时退回全量并集——它只被用来收敛外部传进来的脏数据。
+ */
+function durationLadder(provider: VideoGenProviderId): ShotDuration[] {
+  const caps = PROVIDER_CAPS[provider].durations;
+  return [...(caps.length ? caps : SHOT_DURATIONS)].sort((a, b) => a - b);
+}
+
+/**
+ * 把任意时长吸附到该引擎支持的档位。
+ *
+ * 吸附到最近的一档而不是回落到某个固定值：换引擎是这个函数最主要的使用场景
+ * （分镜按 grok 的 10 秒切好，改用 Veo 时该变成 8 秒而不是 6 秒），
+ * 回落到固定值会把用户精心调过的节奏一把抹平。
+ */
+export function snapShotDuration(value: unknown, provider: VideoGenProviderId): ShotDuration {
+  const ladder = durationLadder(provider);
   const num = typeof value === "number" ? value : Number(value);
-  return SHOT_DURATIONS.includes(num as ShotDuration) ? (num as ShotDuration) : 6;
+  if (!Number.isFinite(num)) return ladder[0];
+  if (ladder.includes(num as ShotDuration)) return num as ShotDuration;
+  return ladder.reduce((best, current) =>
+    Math.abs(current - num) < Math.abs(best - num) ? current : best,
+  );
 }
 
 /** 按总时长估这条片子该切几镜，只作为给模型的建议值。 */
@@ -145,7 +173,7 @@ ${CAMERA_MOVE_TABLE}
 }
 
 /** 未配置 AI 时的兜底：按脚本分段一段一镜，提示词留空等人填。 */
-export function createFallbackStoryboard(script: ScriptDraft): Storyboard {
+export function createFallbackStoryboard(script: ScriptDraft, provider: VideoGenProviderId): Storyboard {
   const pieces = [
     script.hook ? { stage: "钩子", text: script.hook } : null,
     ...script.segments.map((item) => ({ stage: item.stage, text: item.voiceover })),
@@ -155,7 +183,7 @@ export function createFallbackStoryboard(script: ScriptDraft): Storyboard {
   return {
     shots: pieces.map((item, index) => ({
       order: index + 1,
-      durationSec: 6 as ShotDuration,
+      durationSec: snapShotDuration(6, provider),
       shotSize: "",
       // 开场推近、收尾拉远是最不会错的两笔，其余留空等人挑
       cameraMove: index === 0 ? "推近" : index === pieces.length - 1 ? "拉远" : "",
@@ -170,13 +198,17 @@ export function createFallbackStoryboard(script: ScriptDraft): Storyboard {
 }
 
 /** 收敛模型返回：镜号重排、时长吸附，坏镜头直接丢掉而不是让整表报废。 */
-export function normalizeStoryboard(raw: Storyboard | undefined, fallback: Storyboard): Storyboard {
+export function normalizeStoryboard(
+  raw: Storyboard | undefined,
+  fallback: Storyboard,
+  provider: VideoGenProviderId,
+): Storyboard {
   if (!raw) return fallback;
   const shots = Array.isArray(raw.shots) ? raw.shots : [];
   const normalized: Shot[] = shots
     .filter((shot) => shot && (str(shot.visual) || str(shot.voiceover) || str(shot.framePrompt)))
     .map((shot, index) => {
-      const durationSec = snapShotDuration(shot.durationSec);
+      const durationSec = snapShotDuration(shot.durationSec, provider);
       const rawTrim = typeof shot.trimToSec === "number" ? shot.trimToSec : Number(shot.trimToSec);
       // 成片时长不能超过生成时长，也不接受 0 和负数——超了就等于没剪
       const trimToSec = Number.isFinite(rawTrim) && rawTrim > 0 ? Math.min(rawTrim, durationSec) : undefined;

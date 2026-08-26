@@ -122,7 +122,7 @@ export default function NoteList({
       <p className="text-sm text-muted">{notes.length === 0 ? "还没有笔记" : "没有符合条件的笔记"}</p>
       {notes.length === 0 && (
         <Button variant="secondary" size="sm" onClick={onGenerateFromMaterials}>
-          去素材库生成选题
+          从素材生成选题
         </Button>
       )}
     </div>

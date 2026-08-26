@@ -51,7 +51,7 @@ export default function AssetLibrary({ onNotice }: { onNotice: (notice: Notice) 
     try {
       setAssets(await listLibraryAssets(target));
     } catch (error) {
-      console.error("[AssetLibrary] 素材库读取失败", { action: "assets.list", kind: target, error });
+      console.error("[AssetLibrary] 资产库读取失败", { action: "assets.list", kind: target, error });
       setErrorMessage(error instanceof Error ? error.message : `${LIBRARY_COPY[target].label}读取失败`);
       setAssets([]);
     } finally {

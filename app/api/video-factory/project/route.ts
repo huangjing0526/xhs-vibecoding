@@ -60,6 +60,8 @@ export async function POST(request: NextRequest) {
       targetDurationSec: incoming.targetDurationSec ?? existing?.targetDurationSec ?? DEFAULT_TARGET_DURATION_SEC,
       rhythm: incoming.rhythm ?? existing?.rhythm ?? null,
       cast: incoming.cast ?? existing?.cast ?? EMPTY_CAST,
+      // 老项目没有这个字段，回落到加它之前唯一能生成的引擎
+      genProvider: incoming.genProvider ?? existing?.genProvider ?? "grok-cli",
       script: incoming.script ?? existing?.script ?? null,
       storyboard: incoming.storyboard ?? existing?.storyboard ?? null,
       // 注意这里不看 incoming.clips，理由见上面的注释

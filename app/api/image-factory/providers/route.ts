@@ -4,6 +4,9 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { apiOk } from "@/app/api/feishu/_utils";
+import { readGeminiKey } from "@/lib/engines/gemini";
+import { listGeminiModels } from "@/lib/engines/gemini/models";
+import { readQuotaState } from "@/lib/engines/gemini/quota";
 import type { CliProviderStatus, ImageCliModel } from "@/lib/imageFactory";
 
 export const runtime = "nodejs";
@@ -56,12 +59,58 @@ async function readCodexDefaultModel(): Promise<string | undefined> {
   }
 }
 
+/**
+ * Gemini 探的是 API key，不是 CLI。
+ *
+ * 本机装没装 `gemini` 二进制在这里已经不重要了——个人 Google 账号登录 CLI 会被
+ * Code Assist 以 UNSUPPORTED_CLIENT 拒掉（实测仍然如此），但 AI Studio 的 API key
+ * 不走那条路，是通的。所以这张卡片只关心：key 在不在、拉不拉得到模型、今天的额度还剩没剩。
+ */
+async function detectGemini(): Promise<CliProviderStatus> {
+  const base = {
+    id: "gemini" as const,
+    name: "Google · Gemini",
+    available: false,
+    authenticated: false,
+    models: [] as ImageCliModel[],
+  };
+
+  if (!readGeminiKey()) {
+    return { ...base, message: "未配置 GEMINI_API_KEY，在 .env.local 里填上即可启用" };
+  }
+
+  try {
+    const [catalog, quota] = await Promise.all([listGeminiModels(), readQuotaState()]);
+    const models = catalog.image.map((item) => ({ id: item.id, label: item.label }));
+    const defaultModel = models[0]?.id;
+
+    // 额度用完时仍然算「已认证」：key 是好的、模型也在，只是今天跑不了，
+    // 翻成「未登录」会把人引去查 key，查了也查不出问题
+    return {
+      ...base,
+      available: true,
+      authenticated: true,
+      message: quota ? quota.message : `API key 可用，探到 ${models.length} 个图像模型`,
+      models,
+      defaultModel,
+    };
+  } catch (error) {
+    console.error("[ImageFactory] Gemini 探测失败", {
+      userId: "local",
+      action: "imageFactory.providers.gemini",
+      error,
+    });
+    const message = error instanceof Error ? error.message : "探测失败";
+    return { ...base, available: true, message: `Gemini 探测失败：${message}` };
+  }
+}
+
 export async function GET() {
-  const [codexVersion, codexLogin, codexModel, geminiVersion, grokVersion, grokLogin] = await Promise.all([
+  const [codexVersion, codexLogin, codexModel, gemini, grokVersion, grokLogin] = await Promise.all([
     commandOutput("codex", ["--version"]),
     commandOutput("codex", ["login", "status"]),
     readCodexDefaultModel(),
-    commandOutput("gemini", ["--version"]),
+    detectGemini(),
     commandOutput("grok", ["--version"]),
     commandOutput("grok", ["--no-auto-update", "models"]),
   ]);
@@ -83,17 +132,7 @@ export async function GET() {
       models: codexModel ? [{ id: codexModel, label: codexModel }] : [],
       defaultModel: codexModel,
     },
-    {
-      id: "gemini",
-      name: "Google · Gemini",
-      available: Boolean(geminiVersion),
-      authenticated: false,
-      version: geminiVersion || undefined,
-      message: geminiVersion
-        ? "个人订阅登录被 Gemini CLI 拒绝，官方要求迁移到 Antigravity"
-        : "未安装 Gemini CLI",
-      models: [],
-    },
+    gemini,
     {
       id: "grok",
       name: "xAI · Grok",
