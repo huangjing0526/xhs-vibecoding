@@ -10,6 +10,13 @@ interface WorkflowAIConfig {
   baseURL?: string;
 }
 
+/** 随 prompt 一起送去看的图。只走内存不落盘，调用方自己决定压到多大。 */
+export interface WorkflowImage {
+  /** 收窄到各家都认的这几种，省掉调用处的类型断言 */
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  base64: string;
+}
+
 interface GenerateJsonOptions<T> {
   action: string;
   prompt: string;
@@ -17,6 +24,8 @@ interface GenerateJsonOptions<T> {
   maxTokens?: number;
   /** 强制指定 provider（如道库判断强制走 anthropic），不传则按 env 自动探测 */
   forceProvider?: WorkflowAIProvider;
+  /** 要模型看图时传，provider 不支持视觉的话由调用方自己承担 */
+  images?: WorkflowImage[];
 }
 
 function getEnv(name: string): string | undefined {
@@ -88,7 +97,25 @@ function extractJson(text: string): unknown {
     throw new Error("模型返回 JSON 不完整");
   }
 
-  return JSON.parse(sliced.slice(0, end + 1));
+  const body = sliced.slice(0, end + 1);
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    // 尾逗号是模型最常见的一种坏 JSON，修掉再试一次；还是不行就照实抛
+    const repaired = body.replace(/,(\s*[}\]])/g, "$1");
+    if (repaired === body) throw error;
+    return JSON.parse(repaired);
+  }
+}
+
+/** 坏 JSON 是模型这一轮抽风，重来一轮通常就好了；网络类错误由 runWithRetry 管。 */
+function isMalformedJsonError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : "";
+  return (
+    error instanceof SyntaxError ||
+    message.includes("模型未返回 JSON") ||
+    message.includes("模型返回 JSON 不完整")
+  );
 }
 
 function sleep(ms: number): Promise<void> {
@@ -138,6 +165,7 @@ export async function generateWorkflowJson<T>({
   fallback,
   maxTokens = 3000,
   forceProvider,
+  images,
 }: GenerateJsonOptions<T>): Promise<{ result: T; usedFallback: boolean; provider: WorkflowAIProvider }> {
   let config = detectWorkflowAIConfig();
 
@@ -161,16 +189,27 @@ export async function generateWorkflowJson<T>({
     return { result: fallback, usedFallback: true, provider: "mock" };
   }
 
-  try {
+  /** 一次完整尝试：调模型 + 解析。解析失败要连模型调用一起重来，光重解析没意义。 */
+  const attemptOnce = async (): Promise<T> => {
     let rawText = "";
 
     if (config.provider === "anthropic") {
       const message = await runWithRetry(action, config.provider, async () => {
         const anthropic = new Anthropic({ apiKey: config.apiKey });
+        // 图放在文字前面：模型先看完素材再读要求，比反过来准
+        const content: Anthropic.MessageParam["content"] = images?.length
+          ? [
+              ...images.map((image) => ({
+                type: "image" as const,
+                source: { type: "base64" as const, media_type: image.mimeType, data: image.base64 },
+              })),
+              { type: "text" as const, text: prompt },
+            ]
+          : prompt;
         return anthropic.messages.create({
           model: config.model || "claude-sonnet-4-5-20251001",
           max_tokens: maxTokens,
-          messages: [{ role: "user", content: prompt }],
+          messages: [{ role: "user", content }],
         });
       });
       rawText = message.content
@@ -182,20 +221,45 @@ export async function generateWorkflowJson<T>({
           apiKey: config.apiKey,
           baseURL: config.baseURL,
         });
+        // gemini / siliconflow / openai 都吃 OpenAI 的多模态消息格式，走同一条分支
+        const content: OpenAI.Chat.ChatCompletionContentPart[] | string = images?.length
+          ? [
+              ...images.map((image) => ({
+                type: "image_url" as const,
+                image_url: { url: `data:${image.mimeType};base64,${image.base64}` },
+              })),
+              { type: "text" as const, text: prompt },
+            ]
+          : prompt;
         return openai.chat.completions.create({
           model: config.model || "gpt-4o-mini",
-          messages: [{ role: "user", content: prompt }],
+          messages: [{ role: "user", content }],
           temperature: 0.7,
         });
       });
       rawText = completion.choices[0]?.message?.content || "";
     }
 
-    return {
-      result: extractJson(rawText) as T,
-      usedFallback: false,
-      provider: config.provider,
-    };
+    return extractJson(rawText) as T;
+  };
+
+  try {
+    let result: T;
+    try {
+      result = await attemptOnce();
+    } catch (error) {
+      if (!isMalformedJsonError(error)) throw error;
+      console.warn("[WorkflowAI] 模型返回的 JSON 解析不了，整轮重来一次", {
+        userId: "local",
+        tenantId: "feishu",
+        action,
+        provider: config.provider,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      result = await attemptOnce();
+    }
+
+    return { result, usedFallback: false, provider: config.provider };
   } catch (error) {
     console.error("[WorkflowAI] 生成失败", {
       userId: "local",
