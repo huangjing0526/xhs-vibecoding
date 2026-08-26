@@ -12,6 +12,7 @@ import {
   VIDEO_PLATFORM_LABEL,
   type VideoExtractResult,
 } from "@/lib/videoExtract";
+import { analysisToSkeleton, type BenchmarkSkeleton } from "@/lib/videoFactory";
 import type { BloggerDistillation } from "@/lib/bloggerWorkflow";
 import type { Notice } from "./types";
 
@@ -21,6 +22,8 @@ interface VideoExtractPanelProps {
   onSinkToDaoku: (distillation: BloggerDistillation) => void;
   /** 沉淀后跳到对标拆解页 */
   onGoBlogger: () => void;
+  /** 把结构骨架送进视频工厂，接着写自己的脚本 */
+  onSendToVideoFactory: (skeleton: BenchmarkSkeleton) => void;
 }
 
 function formatDuration(sec: number): string {
@@ -41,7 +44,15 @@ const FieldLabel = ({ children }: { children: React.ReactNode }) => (
 );
 
 /** 拆片结果展示：result 存在即 video/analysis 齐全（皆为必填字段），无需再逐个判空。 */
-function ResultView({ result, onSink }: { result: VideoExtractResult; onSink: () => void }) {
+function ResultView({
+  result,
+  onSink,
+  onSendToVideoFactory,
+}: {
+  result: VideoExtractResult;
+  onSink: () => void;
+  onSendToVideoFactory: () => void;
+}) {
   const { video, analysis } = result;
   return (
     <div className="space-y-5">
@@ -85,9 +96,14 @@ function ResultView({ result, onSink }: { result: VideoExtractResult; onSink: ()
       <Card>
         <div className="flex items-center justify-between gap-3">
           <SectionTitle>脚本结构拆解</SectionTitle>
-          <Button variant="secondary" onClick={onSink}>
-            沉淀进对标拆解道库
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            <Button variant="secondary" onClick={onSink}>
+              沉淀进对标拆解道库
+            </Button>
+            <Button variant="primary" onClick={onSendToVideoFactory}>
+              送进视频工厂
+            </Button>
+          </div>
         </div>
 
         {analysis.hook && (
@@ -136,7 +152,12 @@ function ResultView({ result, onSink }: { result: VideoExtractResult; onSink: ()
   );
 }
 
-export default function VideoExtractPanel({ onNotice, onSinkToDaoku, onGoBlogger }: VideoExtractPanelProps) {
+export default function VideoExtractPanel({
+  onNotice,
+  onSinkToDaoku,
+  onGoBlogger,
+  onSendToVideoFactory,
+}: VideoExtractPanelProps) {
   const [input, setInput] = useState("");
   const [result, setResult] = useState<VideoExtractResult | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -173,6 +194,19 @@ export default function VideoExtractPanel({ onNotice, onSinkToDaoku, onGoBlogger
     onGoBlogger();
   };
 
+  /** 只把结构送下游：原句和原画面留在这一页，不进改写环节。 */
+  const handleSendToVideoFactory = () => {
+    if (!result) return;
+    onSendToVideoFactory(
+      analysisToSkeleton(result.analysis, {
+        platform: VIDEO_PLATFORM_LABEL[result.video.platform],
+        author: result.video.author,
+        title: result.video.title,
+        videoUrl: result.video.videoUrl,
+      }),
+    );
+  };
+
   return (
     <div className="space-y-5">
       <Card>
@@ -194,7 +228,7 @@ export default function VideoExtractPanel({ onNotice, onSinkToDaoku, onGoBlogger
         </div>
       </Card>
 
-      {result && <ResultView result={result} onSink={handleSink} />}
+      {result && <ResultView result={result} onSink={handleSink} onSendToVideoFactory={handleSendToVideoFactory} />}
     </div>
   );
 }

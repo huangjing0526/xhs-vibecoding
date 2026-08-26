@@ -13,6 +13,7 @@ export type WorkbenchAreaId =
   | "review"
   | "images"
   | "video"
+  | "videoFactory"
   | "rewrite"
   | "blogger"
   | "extract"

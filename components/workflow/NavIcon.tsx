@@ -1,4 +1,4 @@
-import { BarChart3, Clapperboard, Eraser, Flame, Images, Inbox, PenLine, Radar, Scissors, ShieldCheck } from "lucide-react";
+import { BarChart3, Clapperboard, Eraser, Film, Flame, Images, Inbox, PenLine, Radar, Scissors, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { WorkbenchAreaId } from "@/components/workflow/WorkbenchShell";
 
@@ -8,6 +8,7 @@ const ICONS: Record<WorkbenchAreaId, LucideIcon> = {
   library: Inbox,
   images: Images,
   video: Clapperboard,
+  videoFactory: Film,
   quality: ShieldCheck,
   review: BarChart3,
   rewrite: Flame,

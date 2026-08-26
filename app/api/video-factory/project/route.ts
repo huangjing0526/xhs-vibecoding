@@ -1,0 +1,74 @@
+import { rm } from "node:fs/promises";
+import { NextRequest } from "next/server";
+import { apiBadRequest, apiError, apiOk, readJsonBody } from "@/app/api/feishu/_utils";
+import {
+  isSafeSegment,
+  listProjects,
+  newProjectId,
+  projectDir,
+  readProject,
+  writeProject,
+} from "@/app/api/video-factory/_shared";
+import { DEFAULT_TARGET_DURATION_SEC, EMPTY_CAST, EMPTY_TOPIC_INPUT, type VideoProject } from "@/lib/videoFactory";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/** 不带 id 取全部（按更新时间倒序），带 id 取一个。 */
+export async function GET(request: NextRequest) {
+  const projectId = new URL(request.url).searchParams.get("id") || "";
+  try {
+    if (!projectId) return apiOk({ projects: await listProjects() }, "项目列表已就绪");
+    if (!isSafeSegment(projectId)) return apiBadRequest("项目 id 不合法");
+
+    const project = await readProject(projectId);
+    if (!project) return apiBadRequest("这个项目不存在或已被删除");
+    return apiOk({ project }, "项目已读取");
+  } catch (error) {
+    return apiError(error, "videoFactory.project.get", "项目读取失败");
+  }
+}
+
+/** 整份覆盖保存。四步共用一个项目，前端每步结束存一次，刷新不丢。 */
+export async function POST(request: NextRequest) {
+  try {
+    const body = await readJsonBody<{ project?: Partial<VideoProject> }>(request, "videoFactory.project.readJson");
+    const incoming = body.project;
+    if (!incoming) return apiBadRequest("缺少项目内容");
+
+    const id = incoming.id && isSafeSegment(incoming.id) ? incoming.id : newProjectId();
+    const existing = await readProject(id);
+    const now = new Date().toISOString();
+
+    const project: VideoProject = {
+      id,
+      title: (incoming.title || existing?.title || "").trim() || "未命名视频",
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      skeleton: incoming.skeleton ?? existing?.skeleton ?? null,
+      topic: incoming.topic ?? existing?.topic ?? EMPTY_TOPIC_INPUT,
+      targetDurationSec: incoming.targetDurationSec ?? existing?.targetDurationSec ?? DEFAULT_TARGET_DURATION_SEC,
+      rhythm: incoming.rhythm ?? existing?.rhythm ?? null,
+      cast: incoming.cast ?? existing?.cast ?? EMPTY_CAST,
+      script: incoming.script ?? existing?.script ?? null,
+      storyboard: incoming.storyboard ?? existing?.storyboard ?? null,
+      clips: incoming.clips ?? existing?.clips ?? [],
+    };
+
+    return apiOk({ project: await writeProject(project) }, "已保存");
+  } catch (error) {
+    return apiError(error, "videoFactory.project.save", "项目保存失败");
+  }
+}
+
+/** 删项目：连同它的首帧图和成片一起删，不留孤儿文件。 */
+export async function DELETE(request: NextRequest) {
+  const projectId = new URL(request.url).searchParams.get("id") || "";
+  try {
+    if (!isSafeSegment(projectId)) return apiBadRequest("项目 id 不合法");
+    await rm(projectDir(projectId), { recursive: true, force: true });
+    return apiOk({ id: projectId }, "项目已删除");
+  } catch (error) {
+    return apiError(error, "videoFactory.project.delete", "项目删除失败");
+  }
+}

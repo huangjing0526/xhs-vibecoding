@@ -16,10 +16,22 @@ import {
   type ReviewMetric,
   type ReviewResult,
 } from "@/lib/xhsWorkflow";
-import type { CliProviderStatus, ImageGenerationResult, ModelAssetEntry } from "@/lib/imageFactory";
+import type { CliProviderStatus, ImageGenerationResult, LibraryAssetEntry, ModelAssetEntry } from "@/lib/imageFactory";
 import type { LocalDocCategory, LocalDocFileSummary } from "@/lib/localDocs";
 import type { ExtractedClue } from "@/lib/clueIntake";
 import type { VideoExtractResult } from "@/lib/videoExtract";
+import type {
+  BenchmarkRhythm,
+  BenchmarkSkeleton,
+  CastRef,
+  CastSlot,
+  ScriptDraft,
+  ShotGenerationResult,
+  Storyboard,
+  TopicInput,
+  VideoGenProviderStatus,
+  VideoProject,
+} from "@/lib/videoFactory";
 import type { InlineRewriteAction } from "@/lib/inlineRewrite";
 
 export interface WorkflowSnapshot {
@@ -553,5 +565,182 @@ export async function deleteModelAsset(modelId: string): Promise<{ id: string }>
     `/api/image-factory/models?id=${encodeURIComponent(modelId)}`,
     { method: "DELETE" },
     "移除模特失败"
+  );
+}
+
+/** 视频工厂：拿对标结构骨架 + 自己的选题，写一版新脚本。 */
+export async function rewriteVideoScript(options: {
+  skeleton: BenchmarkSkeleton | null;
+  topic: TopicInput;
+  targetDurationSec: number;
+  signal?: AbortSignal;
+}): Promise<{ script: ScriptDraft; usedFallback: boolean; provider: string }> {
+  return workflowRequest(
+    "/api/video-factory/script",
+    {
+      method: "POST",
+      signal: options.signal,
+      body: JSON.stringify({
+        skeleton: options.skeleton,
+        topic: options.topic,
+        targetDurationSec: options.targetDurationSec,
+      }),
+    },
+    "脚本改写失败"
+  );
+}
+
+/** 视频工厂：把脚本拆成镜头表，每镜带首帧提示词与运动提示词。 */
+export async function analyzeStoryboard(options: {
+  script: ScriptDraft;
+  visualStyle?: string;
+  rhythm?: BenchmarkRhythm | null;
+  signal?: AbortSignal;
+}): Promise<{ storyboard: Storyboard; usedFallback: boolean; provider: string }> {
+  return workflowRequest(
+    "/api/video-factory/storyboard",
+    {
+      method: "POST",
+      signal: options.signal,
+      body: JSON.stringify({
+        script: options.script,
+        visualStyle: options.visualStyle,
+        rhythm: options.rhythm,
+      }),
+    },
+    "分镜拆解失败"
+  );
+}
+
+/** 视频工厂：拆一条对标视频的真实切镜节奏，返回镜头表与关键帧。 */
+export async function detectBenchmarkRhythm(formData: FormData): Promise<{ rhythm: BenchmarkRhythm }> {
+  const response = await fetch("/api/video-factory/benchmark", { method: "POST", body: formData });
+  return parseApiResponse<{ rhythm: BenchmarkRhythm }>(response, "节奏拆解失败");
+}
+
+/** 视频工厂：拆过的节奏模板，可跨项目复用。 */
+export async function listBenchmarkRhythms(): Promise<{ rhythms: BenchmarkRhythm[] }> {
+  const response = await fetch("/api/video-factory/benchmark", { cache: "no-store" });
+  return parseApiResponse<{ rhythms: BenchmarkRhythm[] }>(response, "节奏模板读取失败");
+}
+
+/** 可复用参考素材库（模特 / 产品）：两种库同一套接口，只差路径。 */
+export async function listLibraryAssets(
+  kind: "models" | "products",
+): Promise<LibraryAssetEntry[]> {
+  const response = await fetch(`/api/image-factory/${kind}`, { cache: "no-store" });
+  const data = await parseApiResponse<Record<string, LibraryAssetEntry[]>>(response, "素材库读取失败");
+  return data[kind] || [];
+}
+
+/** 素材库：移除一条，图片一并删掉。 */
+export async function deleteLibraryAsset(kind: "models" | "products", assetId: string): Promise<{ id: string }> {
+  return workflowRequest<{ id: string }>(
+    `/api/image-factory/${kind}?id=${encodeURIComponent(assetId)}`,
+    { method: "DELETE" },
+    "移除素材失败"
+  );
+}
+
+/**
+ * 视频工厂：给项目绑定角色 / 产品参考图。
+ * 走 multipart 以支持现场上传，因此不能用 workflowRequest（它固定 JSON 头）。
+ */
+export async function bindProjectCast(formData: FormData): Promise<{ slot: CastSlot; cast: CastRef }> {
+  const response = await fetch("/api/video-factory/cast", { method: "POST", body: formData });
+  return parseApiResponse<{ slot: CastSlot; cast: CastRef }>(response, "绑定参考图失败");
+}
+
+/** 视频工厂：解绑某个槽位。 */
+export async function clearProjectCast(projectId: string, slot: CastSlot): Promise<{ slot: CastSlot }> {
+  return workflowRequest<{ slot: CastSlot }>(
+    `/api/video-factory/cast?projectId=${encodeURIComponent(projectId)}&slot=${slot}`,
+    { method: "DELETE" },
+    "取消绑定失败"
+  );
+}
+
+/** 视频工厂：按分镜提示词生成一镜的首帧图，自动带上绑定的角色与产品。 */
+export async function generateShotFrame(
+  formData: FormData,
+  signal?: AbortSignal,
+): Promise<{ projectId: string; shotOrder: number; framePath: string }> {
+  const response = await fetch("/api/video-factory/frame", { method: "POST", body: formData, signal });
+  return parseApiResponse(response, "首帧生成失败");
+}
+
+/** 视频工厂：让模型看关键帧，判断这条对标能不能用 AI 复刻。 */
+export async function screenReplicability(
+  rhythmId: string,
+): Promise<{ rhythm: BenchmarkRhythm; usedFallback: boolean; provider: string }> {
+  return workflowRequest(
+    "/api/video-factory/benchmark/screen",
+    { method: "POST", body: JSON.stringify({ id: rhythmId }) },
+    "可复刻性筛查失败"
+  );
+}
+
+/** 视频工厂：删一份节奏模板，源视频与关键帧一起删。 */
+export async function deleteBenchmarkRhythm(rhythmId: string): Promise<{ id: string }> {
+  return workflowRequest<{ id: string }>(
+    `/api/video-factory/benchmark?id=${encodeURIComponent(rhythmId)}`,
+    { method: "DELETE" },
+    "节奏模板删除失败"
+  );
+}
+
+/** 视频工厂：探测图生视频引擎的可用状态。 */
+export async function getVideoGenProviders(): Promise<{ providers: VideoGenProviderStatus[] }> {
+  const response = await fetch("/api/video-factory/providers", { cache: "no-store" });
+  return parseApiResponse<{ providers: VideoGenProviderStatus[] }>(response, "生成引擎状态检查失败");
+}
+
+/**
+ * 视频工厂：生成一镜。
+ * 走 multipart 上传首帧图，因此不能用 workflowRequest（它固定 JSON 头）。
+ */
+export async function generateShotClip(
+  formData: FormData,
+  signal?: AbortSignal
+): Promise<ShotGenerationResult> {
+  const response = await fetch("/api/video-factory/generate", { method: "POST", body: formData, signal });
+  return parseApiResponse<ShotGenerationResult>(response, "图生视频失败");
+}
+
+/** 视频工厂：把在即梦/可灵手动生成好的 mp4 挂到某一镜上。 */
+export async function attachShotClip(formData: FormData): Promise<ShotGenerationResult> {
+  const response = await fetch("/api/video-factory/clip", { method: "POST", body: formData });
+  return parseApiResponse<ShotGenerationResult>(response, "成片上传失败");
+}
+
+/** 视频工厂：图片工厂里可以拿来当首帧的图。 */
+export async function listFrameCandidates(): Promise<{
+  frames: Array<{ path: string; label: string; createdAt: string }>;
+}> {
+  const response = await fetch("/api/video-factory/frames", { cache: "no-store" });
+  return parseApiResponse(response, "首帧图列表读取失败");
+}
+
+/** 视频工厂：项目列表，最近改的在前。 */
+export async function listVideoProjects(): Promise<{ projects: VideoProject[] }> {
+  const response = await fetch("/api/video-factory/project", { cache: "no-store" });
+  return parseApiResponse<{ projects: VideoProject[] }>(response, "项目列表读取失败");
+}
+
+/** 视频工厂：整份覆盖保存，每步结束存一次。 */
+export async function saveVideoProject(project: Partial<VideoProject>): Promise<{ project: VideoProject }> {
+  return workflowRequest<{ project: VideoProject }>(
+    "/api/video-factory/project",
+    { method: "POST", body: JSON.stringify({ project }) },
+    "项目保存失败"
+  );
+}
+
+/** 视频工厂：删项目，产物一起删。 */
+export async function deleteVideoProject(projectId: string): Promise<{ id: string }> {
+  return workflowRequest<{ id: string }>(
+    `/api/video-factory/project?id=${encodeURIComponent(projectId)}`,
+    { method: "DELETE" },
+    "项目删除失败"
   );
 }

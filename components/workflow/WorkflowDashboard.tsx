@@ -98,6 +98,8 @@ import {
   type WorkflowSnapshot,
 } from "@/lib/workflowClient";
 import type { VideoPlan } from "@/lib/videoWorkflow";
+import type { BenchmarkSkeleton } from "@/lib/videoFactory";
+import VideoFactory from "./VideoFactory";
 import SourceWorkspace from "./SourceWorkspace";
 import type { Notice } from "./types";
 
@@ -121,6 +123,12 @@ const AREAS: Record<WorkbenchAreaId, AreaDef> = {
   library: { group: "内容流程", label: "素材库", hint: "攒料 · 出选题", subtitle: "攒料、提炼、导入——所有选题的来源。" },
   images: { group: "内容流程", label: "图片工厂", hint: "封面 · 配图 · AI 生图", subtitle: "笔记的封面与配图，以及用本机 CLI 跑的 AI 生图。" },
   video: { group: "内容流程", label: "视频脚本", hint: "口播 · 分镜", subtitle: "把笔记转成口播 / 分镜视频脚本。" },
+  videoFactory: {
+    group: "内容流程",
+    label: "视频工厂",
+    hint: "改写 · 分镜 · 出片",
+    subtitle: "对标结构改写成自己的脚本，拆成分镜，再逐镜生成 AI 视频。",
+  },
   quality: { group: "内容流程", label: "发布检查", hint: "质检 · 发布", subtitle: "发布前规则质检与兜底修复。" },
   review: { group: "内容流程", label: "数据复盘", hint: "看数据 · 拿建议", subtitle: "已发布笔记的数据表现与改进建议。" },
   rewrite: { group: "AI 工具", label: "爆款优化", subtitle: "对标道库改写，贴近爆款结构。" },
@@ -141,7 +149,7 @@ const IMAGE_TAB_OPTIONS = IMAGE_TABS.map(({ value, label }) => ({ value, label }
 
 // 侧栏导航，从 AREAS 派生：AREA_ORDER 是 Record 键的完整列表，
 // 新增区 id 时类型层会强制补 AREAS，从而保证它一定有导航入口。
-const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "images", "video", "quality", "review", "rewrite", "blogger", "extract", "watermark"];
+const AREA_ORDER: WorkbenchAreaId[] = ["workbench", "library", "images", "video", "videoFactory", "quality", "review", "rewrite", "blogger", "extract", "watermark"];
 const GROUP_ORDER: AreaGroup[] = ["内容流程", "AI 工具"];
 const toNavItem = (id: WorkbenchAreaId): WorkbenchNavItem => ({
   id,
@@ -316,6 +324,8 @@ export default function WorkflowDashboard() {
   // 当前工作区，默认落地工作台；可选值见 WorkbenchAreaId
   const [area, setArea] = useState<WorkbenchAreaId>("workbench");
   const [bloggerDistillation, setBloggerDistillation] = useState<BloggerDistillation | null>(null);
+  // 拆片页送往视频工厂的结构骨架，视频工厂接住后立刻清空——否则来回切区会重复灌一次
+  const [videoSkeleton, setVideoSkeleton] = useState<BenchmarkSkeleton | null>(null);
   // 每条选题各自绑定的对标博主道库：topicId -> bloggerId（""=不绑定）
   const [topicDaokuMap, setTopicDaokuMap] = useState<Record<string, string>>({});
   const [videoPlan, setVideoPlan] = useState<VideoPlan | null>(null);
@@ -1473,12 +1483,26 @@ export default function WorkflowDashboard() {
           </ToolPage>
         )}
 
+        {area === "videoFactory" && (
+          <ToolPage area="videoFactory" onGoWorkbench={() => setArea("workbench")}>
+            <VideoFactory
+              onNotice={setNotice}
+              incomingSkeleton={videoSkeleton}
+              onSkeletonConsumed={() => setVideoSkeleton(null)}
+            />
+          </ToolPage>
+        )}
+
         {area === "extract" && (
           <ToolPage area="extract" onGoWorkbench={() => setArea("workbench")}>
             <VideoExtractPanel
               onNotice={setNotice}
               onSinkToDaoku={setBloggerDistillation}
               onGoBlogger={() => setArea("blogger")}
+              onSendToVideoFactory={(skeleton) => {
+                setVideoSkeleton(skeleton);
+                setArea("videoFactory");
+              }}
             />
           </ToolPage>
         )}
