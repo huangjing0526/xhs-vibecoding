@@ -18,7 +18,10 @@ export type ImageTemplateThumb =
   | "note-flatlay"
   | "talking-head"
   | "brand-kit"
-  | "style-transfer";
+  | "style-transfer"
+  | "hanger-shot"
+  | "garment-views"
+  | "cover-base";
 
 export interface ImageTemplateSlot {
   id: string;
@@ -34,6 +37,10 @@ export interface ImageTemplateView {
   id: string;
   label: string;
   hint: string;
+  /** 这个视角自己的画幅；不填跟模板走。头肩近景和全身站姿本就不该是同一个比例。 */
+  aspectRatio?: string;
+  /** 所属分组，UI 据此成组显示并提供「只出这组」；不填归到默认组。 */
+  group?: string;
   /** 这个视角跑出来的样例，勾选前就能看到它长什么样；没有就只显示名称。 */
   preview?: string;
 }
@@ -62,7 +69,20 @@ export interface ImageFactoryTemplate {
   preview?: string;
   /** 产出的是可复用的模特资产，结果区据此给出「存入模特库」入口。 */
   producesModelAsset?: boolean;
+  /**
+   * 库里可能已经有现成的，进来先给「直接选现成的」，其次才是生成。
+   * 模特这种一次做齐、反复复用的资产，默认让人再生成一遍是纯浪费。
+   */
+  libraryFirst?: boolean;
+  /** 产出后能交给下一环继续加工；cover 表示可拿去封面编辑器叠标题。 */
+  handoff?: "cover";
   builtIn?: boolean;
+}
+
+/** 引擎下可选的一个驱动模型，id 直接透传给 CLI 的 --model / -m。 */
+export interface ImageCliModel {
+  id: string;
+  label: string;
 }
 
 export interface CliProviderStatus {
@@ -72,11 +92,17 @@ export interface CliProviderStatus {
   authenticated: boolean;
   version?: string;
   message: string;
+  /** 探测到的可选模型；探不出来就只有一条默认项，UI 仍允许手填。 */
+  models: ImageCliModel[];
+  /** 不选模型时 CLI 自己会用的那个，用于在下拉里标出「默认」。 */
+  defaultModel?: string;
 }
 
 export interface ImageGenerationResult {
   jobId: string;
   provider: ImageCliProvider;
+  /** 本次实际指定的驱动模型；没指定就是 CLI 自己的默认值 */
+  model?: string;
   imageDataUrl: string;
   outputPath: string;
   /** 本次运行的产物目录，前端直接展示，不用从 outputPath 反推 */
@@ -108,6 +134,9 @@ export const IMAGE_TEMPLATE_THUMB_OPTIONS: Array<{ id: ImageTemplateThumb; label
   { id: "talking-head", label: "人物出镜" },
   { id: "brand-kit", label: "视觉素材包" },
   { id: "style-transfer", label: "风格迁移" },
+  { id: "hanger-shot", label: "衣架挂拍" },
+  { id: "garment-views", label: "服装三视图" },
+  { id: "cover-base", label: "封面底图" },
 ];
 
 /**
@@ -122,6 +151,11 @@ export interface LibraryAssetEntry {
   createdAt: string;
   extension: string;
   imageUrl: string;
+  /**
+   * 主体特征描述：模特的体貌年龄气质、产品的材质款式。
+   * 只给图锁不住身份，描述跟着图一起喂给 CLI 才稳得住同一个人 / 同一件货。
+   */
+  traits?: string;
 }
 
 /** 模特库条目。历史名字，保留给已有调用方。 */

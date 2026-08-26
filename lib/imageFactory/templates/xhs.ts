@@ -3,6 +3,34 @@ import type { ImageFactoryTemplate } from "../types";
 /** 小红书笔记用的实拍感配图与出镜帧。 */
 export const XHS_TEMPLATES: ImageFactoryTemplate[] = [
   {
+    id: "cover-base",
+    name: "封面底图",
+    category: "小红书",
+    description: "生成留好叠字位置的封面底图，标题在编辑器里叠，字不会糊。",
+    prompt: "生成一张小红书封面用的底图。画面要有明确的视觉主体与氛围，但必须按指定视角在画面里留出一整块干净、低对比、无碎细节的区域用来后期叠标题文字，这块区域不能被主体、强纹理或高光切碎。整体色调统一、观感高级，主体清晰不杂乱。画面里绝对不能出现任何文字、字母、数字、水印、logo 与贴纸——标题由后期叠加。只输出一张底图。",
+    aspectRatio: "3:4",
+    thumb: "cover-base",
+    handoff: "cover",
+    slots: [
+      { id: "subject", label: "主体图", description: "可选，封面里要出现的主体（商品 / 人物 / 场景）", required: false },
+      { id: "style", label: "风格参考", description: "可选，用于确定配色、材质与氛围", required: false },
+    ],
+    views: [
+      { id: "top-space", label: "上方留白", hint: "主体压在画面下半部，上方三分之一留出干净的叠字区。" },
+      { id: "bottom-space", label: "下方留白", hint: "主体占据画面上半部，下方三分之一留出干净的叠字区。" },
+      { id: "side-space", label: "侧边留白", hint: "主体偏向画面一侧，另一侧整条留出干净的竖向叠字区。" },
+    ],
+    scenePresets: [
+      { id: "clean-desk", label: "干净桌面", prompt: "浅色桌面俯拍，物件摆放克制，大片留白，自然光柔和。" },
+      { id: "morning-window", label: "晨光窗边", prompt: "窗边晨光，白色窗纱透光，浅暖色调，空气感强。" },
+      { id: "soft-gradient", label: "柔和渐变", prompt: "低饱和的柔和渐变背景，只有光影层次没有具体物件，极简高级。" },
+      { id: "paper-texture", label: "纸张质感", prompt: "米白纸张质感铺满画面，细微纤维纹理与浅浅的折痕阴影。" },
+      { id: "night-warm", label: "夜晚暖光", prompt: "夜晚室内，暖色台灯打亮一角，背景沉入深色，情绪安静。" },
+      { id: "outdoor-green", label: "户外绿意", prompt: "户外绿植前的自然光，背景虚化成柔和的绿色块面，清新通透。" },
+    ],
+    builtIn: true,
+  },
+  {
     id: "note-flatlay",
     name: "笔记实拍配图",
     category: "小红书",

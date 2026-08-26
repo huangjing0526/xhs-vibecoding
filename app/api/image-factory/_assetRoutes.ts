@@ -29,6 +29,7 @@ export function createAssetHandlers(kind: AssetKind) {
             sourcePath: String(item?.sourcePath || "").trim(),
             name: String(item?.name || "").trim(),
             sourceLabel: String(item?.sourceLabel || "").trim(),
+            traits: String(item?.traits || "").trim(),
           }))
           .filter((item) => item.sourcePath && item.name);
         if (items.length === 0) return apiBadRequest(`请填写名称后再存入${label}`);

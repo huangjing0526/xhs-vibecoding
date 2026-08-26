@@ -2,17 +2,37 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { BookmarkPlus, Check, Download, ImagePlus, Loader2, Maximize2, Pencil, Plus, RefreshCw, Sparkles, Trash2, UserRound, X } from "lucide-react";
+import {
+  BookmarkPlus,
+  Check,
+  Download,
+  ImagePlus,
+  Layers,
+  Loader2,
+  Maximize2,
+  Pencil,
+  Plus,
+  Sparkles,
+  Trash2,
+  Type,
+  UserRound,
+  X,
+} from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
 import Card from "@/components/ui/Card";
-import EmptyState from "@/components/ui/EmptyState";
-import ModalOverlay from "@/components/ui/ModalOverlay";
 import DirectoryField from "@/components/workflow/DirectoryField";
+import ImageEngineCard from "@/components/workflow/ImageEngineCard";
+import ImageTemplateTabs from "@/components/workflow/ImageTemplateTabs";
 import SegmentedControl from "@/components/workflow/SegmentedControl";
 import TemplateThumb from "@/components/workflow/TemplateThumb";
+import ModelLibraryBoard from "@/components/workflow/ModelLibraryBoard";
+import ModelLibraryPicker, { type ModelPick } from "@/components/workflow/ModelLibraryPicker";
+import ModelTemplateStrip from "@/components/workflow/ModelTemplateStrip";
+import TemplateEditor, { PreviewLightbox } from "@/components/workflow/ImageTemplateEditor";
 import { useAbortableTasks } from "@/components/workflow/useAbortableTasks";
+import { groupInOrder } from "@/lib/collections";
 import { downloadImageAsset } from "@/lib/imageWorkflow";
 import {
   deleteModelAsset,
@@ -25,20 +45,21 @@ import {
 } from "@/lib/workflowClient";
 import {
   BUILT_IN_IMAGE_TEMPLATES,
+  groupModelProfiles,
   IMAGE_FACTORY_STORAGE_KEY,
   type CliProviderStatus,
   type ImageCliProvider,
-  IMAGE_TEMPLATE_THUMB_OPTIONS,
   type ImageFactoryTemplate,
   type ImageGenerationResult,
   type ImageTemplateSlot,
-  type ImageTemplateThumb,
   type ImageTemplateView,
   type ModelAssetEntry,
+  type ModelProfile,
 } from "@/lib/imageFactory";
 
 const GENERATE_TASK_KEY = "imageFactory.generate";
 const OUTPUT_DIR_STORAGE_KEY = "vibenote.image-factory.output-dir.v1";
+const ENGINE_STORAGE_KEY = "vibenote.image-factory.engine.v1";
 
 /** 模特库里的图存在服务端，塞回上传槽位前先取回来包成 File，走的还是同一条 multipart 链路。 */
 async function modelAssetToFile(entry: ModelAssetEntry): Promise<File> {
@@ -48,7 +69,7 @@ async function modelAssetToFile(entry: ModelAssetEntry): Promise<File> {
 
 /**
  * CLI 状态检查要 spawn 好几个子进程，代价不小；而它在一次会话里几乎不变。
- * 合并成图片区后来回切分段会反复挂载本组件，用一份模块级短缓存挡住重复探测，手动刷新仍然直连。
+ * 切换产出类型会反复重渲染本组件，用一份模块级短缓存挡住重复探测，手动刷新仍然直连。
  */
 const PROVIDER_CACHE_TTL_MS = 60_000;
 let providerCache: { at: number; providers: CliProviderStatus[] } | null = null;
@@ -65,6 +86,12 @@ interface SelectedInput {
   previewUrl: string;
 }
 
+/** 选中的模特身份：图 + 描述一起交给后端，跨产出跨场景才是同一个人。 */
+interface ModelIdentity {
+  name: string;
+  traits: string;
+}
+
 function loadCustomTemplates(): ImageFactoryTemplate[] {
   if (typeof window === "undefined") return [];
   try {
@@ -76,36 +103,7 @@ function loadCustomTemplates(): ImageFactoryTemplate[] {
   }
 }
 
-function ProviderButton({
-  provider,
-  selected,
-  onSelect,
-}: {
-  provider: CliProviderStatus;
-  selected: boolean;
-  onSelect: (provider: ImageCliProvider) => void;
-}) {
-  const enabled = provider.available && provider.authenticated;
-  return (
-    <button
-      type="button"
-      disabled={!enabled}
-      onClick={() => onSelect(provider.id)}
-      aria-pressed={selected}
-      className={`rounded-2xl border p-3 text-left transition-all ${
-        selected ? "border-brand-400 bg-brand-50 ring-2 ring-brand-100" : "border-line bg-surface"
-      } ${enabled ? "hover:border-brand-300" : "cursor-not-allowed opacity-55"}`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-bold text-ink">{provider.name}</span>
-        {enabled && <Check size={14} className="text-ok" />}
-      </div>
-      <p className="mt-1 text-[11px] leading-4 text-faint">{provider.message}</p>
-    </button>
-  );
-}
-
-/** 一次运行里的一个生成任务：一个产出类型 × 一个视角（没有视角的模板就是它自己）。 */
+/** 一次运行里的一个生成任务：一个产出类型 × 一个视角（没有视角的产出就是它自己）。 */
 interface GenerationJob {
   /** 唯一标识，同时当后端产物子目录名，多产出同跑时互不覆盖 */
   key: string;
@@ -128,231 +126,24 @@ function buildFileName(job: GenerationJob): string {
   return `${today}-${job.template.name}${viewPart}`;
 }
 
-/** 产出类型行：左边小图点开看大图，整行点击切换勾选。 */
-function TemplateRow({
-  template,
-  checked,
-  focused,
-  onToggle,
-  onPreview,
-  onEdit,
-  onDelete,
-}: {
-  template: ImageFactoryTemplate;
-  checked: boolean;
-  focused: boolean;
-  onToggle: (templateId: string) => void;
-  onPreview: (template: ImageFactoryTemplate) => void;
-  onEdit: (template: ImageFactoryTemplate) => void;
-  onDelete: (templateId: string) => void;
-}) {
-  const viewCount = template.views?.length || 0;
-  const requiredCount = template.slots.filter((slot) => slot.required).length;
-
-  return (
-    <div
-      className={`flex items-center gap-2.5 rounded-2xl border p-2 transition-colors ${
-        checked ? "border-brand-300 bg-brand-50/70" : "border-line bg-surface hover:border-brand-200"
-      } ${focused ? "ring-1 ring-brand-200" : ""}`}
-    >
-      <button
-        type="button"
-        onClick={() => onPreview(template)}
-        className="group relative h-14 w-[3.2rem] shrink-0 overflow-hidden rounded-xl border border-line bg-soft"
-        aria-label={`查看${template.name}的产出大图`}
-      >
-        {template.preview ? (
-          <Image src={template.preview} alt="" fill sizes="56px" className="object-cover" unoptimized />
-        ) : (
-          <TemplateThumb thumb={template.thumb} active={checked} />
-        )}
-        <span className="absolute inset-0 flex items-center justify-center bg-ink/45 opacity-0 transition-opacity group-hover:opacity-100">
-          <Maximize2 size={13} className="text-white" />
-        </span>
-      </button>
-
-      <button type="button" onClick={() => onToggle(template.id)} className="min-w-0 flex-1 text-left">
-        <div className="flex items-center gap-1.5">
-          <span
-            className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[5px] border ${
-              checked ? "border-brand-500 bg-brand-500 text-white" : "border-line-strong bg-surface"
-            }`}
-          >
-            {checked && <Check size={10} strokeWidth={3} />}
-          </span>
-          <span className={`truncate text-[13px] font-bold ${checked ? "text-brand-700" : "text-ink"}`}>{template.name}</span>
-          {!template.builtIn && <Badge tone="brand">自建</Badge>}
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[10px] leading-4 text-faint">
-          <span>{template.aspectRatio}</span>
-          <span>· {requiredCount} 张素材</span>
-          {viewCount > 0 && <span className="font-bold text-brand-500">· {viewCount} 视图</span>}
-        </div>
-      </button>
-
-      {!template.builtIn && (
-        <div className="flex shrink-0 flex-col gap-1">
-          <button type="button" onClick={() => onEdit(template)} className="rounded-lg p-1 text-faint hover:text-brand-600" aria-label={`编辑${template.name}`}>
-            <Pencil size={12} />
-          </button>
-          <button type="button" onClick={() => onDelete(template.id)} className="rounded-lg p-1 text-faint hover:text-danger" aria-label={`删除${template.name}`}>
-            <Trash2 size={12} />
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** 产出样例大图。点开只为看清效果，不承载操作。 */
-function PreviewLightbox({ template, onClose }: { template: ImageFactoryTemplate; onClose: () => void }) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-6 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${template.name}的产出样例`}
-      onClick={onClose}
-    >
-      <div className="max-h-full w-full max-w-md overflow-auto rounded-3xl bg-surface p-4 shadow-pop" onClick={(event) => event.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-base font-bold text-ink">{template.name}</h2>
-            <p className="mt-0.5 text-xs leading-5 text-muted">{template.description || "未填写用途说明"}</p>
-          </div>
-          <button type="button" onClick={onClose} className="shrink-0 rounded-xl p-2 text-faint hover:bg-soft hover:text-ink" aria-label="关闭">
-            <X size={16} />
-          </button>
-        </div>
-        <div className="relative mt-3 aspect-[4/5] overflow-hidden rounded-2xl border border-line bg-soft">
-          {template.preview ? (
-            <Image src={template.preview} alt={`${template.name}的产出样例`} fill sizes="420px" className="object-cover" unoptimized />
-          ) : (
-            <TemplateThumb thumb={template.thumb} />
-          )}
-        </div>
-        {(template.views?.length || 0) > 0 && (
-          <div className="mt-4">
-            <h3 className="text-xs font-bold text-muted">一次出这几个视角</h3>
-            <div className="mt-2 grid grid-cols-4 gap-2">
-              {(template.views || []).map((view) => (
-                <div key={view.id}>
-                  <div className="relative aspect-square overflow-hidden rounded-xl border border-line bg-soft">
-                    {view.preview ? (
-                      <Image src={view.preview} alt={view.label} fill sizes="96px" className="object-cover" unoptimized />
-                    ) : (
-                      <span className="flex h-full items-center justify-center text-[10px] text-faint">暂无</span>
-                    )}
-                  </div>
-                  <p className="mt-1 truncate text-[10px] font-bold text-muted" title={view.hint}>{view.label}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        <p className="mt-3 text-[11px] leading-5 text-faint">
-          这是该产出类型跑出来的真实样例，换成你自己的素材会得到同样结构的图。
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/** 模特库选择器：从已存的模特资产里挑一张塞进上传槽位，也在这里删掉不要的。 */
-function ModelLibraryPicker({
-  slotLabel,
-  models,
-  loading,
-  errorMessage,
-  onPick,
-  onDelete,
-  onClose,
-}: {
-  slotLabel: string;
-  models: ModelAssetEntry[];
-  loading: boolean;
-  errorMessage: string;
-  onPick: (entry: ModelAssetEntry) => void;
-  onDelete: (entry: ModelAssetEntry) => void;
-  onClose: () => void;
-}) {
-  return (
-    <ModalOverlay onClose={onClose} maxWidthClass="max-w-2xl" ariaLabel="模特库">
-      <Card>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-base font-bold text-ink">模特库</h2>
-            <p className="mt-0.5 text-xs leading-5 text-muted">挑一位存好的模特，填进「{slotLabel}」</p>
-          </div>
-          <button type="button" onClick={onClose} className="shrink-0 rounded-xl p-2 text-faint hover:bg-soft hover:text-ink" aria-label="关闭">
-            <X size={16} />
-          </button>
-        </div>
-
-        {errorMessage && <Callout tone="danger" className="mt-3">{errorMessage}</Callout>}
-
-        {loading ? (
-          <div className="mt-6 flex items-center justify-center gap-2 py-10 text-xs text-faint">
-            <Loader2 size={14} className="animate-spin" />
-            正在读取模特库
-          </div>
-        ) : models.length === 0 ? (
-          <EmptyState
-            bare
-            icon={<UserRound size={22} />}
-            title="模特库还是空的"
-            description="用「模特资产图」跑一组，再把满意的存进来。"
-          />
-        ) : (
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {models.map((entry) => (
-              <div key={entry.id} className="group">
-                <button
-                  type="button"
-                  onClick={() => onPick(entry)}
-                  className="relative block w-full overflow-hidden rounded-2xl border border-line bg-soft transition-colors hover:border-brand-400"
-                >
-                  <span className="relative block aspect-[3/4]">
-                    <Image src={entry.imageUrl} alt={entry.name} fill sizes="180px" className="object-cover" unoptimized />
-                  </span>
-                </button>
-                <div className="mt-1.5 flex items-start justify-between gap-1">
-                  <div className="min-w-0">
-                    <p className="truncate text-[11px] font-bold text-ink" title={entry.name}>{entry.name}</p>
-                    {entry.sourceLabel && <p className="truncate text-[10px] text-faint">{entry.sourceLabel}</p>}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onDelete(entry)}
-                    className="shrink-0 rounded-lg p-1 text-faint opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
-                    aria-label={`移除${entry.name}`}
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-    </ModalOverlay>
-  );
-}
-
-export default function ImageFactory() {
+export default function ImageFactory({ onUseAsCover }: { onUseAsCover?: (dataUrl: string) => void }) {
   const tasks = useAbortableTasks();
   const [customTemplates, setCustomTemplates] = useState<ImageFactoryTemplate[]>([]);
-  // 产出类型可多选，一次排队跑完
-  const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([BUILT_IN_IMAGE_TEMPLATES[0].id]);
-  // 焦点决定「画面场景」显示谁的预设——多选时不可能同时显示所有模板的标签
-  const [focusTemplateId, setFocusTemplateId] = useState(BUILT_IN_IMAGE_TEMPLATES[0].id);
-  const [activeCategory, setActiveCategory] = useState(BUILT_IN_IMAGE_TEMPLATES[0].category);
+  /** 当前 tab 的产出类型，永远参与本次生成 */
+  const [activeTemplateId, setActiveTemplateId] = useState(BUILT_IN_IMAGE_TEMPLATES[0].id);
+  /** 额外加入本次批次的产出，配好一种就攒一种，最后一起跑 */
+  const [batchIds, setBatchIds] = useState<string[]>([]);
+  /** libraryFirst 的产出分两条路：直接用库里现成的，或者上传参考图生成 */
+  const [assetMode, setAssetMode] = useState<"library" | "generate">("library");
   const [selectedInputs, setSelectedInputs] = useState<Record<string, SelectedInput>>({});
-  /** 模板 -> 勾选的视图；没记录过的模板视为全选，省掉一次初始化 */
+  /** 产出 -> 勾选的视图；没记录过的视为全选，省掉一次初始化 */
   const [viewPicks, setViewPicks] = useState<Record<string, string[]>>({});
+  /** 补充要求按产出各记一份，攒批次时不会互相串味 */
+  const [promptByTemplate, setPromptByTemplate] = useState<Record<string, string>>({});
   const [providers, setProviders] = useState<CliProviderStatus[]>([]);
   const [provider, setProvider] = useState<ImageCliProvider>("codex");
-  const [customPrompt, setCustomPrompt] = useState("");
+  /** 空串 = 跟随 CLI 自己的默认模型 */
+  const [model, setModel] = useState("");
   const [results, setResults] = useState<RunResult[]>([]);
   const [runTotal, setRunTotal] = useState(0);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -363,28 +154,25 @@ export default function ImageFactory() {
   const [outputDir, setOutputDir] = useState("");
   const [modelAssets, setModelAssets] = useState<ModelAssetEntry[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
   /** 正在为哪个槽位挑模特；null 表示选择器关着 */
   const [pickingSlot, setPickingSlot] = useState<ImageTemplateSlot | null>(null);
+  /** 从库里选中的那位模特，生成时随图一起发给后端 */
+  const [modelIdentity, setModelIdentity] = useState<ModelIdentity | null>(null);
   const [modelName, setModelName] = useState("");
+  const [modelTraits, setModelTraits] = useState("");
   /** 产出 key -> 入库状态，整组入库时每张各自流转，避免重复存进模特库 */
   const [modelSaveState, setModelSaveState] = useState<Record<string, "saving" | "saved">>({});
   const [modelLibraryError, setModelLibraryError] = useState("");
   const defaultName = useMemo(defaultModelName, []);
 
   const templates = useMemo(() => [...BUILT_IN_IMAGE_TEMPLATES, ...customTemplates], [customTemplates]);
-  const categories = useMemo(() => {
-    const ordered: string[] = [];
-    templates.forEach((template) => {
-      if (!ordered.includes(template.category)) ordered.push(template.category);
-    });
-    return ordered;
-  }, [templates]);
-  const visibleTemplates = templates.filter((template) => template.category === activeCategory);
-  const selectedTemplates = useMemo(
-    () => templates.filter((template) => selectedTemplateIds.includes(template.id)),
-    [templates, selectedTemplateIds],
+  const activeTemplate = templates.find((item) => item.id === activeTemplateId) || templates[0];
+  /** 本次要跑的产出：当前 tab + 攒在批次里的，按模板表顺序排，结果区顺序才稳定 */
+  const runTemplates = useMemo(
+    () => templates.filter((item) => item.id === activeTemplate?.id || batchIds.includes(item.id)),
+    [templates, activeTemplate?.id, batchIds],
   );
-  const focusTemplate = selectedTemplates.find((template) => template.id === focusTemplateId) || selectedTemplates[0] || null;
 
   const pickedViews = useCallback(
     (template: ImageFactoryTemplate) => {
@@ -395,58 +183,70 @@ export default function ImageFactory() {
     [viewPicks],
   );
 
-  /** 选中模板的槽位并集：三个电商产出都只要一张商品图，就只让用户传一次 */
+  /** 本次要跑的产出的槽位并集：白底图和详情图都只要一张商品图，就只让用户传一次 */
   const activeSlots = useMemo(() => {
     const merged = new Map<string, ImageTemplateSlot>();
-    selectedTemplates.forEach((template) => {
+    runTemplates.forEach((template) => {
       template.slots.forEach((slot) => {
         const existing = merged.get(slot.id);
-        if (!existing) merged.set(slot.id, slot);
-        else if (slot.required && !existing.required) merged.set(slot.id, { ...existing, required: true });
+        // 同一个槽位被两种产出共用时，必传的那份说明才是准的——「可选」的文案配上必传星号会自相矛盾
+        if (!existing || (slot.required && !existing.required)) merged.set(slot.id, slot);
       });
     });
     return [...merged.values()];
-  }, [selectedTemplates]);
+  }, [runTemplates]);
 
   const jobs = useMemo<GenerationJob[]>(
     () =>
-      selectedTemplates.flatMap<GenerationJob>((template) => {
+      runTemplates.flatMap<GenerationJob>((template) => {
         const views = template.views || [];
         if (views.length === 0) return [{ key: template.id, template, view: null }];
         return pickedViews(template).map((view) => ({ key: `${template.id}__${view.id}`, template, view }));
       }),
-    [selectedTemplates, pickedViews],
+    [runTemplates, pickedViews],
   );
 
-  const scenePresets = focusTemplate?.scenePresets || [];
+  // 每次渲染都新建一个空数组的话，下面按它分组的 useMemo 等于没缓存
+  const activeViews = useMemo(() => activeTemplate?.views || [], [activeTemplate]);
+  /** 当前这批产出里要不要选模特；有就把模特库摆到台面上，而不是藏在弹窗后面 */
+  const modelSlot = activeSlots.find((slot) => slot.fromModelLibrary) || null;
+  const modelProfiles = useMemo(() => groupModelProfiles(modelAssets), [modelAssets]);
+  const viewGroups = useMemo(() => groupInOrder(activeViews, (view) => view.group || ""), [activeViews]);
+
+  const customPrompt = activeTemplate ? promptByTemplate[activeTemplate.id] || "" : "";
+  const scenePresets = activeTemplate?.scenePresets || [];
   // 选中态直接由输入框内容反推：手改一个字就自动脱离选中，不用再维护一份状态
   const activeScenePresetId = scenePresets.find((preset) => preset.prompt === customPrompt)?.id || null;
+  const activePicks = activeTemplate ? pickedViews(activeTemplate).map((view) => view.id) : [];
+  const inBatch = activeTemplate ? batchIds.includes(activeTemplate.id) : false;
+  const showLibraryBoard = Boolean(activeTemplate?.libraryFirst) && assetMode === "library";
+
   const requiredReady = activeSlots.filter((slot) => slot.required).every((slot) => Boolean(selectedInputs[slot.id]));
   const selectedProvider = providers.find((item) => item.id === provider);
   const providerReady = Boolean(selectedProvider?.available && selectedProvider.authenticated);
   const canGenerate = requiredReady && jobs.length > 0 && providerReady && !isGenerating;
-  const blockReason = selectedTemplates.length === 0
-    ? "请在右侧选择至少一种产出"
-    : jobs.length === 0
-      ? "选中的产出至少要勾一个输出视图"
-      : !requiredReady
-        ? "请先上传所有必传素材"
-        : "";
+  const blockReason = jobs.length === 0
+    ? "当前产出至少要勾一个输出视图"
+    : !requiredReady
+      ? "请先上传所有必传素材"
+      : "";
 
-  const resultGroups = useMemo(() => {
-    const groups = new Map<string, { template: ImageFactoryTemplate; items: RunResult[] }>();
-    results.forEach((item) => {
-      const group = groups.get(item.job.template.id) || { template: item.job.template, items: [] };
-      group.items.push(item);
-      groups.set(item.job.template.id, group);
-    });
-    return [...groups.values()];
-  }, [results]);
+  const resultGroups = useMemo(
+    () =>
+      groupInOrder(results, (item) => item.job.template.id).map(({ items }) => ({
+        template: items[0].job.template,
+        items,
+      })),
+    [results],
+  );
 
   const applyProviders = useCallback((list: CliProviderStatus[]) => {
     setProviders(list);
-    const usable = list.find((item) => item.available && item.authenticated);
-    if (usable) setProvider(usable.id);
+    setProvider((current) => {
+      const chosen = list.find((item) => item.id === current);
+      if (chosen?.available && chosen.authenticated) return current;
+      return list.find((item) => item.available && item.authenticated)?.id || current;
+    });
   }, []);
 
   const refreshProviders = useCallback(async (force = false) => {
@@ -470,27 +270,16 @@ export default function ImageFactory() {
   useEffect(() => {
     setCustomTemplates(loadCustomTemplates());
     setOutputDir(localStorage.getItem(OUTPUT_DIR_STORAGE_KEY) || "");
-  }, []);
-
-  // 只在打开选择器时拉，进页面不必背这份开销；列表只有元数据，图片由 <Image> 各自按需取
-  const refreshModelAssets = async () => {
-    setIsLoadingModels(true);
-    setModelLibraryError("");
     try {
-      const data = await listModelAssets();
-      setModelAssets(data.models);
+      const saved = JSON.parse(localStorage.getItem(ENGINE_STORAGE_KEY) || "{}");
+      if (typeof saved.model === "string") setModel(saved.model);
+      if (saved.provider === "codex" || saved.provider === "grok" || saved.provider === "gemini") {
+        setProvider(saved.provider);
+      }
     } catch (error) {
-      console.error("[ImageFactory] 模特库读取失败", { action: "imageFactory.models.list", error });
-      setModelLibraryError(error instanceof Error ? error.message : "模特库读取失败");
-    } finally {
-      setIsLoadingModels(false);
+      console.warn("[ImageFactory] 引擎偏好读取失败", { action: "imageFactory.loadEngine", error });
     }
-  };
-
-  const openModelLibrary = (slot: ImageTemplateSlot) => {
-    setPickingSlot(slot);
-    refreshModelAssets();
-  };
+  }, []);
 
   useEffect(() => {
     refreshProviders();
@@ -503,20 +292,81 @@ export default function ImageFactory() {
     Object.values(inputsRef.current).forEach((input) => URL.revokeObjectURL(input.previewUrl));
   }, []);
 
-  // 删掉最后一个自建模板会让当前分类消失，回落到第一个分类
-  useEffect(() => {
-    if (categories.length > 0 && !categories.includes(activeCategory)) setActiveCategory(categories[0]);
-  }, [categories, activeCategory]);
+  const rememberEngine = (next: { provider?: ImageCliProvider; model?: string }) => {
+    localStorage.setItem(
+      ENGINE_STORAGE_KEY,
+      JSON.stringify({ provider: next.provider ?? provider, model: next.model ?? model }),
+    );
+  };
 
-  const toggleTemplate = (templateId: string) => {
-    const next = selectedTemplateIds.includes(templateId)
-      ? selectedTemplateIds.filter((id) => id !== templateId)
-      : [...selectedTemplateIds, templateId];
-    setSelectedTemplateIds(next);
-    // 勾上就跟着聚焦；取消掉的话焦点让给还选着的第一个
-    setFocusTemplateId(next.includes(templateId) ? templateId : next[0] || templateId);
+  const selectProvider = (next: ImageCliProvider) => {
+    setProvider(next);
+    // 模型名是跟着引擎走的，换引擎必须清掉，否则会把 grok 的模型名塞给 codex
+    setModel("");
+    rememberEngine({ provider: next, model: "" });
+  };
+
+  const selectModel = (next: string) => {
+    setModel(next);
+    rememberEngine({ model: next });
+  };
+
+  // 列表只有元数据，图片由 <Image> 各自按需取，所以要选模特的产出一进来就拉一次
+  const refreshModelAssets = useCallback(async () => {
+    setIsLoadingModels(true);
+    setModelLibraryError("");
+    try {
+      const data = await listModelAssets();
+      setModelAssets(data.models);
+    } catch (error) {
+      console.error("[ImageFactory] 模特库读取失败", { action: "imageFactory.models.list", error });
+      setModelLibraryError(error instanceof Error ? error.message : "模特库读取失败");
+    } finally {
+      setModelsLoaded(true);
+      setIsLoadingModels(false);
+    }
+  }, []);
+
+  // 要选模特的产出一进来就把库读出来，模特模板条不能等用户先点开弹窗
+  useEffect(() => {
+    if (modelSlot && !modelsLoaded && !isLoadingModels) refreshModelAssets();
+  }, [modelSlot, modelsLoaded, isLoadingModels, refreshModelAssets]);
+
+  const openModelLibrary = (slot: ImageTemplateSlot) => {
+    setPickingSlot(slot);
+    refreshModelAssets();
+  };
+
+  const selectTemplate = (templateId: string) => {
+    setActiveTemplateId(templateId);
+    setAssetMode(templates.find((item) => item.id === templateId)?.libraryFirst ? "library" : "generate");
     setResults([]);
     setErrorMessage("");
+  };
+
+  const toggleBatch = () => {
+    if (!activeTemplate) return;
+    setBatchIds((current) =>
+      current.includes(activeTemplate.id)
+        ? current.filter((id) => id !== activeTemplate.id)
+        : [...current, activeTemplate.id],
+    );
+  };
+
+  /** 直接指定当前产出要出哪几个视角，全选 / 清空 / 成组快选都走它。 */
+  const pickViews = (viewIds: string[]) => {
+    if (!activeTemplate) return;
+    setViewPicks({ ...viewPicks, [activeTemplate.id]: viewIds });
+  };
+
+  /** 整组勾上；已经全在里面就整组去掉。 */
+  const toggleViewGroup = (groupIds: string[]) => {
+    const allPicked = groupIds.every((id) => activePicks.includes(id));
+    pickViews(
+      allPicked
+        ? activePicks.filter((id) => !groupIds.includes(id))
+        : [...activePicks, ...groupIds.filter((id) => !activePicks.includes(id))],
+    );
   };
 
   const toggleView = (templateId: string, viewId: string) => {
@@ -527,10 +377,15 @@ export default function ImageFactory() {
     setViewPicks({ ...viewPicks, [templateId]: next });
   };
 
+  const setPrompt = (value: string) => {
+    if (!activeTemplate) return;
+    setPromptByTemplate((current) => ({ ...current, [activeTemplate.id]: value }));
+  };
+
   const toggleScenePreset = (presetId: string) => {
     const preset = scenePresets.find((item) => item.id === presetId);
     if (!preset) return;
-    setCustomPrompt((current) => current === preset.prompt ? "" : preset.prompt);
+    setPrompt(customPrompt === preset.prompt ? "" : preset.prompt);
   };
 
   const selectInput = (slotId: string, file: File) => {
@@ -542,19 +397,43 @@ export default function ImageFactory() {
     setResults([]);
   };
 
-  const pickModelAsset = async (slot: ImageTemplateSlot, entry: ModelAssetEntry) => {
+  const pickModelAsset = async (slot: ImageTemplateSlot, pick: ModelPick) => {
     try {
-      selectInput(slot.id, await modelAssetToFile(entry));
+      selectInput(slot.id, await modelAssetToFile(pick.asset));
+      setModelIdentity({ name: pick.name, traits: pick.traits });
       setPickingSlot(null);
     } catch (error) {
       console.error("[ImageFactory] 模特图载入失败", {
         action: "imageFactory.models.pick",
-        modelId: entry.id,
+        modelId: pick.asset.id,
         slotId: slot.id,
         error,
       });
       setModelLibraryError("这张模特图读不出来，换一张或重新生成");
     }
+  };
+
+  /** 从模特模板条选一位：拿她最能锁脸的那张填进槽位，体貌描述一并带上。 */
+  const selectModelProfile = async (profile: ModelProfile) => {
+    if (!modelSlot) return;
+    try {
+      selectInput(modelSlot.id, await modelAssetToFile(profile.identity));
+      setModelIdentity({ name: profile.name, traits: profile.traits });
+    } catch (error) {
+      console.error("[ImageFactory] 模特图载入失败", {
+        action: "imageFactory.models.selectProfile",
+        modelId: profile.identity.id,
+        slotId: modelSlot.id,
+        error,
+      });
+      setModelLibraryError("这位模特的图读不出来，换一位或去模特库里挑一张");
+    }
+  };
+
+  /** 库里缺的角度交给生成那条路：锁定的模特不变，只把缺的视角勾上。 */
+  const generateMissingViews = (viewIds: string[]) => {
+    pickViews(viewIds);
+    setAssetMode("generate");
   };
 
   /** 整组或单张都走这一条：一次请求存完，服务端只读写一次索引。 */
@@ -563,6 +442,7 @@ export default function ImageFactory() {
     if (pending.length === 0) return;
 
     const name = modelName.trim() || defaultName;
+    const traits = modelTraits.trim();
     setModelSaveState((current) => ({
       ...current,
       ...Object.fromEntries(pending.map((item) => [item.job.key, "saving" as const])),
@@ -573,7 +453,8 @@ export default function ImageFactory() {
         pending.map(({ job, result }) => ({
           sourcePath: result.outputPath,
           name,
-          sourceLabel: [job.template.name, job.view?.label].filter(Boolean).join(" · "),
+          sourceLabel: job.view?.label || job.template.name,
+          traits,
         })),
       );
       setModelSaveState((current) => ({
@@ -597,7 +478,7 @@ export default function ImageFactory() {
   };
 
   const removeModelAsset = async (entry: ModelAssetEntry) => {
-    if (!window.confirm(`确认把「${entry.name}」从模特库移除吗？`)) return;
+    if (!window.confirm(`确认把「${entry.name}」的这张图从模特库移除吗？`)) return;
     try {
       await deleteModelAsset(entry.id);
       setModelAssets((current) => current.filter((item) => item.id !== entry.id));
@@ -614,6 +495,8 @@ export default function ImageFactory() {
       delete next[slotId];
       return next;
     });
+    // 槽位空了就没有那位模特了，身份描述不能继续跟着跑
+    if (activeSlots.find((slot) => slot.id === slotId)?.fromModelLibrary) setModelIdentity(null);
   };
 
   const saveTemplate = (template: ImageFactoryTemplate) => {
@@ -622,21 +505,20 @@ export default function ImageFactory() {
       : [...customTemplates, template];
     setCustomTemplates(next);
     localStorage.setItem(IMAGE_FACTORY_STORAGE_KEY, JSON.stringify(next));
-    if (!selectedTemplateIds.includes(template.id)) setSelectedTemplateIds([...selectedTemplateIds, template.id]);
-    setFocusTemplateId(template.id);
     // 编辑时删掉的视图要从勾选里清掉，新增的视图默认选上
     setViewPicks({ ...viewPicks, [template.id]: (template.views || []).map((view) => view.id) });
-    setActiveCategory(template.category);
+    setActiveTemplateId(template.id);
     setEditingTemplate(null);
   };
 
   const deleteTemplate = (templateId: string) => {
     const template = customTemplates.find((item) => item.id === templateId);
-    if (!template || !window.confirm(`确认删除自定义模板“${template.name}”吗？`)) return;
+    if (!template || !window.confirm(`确认删除自定义产出“${template.name}”吗？`)) return;
     const next = customTemplates.filter((item) => item.id !== templateId);
     setCustomTemplates(next);
     localStorage.setItem(IMAGE_FACTORY_STORAGE_KEY, JSON.stringify(next));
-    setSelectedTemplateIds((current) => current.filter((id) => id !== templateId));
+    setBatchIds((current) => current.filter((id) => id !== templateId));
+    if (activeTemplateId === templateId) setActiveTemplateId(BUILT_IN_IMAGE_TEMPLATES[0].id);
   };
 
   /**
@@ -659,15 +541,23 @@ export default function ImageFactory() {
       for (const job of jobs) {
         const formData = new FormData();
         formData.set("provider", provider);
+        if (model) formData.set("model", model);
         formData.set("jobId", runId);
         formData.set("templateName", job.template.name);
         formData.set("templatePrompt", job.template.prompt);
-        formData.set("customPrompt", customPrompt);
-        formData.set("aspectRatio", job.template.aspectRatio);
+        formData.set("customPrompt", promptByTemplate[job.template.id] || "");
+        // 头肩近景和全身站姿不该是同一个画幅，视角自己声明了就以它为准
+        formData.set("aspectRatio", job.view?.aspectRatio || job.template.aspectRatio);
         formData.set("viewId", job.key);
         if (job.view) {
           formData.set("viewLabel", job.view.label);
           formData.set("viewHint", job.view.hint);
+        }
+        // 只有真用到模特槽位的产出才带身份，商品白底图不需要也不该被人物描述干扰
+        const usesModelSlot = job.template.slots.some((slot) => slot.fromModelLibrary && selectedInputs[slot.id]);
+        if (modelIdentity && usesModelSlot) {
+          formData.set("identityName", modelIdentity.name);
+          formData.set("identityTraits", modelIdentity.traits);
         }
         job.template.slots.forEach((slot) => {
           const input = selectedInputs[slot.id];
@@ -704,8 +594,9 @@ export default function ImageFactory() {
       const aborted = isAbortError(error);
       console.error("[ImageFactory] 生成中断", {
         action: "imageFactory.generate",
-        templateIds: selectedTemplateIds,
+        templateIds: runTemplates.map((item) => item.id),
         provider,
+        model: model || "default",
         runId,
         done: collected.length,
         total: jobs.length,
@@ -727,10 +618,122 @@ export default function ImageFactory() {
     downloadImageAsset(result.imageDataUrl, `${job.template.name}${viewPart}-${result.jobId}${result.extension}`);
   };
 
-  const viewTemplates = selectedTemplates.filter((template) => (template.views?.length || 0) > 0);
+  if (!activeTemplate) return null;
 
   return (
     <div className="space-y-4">
+      <Card flush>
+        <div className="flex items-start justify-between gap-3 px-4 pt-3">
+          <div className="min-w-0">
+            <h2 className="text-[15px] font-bold leading-tight text-ink">想做哪种图</h2>
+            <p className="mt-0.5 text-[11px] text-faint">全部由 AI 生成；选一种配好，也可以攒成一批一起跑</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setEditingTemplate({
+              id: `custom-${Date.now().toString(36)}`,
+              name: "新产出",
+              category: "自建",
+              description: "",
+              prompt: "",
+              aspectRatio: "1:1",
+              slots: [{ id: "subject", label: "主体图", description: "", required: true }],
+            })}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 hover:bg-brand-100"
+            aria-label="新建产出类型"
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+        <div className="px-4 pb-3 pt-3">
+          <ImageTemplateTabs
+            templates={templates}
+            activeId={activeTemplate.id}
+            batchIds={batchIds}
+            onSelect={selectTemplate}
+          />
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-soft px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            {/* 样例入口就长在这张参考图上：想看它长什么样，点它本人最直觉 */}
+            <button
+              type="button"
+              onClick={() => setPreviewTemplate(activeTemplate)}
+              className="group relative h-16 w-[3.4rem] shrink-0 overflow-hidden rounded-xl border border-line bg-surface"
+              aria-label={`看${activeTemplate.name}的产出样例`}
+            >
+              {activeTemplate.preview ? (
+                <Image src={activeTemplate.preview} alt="" fill sizes="64px" className="object-cover" unoptimized />
+              ) : (
+                <TemplateThumb thumb={activeTemplate.thumb} active />
+              )}
+              <span className="absolute inset-0 flex items-center justify-center bg-ink/45 opacity-0 transition-opacity group-hover:opacity-100">
+                <Maximize2 size={14} className="text-white" />
+              </span>
+              <span className="absolute inset-x-0 bottom-0 bg-ink/55 py-0.5 text-center text-[9px] font-bold text-white">
+                看样例
+              </span>
+            </button>
+            <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <h3 className="truncate text-sm font-bold text-ink">{activeTemplate.name}</h3>
+              {!activeTemplate.builtIn && <Badge tone="brand">自建</Badge>}
+            </div>
+            <p className="mt-0.5 text-[11px] leading-4 text-faint">
+              {activeTemplate.description || "未填写用途说明"}
+              <span className="ml-1.5">· {activeTemplate.aspectRatio}</span>
+              {activeViews.length > 0 && <span className="ml-1.5">· {activeViews.length} 视图</span>}
+            </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {!activeTemplate.builtIn && (
+              <>
+                <button type="button" onClick={() => setEditingTemplate(activeTemplate)} className="rounded-xl p-1.5 text-faint hover:text-brand-600" aria-label={`编辑${activeTemplate.name}`}>
+                  <Pencil size={13} />
+                </button>
+                <button type="button" onClick={() => deleteTemplate(activeTemplate.id)} className="rounded-xl p-1.5 text-faint hover:text-danger" aria-label={`删除${activeTemplate.name}`}>
+                  <Trash2 size={13} />
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={toggleBatch}
+              className={`rounded-xl px-2.5 py-1.5 text-[11px] font-bold transition-colors ${
+                inBatch ? "bg-brand-100 text-brand-700" : "bg-surface text-brand-600 hover:bg-brand-50"
+              }`}
+            >
+              {inBatch ? "已在批次中 · 移出" : "+ 加入批次"}
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      {activeTemplate.libraryFirst && (
+        <SegmentedControl
+          value={assetMode}
+          options={[
+            { value: "library", label: "用内置模特", description: "库里已有全部角度，选中直接取图" },
+            { value: "generate", label: "生成新的", description: "上传参考图，按选中的视角生成" },
+          ]}
+          onChange={setAssetMode}
+          ariaLabel="模特来源"
+        />
+      )}
+
+      {showLibraryBoard ? (
+        <ModelLibraryBoard
+          profiles={modelProfiles}
+          loading={isLoadingModels}
+          errorMessage={modelLibraryError}
+          selectedName={modelIdentity?.name || ""}
+          views={activeViews}
+          onSelect={selectModelProfile}
+          onDelete={removeModelAsset}
+          onGenerateMissing={generateMissingViews}
+        />
+      ) : (
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.62fr)]">
         <div className="space-y-4">
           <Card>
@@ -738,7 +741,7 @@ export default function ImageFactory() {
               <div>
                 <h2 className="text-[15px] font-bold text-ink">① 上传素材</h2>
                 <p className="mt-0.5 text-xs text-faint">
-                  {activeSlots.length > 0 ? "右侧选中的产出共需要这些图，传一次就够" : "先在右侧选一种产出"}
+                  {activeSlots.length > 0 ? "本次要跑的产出共需要这些图，传一次就够" : "这种产出不需要素材，直接生成"}
                 </p>
               </div>
               {activeSlots.length > 0 && (
@@ -747,6 +750,19 @@ export default function ImageFactory() {
                 </span>
               )}
             </div>
+
+            {modelSlot && (
+              <div className="mt-4">
+                <ModelTemplateStrip
+                  profiles={modelProfiles}
+                  loading={isLoadingModels}
+                  activeName={modelIdentity?.name || ""}
+                  onSelect={selectModelProfile}
+                  onClear={() => removeInput(modelSlot.id)}
+                  onManage={() => openModelLibrary(modelSlot)}
+                />
+              </div>
+            )}
 
             <div className={`mt-4 grid gap-3 ${activeSlots.length > 1 ? "sm:grid-cols-2" : ""}`}>
               {activeSlots.map((slot) => {
@@ -758,7 +774,9 @@ export default function ImageFactory() {
                         <Image src={input.previewUrl} alt={`${slot.label}预览`} fill sizes="420px" className="object-cover" unoptimized />
                         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-3 pb-3 pt-8 text-white">
                           <div className="text-xs font-bold">{slot.label}</div>
-                          <div className="mt-0.5 truncate text-[10px] text-white/70">{input.file.name}</div>
+                          <div className="mt-0.5 truncate text-[10px] text-white/70">
+                            {slot.fromModelLibrary && modelIdentity ? `模特：${modelIdentity.name}` : input.file.name}
+                          </div>
                         </div>
                         <div className="absolute right-2 top-2 flex gap-1.5">
                           {slot.fromModelLibrary && (
@@ -807,7 +825,7 @@ export default function ImageFactory() {
                 );
               })}
               {activeSlots.length === 0 && (
-                <div className="rounded-2xl bg-soft px-4 py-8 text-center text-xs text-faint">选中产出后，这里会列出要传的素材</div>
+                <div className="rounded-2xl bg-soft px-4 py-8 text-center text-xs text-faint">这种产出按文字描述直接生成，不用传图</div>
               )}
             </div>
           </Card>
@@ -817,12 +835,7 @@ export default function ImageFactory() {
             {scenePresets.length > 0 && (
               <div className="mt-3 rounded-2xl bg-soft p-3">
                 <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-xs font-bold text-muted">
-                    画面场景
-                    {selectedTemplates.length > 1 && focusTemplate && (
-                      <span className="ml-1.5 font-normal text-faint">来自「{focusTemplate.name}」</span>
-                    )}
-                  </h3>
+                  <h3 className="text-xs font-bold text-muted">画面场景</h3>
                   <span className="text-[11px] text-faint">点选替换下方内容，可继续手改</span>
                 </div>
                 <div className="mt-2.5 flex flex-wrap gap-2">
@@ -853,63 +866,81 @@ export default function ImageFactory() {
             <textarea
               id="image-factory-prompt"
               value={customPrompt}
-              onChange={(event) => setCustomPrompt(event.target.value)}
+              onChange={(event) => setPrompt(event.target.value)}
               rows={3}
               placeholder="补充要求，例如：背景改成日落海边，人物自然站立，画面不要文字……"
               className="mt-3 w-full resize-y rounded-2xl border border-line bg-soft px-3.5 py-3 text-sm leading-6 text-ink outline-none transition focus:border-brand-300 focus:bg-surface"
             />
-            <p className="mt-2 text-[11px] leading-5 text-faint">这段会加到每个产出的生成要求里，各产出自己的规则不受影响。</p>
+            <p className="mt-2 text-[11px] leading-5 text-faint">
+              这段只跟着「{activeTemplate.name}」走；批次里其他产出各记各的补充要求。
+            </p>
           </Card>
 
-          {viewTemplates.length > 0 && (
+          {activeViews.length > 0 && (
             <Card>
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-[15px] font-bold text-ink">③ 输出视图</h2>
-                <span className="text-[11px] text-faint">逐张生成，出一张显一张</span>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-[15px] font-bold text-ink">
+                  ③ 输出视图
+                  <span className="ml-2 text-[11px] font-normal text-faint">已选 {activePicks.length} / {activeViews.length}</span>
+                </h2>
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => pickViews(activeViews.map((view) => view.id))} className="rounded-lg px-2 py-1 text-[11px] font-bold text-brand-600 hover:bg-brand-50">全选</button>
+                  <button type="button" onClick={() => pickViews([])} className="rounded-lg px-2 py-1 text-[11px] font-bold text-faint hover:text-danger">清空</button>
+                </div>
               </div>
-              <div className="mt-3 space-y-3">
-                {viewTemplates.map((template) => {
-                  const picks = pickedViews(template).map((view) => view.id);
-                  return (
-                    <div key={template.id}>
-                      <h3 className="text-xs font-bold text-muted">{template.name}</h3>
-                      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                        {(template.views || []).map((view) => {
-                          const checked = picks.includes(view.id);
-                          return (
-                            <button
-                              key={view.id}
-                              type="button"
-                              role="checkbox"
-                              aria-checked={checked}
-                              onClick={() => toggleView(template.id, view.id)}
-                              title={view.hint}
-                              className={`overflow-hidden rounded-2xl border text-left transition-colors ${
-                                checked ? "border-brand-400 bg-brand-50" : "border-line bg-surface hover:border-brand-300"
-                              }`}
-                            >
-                              {/* 有样例就摆出来——「4 视图」这三个字说不清每个视角拍成什么样 */}
-                              <div className="relative aspect-square border-b border-line bg-soft">
-                                {view.preview ? (
-                                  <Image src={view.preview} alt="" fill sizes="140px" className={`object-cover ${checked ? "" : "opacity-85"}`} unoptimized />
-                                ) : (
-                                  <span className="flex h-full items-center justify-center px-2 text-center text-[10px] leading-4 text-faint">{view.hint || "暂无样例"}</span>
-                                )}
-                                {checked && (
-                                  <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-brand-500 text-white shadow-brand">
-                                    <Check size={11} strokeWidth={3} />
-                                  </span>
-                                )}
-                              </div>
-                              <div className={`truncate px-2 py-1.5 text-[11px] font-bold ${checked ? "text-brand-700" : "text-muted"}`}>{view.label}</div>
-                            </button>
-                          );
-                        })}
-                      </div>
+              {viewGroups.map((group) => (
+                <div key={group.key || "all"} className="mt-3">
+                  {/* 分了组的模板（九宫格 / 三视图）给一键，13 个格子一个个点太蠢 */}
+                  {group.key && (
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <h3 className="text-xs font-bold text-muted">
+                        {group.key}
+                        <span className="ml-1.5 font-normal text-faint">{group.items.length} 张</span>
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => toggleViewGroup(group.items.map((view) => view.id))}
+                        className="rounded-lg px-2 py-1 text-[11px] font-bold text-brand-600 hover:bg-brand-50"
+                      >
+                        {group.items.every((view) => activePicks.includes(view.id)) ? "取消这组" : "选中这组"}
+                      </button>
                     </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {group.items.map((view) => {
+                  const checked = activePicks.includes(view.id);
+                  return (
+                    <button
+                      key={view.id}
+                      type="button"
+                      role="checkbox"
+                      aria-checked={checked}
+                      onClick={() => toggleView(activeTemplate.id, view.id)}
+                      title={view.hint}
+                      className={`overflow-hidden rounded-2xl border text-left transition-colors ${
+                        checked ? "border-brand-400 bg-brand-50" : "border-line bg-surface hover:border-brand-300"
+                      }`}
+                    >
+                      {/* 有样例就摆出来——「4 视图」这三个字说不清每个视角拍成什么样 */}
+                      <div className="relative aspect-square border-b border-line bg-soft">
+                        {view.preview ? (
+                          <Image src={view.preview} alt="" fill sizes="140px" className={`object-cover ${checked ? "" : "opacity-85"}`} unoptimized />
+                        ) : (
+                          <span className="flex h-full items-center justify-center px-2 text-center text-[10px] leading-4 text-faint">{view.hint || "暂无样例"}</span>
+                        )}
+                        {checked && (
+                          <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-brand-500 text-white shadow-brand">
+                            <Check size={11} strokeWidth={3} />
+                          </span>
+                        )}
+                      </div>
+                      <div className={`truncate px-2 py-1.5 text-[11px] font-bold ${checked ? "text-brand-700" : "text-muted"}`}>{view.label}</div>
+                    </button>
                   );
                 })}
-              </div>
+                  </div>
+                </div>
+              ))}
             </Card>
           )}
 
@@ -975,22 +1006,34 @@ export default function ImageFactory() {
                         <span className="ml-1.5 font-normal text-faint">{group.items.length} 张</span>
                       </h3>
                       {isModelAsset && (
-                        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-2xl bg-soft p-2.5">
-                          <label htmlFor="image-factory-model-name" className="text-[11px] font-bold text-muted">模特名称</label>
-                          <input
-                            id="image-factory-model-name"
-                            value={modelName}
-                            onChange={(event) => setModelName(event.target.value)}
-                            placeholder={defaultName}
-                            className="min-w-0 flex-1 rounded-xl border border-line bg-surface px-2.5 py-1.5 text-xs font-bold text-ink outline-none transition focus:border-brand-300"
+                        <div className="mt-2 space-y-2 rounded-2xl bg-soft p-2.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label htmlFor="image-factory-model-name" className="text-[11px] font-bold text-muted">模特名称</label>
+                            <input
+                              id="image-factory-model-name"
+                              value={modelName}
+                              onChange={(event) => setModelName(event.target.value)}
+                              placeholder={defaultName}
+                              className="min-w-0 flex-1 rounded-xl border border-line bg-surface px-2.5 py-1.5 text-xs font-bold text-ink outline-none transition focus:border-brand-300"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => saveToModelLibrary(group.items)}
+                              className="rounded-xl bg-brand-50 px-2.5 py-1.5 text-[11px] font-bold text-brand-600 hover:bg-brand-100"
+                            >
+                              整组存入模特库
+                            </button>
+                          </div>
+                          <textarea
+                            value={modelTraits}
+                            onChange={(event) => setModelTraits(event.target.value)}
+                            rows={2}
+                            placeholder="体貌描述，例如：25 岁东亚女性，鹅蛋脸，齐肩黑直发，身高偏高体型偏瘦，气质清冷"
+                            className="w-full resize-y rounded-xl border border-line bg-surface px-2.5 py-2 text-[11px] leading-5 text-ink outline-none transition focus:border-brand-300"
                           />
-                          <button
-                            type="button"
-                            onClick={() => saveToModelLibrary(group.items)}
-                            className="rounded-xl bg-brand-50 px-2.5 py-1.5 text-[11px] font-bold text-brand-600 hover:bg-brand-100"
-                          >
-                            整组存入模特库
-                          </button>
+                          <p className="text-[10px] leading-4 text-faint">
+                            描述会连同图一起喂给后续生成——只给图锁不住脸，写清楚才换得了场景还是同一个人。
+                          </p>
                         </div>
                       )}
                       <div className="mt-2 grid gap-3 sm:grid-cols-2">
@@ -1020,6 +1063,16 @@ export default function ImageFactory() {
                                       )}
                                     </button>
                                   )}
+                                  {group.template.handoff === "cover" && onUseAsCover && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onUseAsCover(item.result.imageDataUrl)}
+                                      className="rounded-xl bg-black/55 p-2 text-white"
+                                      aria-label="拿这张去叠标题"
+                                    >
+                                      <Type size={13} />
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={() => downloadResult(item)}
@@ -1044,6 +1097,11 @@ export default function ImageFactory() {
                           );
                         })}
                       </div>
+                      {group.template.handoff === "cover" && onUseAsCover && (
+                        <p className="mt-2 text-[10px] leading-4 text-faint">
+                          底图不带文字。点图上的「T」把它送进封面编辑器叠标题，中文字才不会糊。
+                        </p>
+                      )}
                     </div>
                   );
                 })}
@@ -1060,86 +1118,71 @@ export default function ImageFactory() {
         </div>
 
         <div className="space-y-4">
-          <Card flush>
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
-              <div className="min-w-0">
-                <h2 className="text-[15px] font-bold leading-tight text-ink">生成什么</h2>
-                <p className="mt-0.5 text-[11px] text-faint">
-                  {selectedTemplateIds.length > 0 ? `已选 ${selectedTemplateIds.length} 种，共 ${jobs.length} 张` : "可多选，一次排队跑完"}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setEditingTemplate({
-                  id: `custom-${Date.now().toString(36)}`,
-                  name: "新模板",
-                  category: "自建",
-                  description: "",
-                  prompt: "",
-                  aspectRatio: "1:1",
-                  slots: [{ id: "subject", label: "主体图", description: "", required: true }],
-                })}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 hover:bg-brand-100"
-                aria-label="新建产出类型"
-              >
-                <Plus size={16} />
-              </button>
-            </div>
-
-            <div className="border-b border-line px-4 py-3">
-              <SegmentedControl
-                options={categories.map((category) => ({ value: category, label: category }))}
-                value={activeCategory}
-                onChange={setActiveCategory}
-                ariaLabel="产出分类"
-              />
-            </div>
-
-            <div className="max-h-[26rem] space-y-2 overflow-auto p-3">
-              {visibleTemplates.map((template) => (
-                <TemplateRow
-                  key={template.id}
-                  template={template}
-                  checked={selectedTemplateIds.includes(template.id)}
-                  focused={focusTemplateId === template.id && selectedTemplates.length > 1}
-                  onToggle={toggleTemplate}
-                  onPreview={setPreviewTemplate}
-                  onEdit={setEditingTemplate}
-                  onDelete={deleteTemplate}
-                />
-              ))}
-            </div>
-          </Card>
-
           <Card>
             <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-bold text-ink">生成引擎</h2>
-                <p className="mt-0.5 text-[11px] text-faint">使用已登录 CLI 的订阅额度</p>
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold text-ink">本次生成</h2>
+                <p className="mt-0.5 text-[11px] text-faint">共 {jobs.length} 张，逐张排队跑</p>
               </div>
-              <button type="button" onClick={() => refreshProviders(true)} disabled={isLoadingProviders} className="rounded-xl p-2 text-faint hover:bg-soft hover:text-ink" aria-label="刷新CLI状态">
-                <RefreshCw size={15} className={isLoadingProviders ? "animate-spin" : ""} />
-              </button>
+              <Layers size={15} className="shrink-0 text-faint" />
             </div>
-            <div className="mt-3 grid gap-2">
-              {providers.map((item) => <ProviderButton key={item.id} provider={item} selected={provider === item.id} onSelect={setProvider} />)}
-              {isLoadingProviders && providers.length === 0 && (
-                <div className="flex items-center gap-2 rounded-2xl bg-soft p-4 text-xs text-faint"><Loader2 size={14} className="animate-spin" />正在检查本机 CLI</div>
-              )}
+            <div className="mt-3 space-y-1.5">
+              {runTemplates.map((template) => {
+                const count = jobs.filter((job) => job.template.id === template.id).length;
+                const isActive = template.id === activeTemplate.id;
+                return (
+                  <div
+                    key={template.id}
+                    className={`flex items-center gap-2 rounded-xl px-2.5 py-2 ${isActive ? "bg-brand-50" : "bg-soft"}`}
+                  >
+                    <span className={`min-w-0 flex-1 truncate text-xs font-bold ${isActive ? "text-brand-700" : "text-muted"}`}>
+                      {template.name}
+                      {isActive && <span className="ml-1.5 font-normal text-faint">当前</span>}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-faint">{count} 张</span>
+                    {!isActive && (
+                      <button
+                        type="button"
+                        onClick={() => setBatchIds((current) => current.filter((id) => id !== template.id))}
+                        className="shrink-0 rounded-lg p-1 text-faint hover:text-danger"
+                        aria-label={`把${template.name}移出批次`}
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
+            {batchIds.length === 0 && (
+              <p className="mt-2 text-[10px] leading-4 text-faint">
+                想一次出多种图，就在上面配好一种点「加入批次」，再切下一种。素材只传一次。
+              </p>
+            )}
           </Card>
+
+          <ImageEngineCard
+            providers={providers}
+            provider={provider}
+            model={model}
+            isLoading={isLoadingProviders}
+            onSelectProvider={selectProvider}
+            onSelectModel={selectModel}
+            onRefresh={() => refreshProviders(true)}
+          />
         </div>
       </div>
+      )}
 
       {previewTemplate && <PreviewLightbox template={previewTemplate} onClose={() => setPreviewTemplate(null)} />}
 
       {pickingSlot && (
         <ModelLibraryPicker
           slotLabel={pickingSlot.label}
-          models={modelAssets}
+          assets={modelAssets}
           loading={isLoadingModels}
           errorMessage={modelLibraryError}
-          onPick={(entry) => pickModelAsset(pickingSlot, entry)}
+          onPick={(pick) => pickModelAsset(pickingSlot, pick)}
           onDelete={removeModelAsset}
           onClose={() => setPickingSlot(null)}
         />
@@ -1148,211 +1191,11 @@ export default function ImageFactory() {
       {editingTemplate && (
         <TemplateEditor
           template={editingTemplate}
-          categories={categories}
+          categories={[...new Set(templates.map((item) => item.category))]}
           onCancel={() => setEditingTemplate(null)}
           onSave={saveTemplate}
         />
       )}
-    </div>
-  );
-}
-
-const EDITOR_FIELD = "min-w-0 rounded-xl border border-line bg-surface px-2.5 py-2 text-xs text-ink";
-
-function newRowId(prefix: string): string {
-  return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/** 槽位 / 视图 / 场景三段结构一样，抽出来避免三份重复的增删壳子。 */
-function EditorSection({
-  title,
-  hint,
-  addLabel,
-  onAdd,
-  empty,
-  children,
-}: {
-  title: string;
-  hint: string;
-  addLabel: string;
-  onAdd: () => void;
-  empty: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="mt-5">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-xs font-bold text-muted">
-          {title}
-          <span className="ml-2 font-normal text-faint">{hint}</span>
-        </h3>
-        <button type="button" onClick={onAdd} className="shrink-0 text-xs font-bold text-brand-600">{addLabel}</button>
-      </div>
-      <div className="mt-2 space-y-2">
-        {empty ? <p className="rounded-2xl bg-soft px-3 py-2.5 text-[11px] text-faint">还没有条目，可以不填</p> : children}
-      </div>
-    </div>
-  );
-}
-
-function EditorRow({
-  cols,
-  label,
-  onRemove,
-  children,
-}: {
-  cols: string;
-  label: string;
-  onRemove: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center gap-2 rounded-2xl bg-soft p-2">
-      <div className={`grid min-w-0 flex-1 gap-2 ${cols}`}>{children}</div>
-      <button type="button" onClick={onRemove} className="shrink-0 rounded-xl p-2 text-faint hover:text-danger" aria-label={`删除${label}`}>
-        <Trash2 size={14} />
-      </button>
-    </div>
-  );
-}
-
-function TemplateEditor({
-  template,
-  categories,
-  onCancel,
-  onSave,
-}: {
-  template: ImageFactoryTemplate;
-  categories: string[];
-  onCancel: () => void;
-  onSave: (template: ImageFactoryTemplate) => void;
-}) {
-  const [draft, setDraft] = useState(template);
-  const views = draft.views || [];
-  const presets = draft.scenePresets || [];
-
-  const patch = (next: Partial<ImageFactoryTemplate>) => setDraft((current) => ({ ...current, ...next }));
-  const replaceAt = <T,>(list: T[], index: number, next: Partial<T>): T[] =>
-    list.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item));
-
-  // 空列表存成 undefined，和内置模板「不填即没有」的形态保持一致
-  const submit = () => onSave({
-    ...draft,
-    views: views.length > 0 ? views : undefined,
-    scenePresets: presets.length > 0 ? presets : undefined,
-  });
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="编辑图片模板">
-      <div className="max-h-[90vh] w-full max-w-xl overflow-auto rounded-3xl bg-surface p-5 shadow-pop">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold text-ink">自建模板</h2>
-          <button type="button" onClick={onCancel} className="rounded-xl p-2 text-faint hover:bg-soft hover:text-ink" aria-label="关闭"><X size={17} /></button>
-        </div>
-
-        <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <label className="text-xs font-bold text-muted">模板名称 *<input value={draft.name} onChange={(event) => patch({ name: event.target.value })} className="mt-1.5 w-full rounded-xl border border-line px-3 py-2.5 text-sm text-ink" /></label>
-          <label className="text-xs font-bold text-muted">
-            所属分类
-            <input
-              value={draft.category}
-              onChange={(event) => patch({ category: event.target.value })}
-              list="image-factory-categories"
-              className="mt-1.5 w-full rounded-xl border border-line px-3 py-2.5 text-sm text-ink"
-            />
-            <datalist id="image-factory-categories">
-              {categories.map((category) => <option key={category} value={category} />)}
-            </datalist>
-          </label>
-          <label className="text-xs font-bold text-muted">输出比例<input value={draft.aspectRatio} onChange={(event) => patch({ aspectRatio: event.target.value })} className="mt-1.5 w-full rounded-xl border border-line px-3 py-2.5 text-sm text-ink" /></label>
-          <label className="text-xs font-bold text-muted">
-            卡片示意图
-            <select
-              value={draft.thumb || ""}
-              onChange={(event) => patch({ thumb: event.target.value ? (event.target.value as ImageTemplateThumb) : undefined })}
-              className="mt-1.5 w-full rounded-xl border border-line bg-surface px-3 py-2.5 text-sm text-ink"
-            >
-              <option value="">通用图标</option>
-              {IMAGE_TEMPLATE_THUMB_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-            </select>
-          </label>
-          <label className="text-xs font-bold text-muted sm:col-span-2">用途说明<input value={draft.description} onChange={(event) => patch({ description: event.target.value })} className="mt-1.5 w-full rounded-xl border border-line px-3 py-2.5 text-sm text-ink" /></label>
-          <label className="text-xs font-bold text-muted sm:col-span-2">
-            生成规则 *
-            <span className="ml-2 font-normal text-faint">写清楚：保持什么 / 默认什么 / 禁止什么</span>
-            <textarea value={draft.prompt} onChange={(event) => patch({ prompt: event.target.value })} rows={5} className="mt-1.5 w-full rounded-xl border border-line px-3 py-2.5 text-sm leading-6 text-ink" />
-          </label>
-        </div>
-
-        <EditorSection
-          title="上传槽位"
-          hint="勾选即必传"
-          addLabel="+ 添加槽位"
-          empty={draft.slots.length === 0}
-          onAdd={() => patch({ slots: [...draft.slots, { id: newRowId("slot"), label: "参考图", description: "", required: true }] })}
-        >
-          {draft.slots.map((slot, index) => (
-            <EditorRow
-              key={slot.id}
-              cols="grid-cols-[1fr_1.6fr_auto]"
-              label={slot.label}
-              onRemove={() => patch({ slots: draft.slots.filter((_, slotIndex) => slotIndex !== index) })}
-            >
-              <input value={slot.label} onChange={(event) => patch({ slots: replaceAt(draft.slots, index, { label: event.target.value }) })} placeholder="槽位名称" className={EDITOR_FIELD} />
-              <input value={slot.description} onChange={(event) => patch({ slots: replaceAt(draft.slots, index, { description: event.target.value }) })} placeholder="图片用途" className={EDITOR_FIELD} />
-              <label className="flex shrink-0 items-center gap-1.5 px-1 text-[11px] font-bold text-muted">
-                <input type="checkbox" checked={slot.required} onChange={(event) => patch({ slots: replaceAt(draft.slots, index, { required: event.target.checked }) })} className="h-3.5 w-3.5 accent-brand-500" />
-                必传
-              </label>
-            </EditorRow>
-          ))}
-        </EditorSection>
-
-        <EditorSection
-          title="输出视图"
-          hint="填了就一次出多张，逐张生成"
-          addLabel="+ 添加视图"
-          empty={views.length === 0}
-          onAdd={() => patch({ views: [...views, { id: newRowId("view"), label: "新视角", hint: "" }] })}
-        >
-          {views.map((view, index) => (
-            <EditorRow
-              key={view.id}
-              cols="grid-cols-[1fr_1.6fr]"
-              label={view.label}
-              onRemove={() => patch({ views: views.filter((_, viewIndex) => viewIndex !== index) })}
-            >
-              <input value={view.label} onChange={(event) => patch({ views: replaceAt(views, index, { label: event.target.value }) })} placeholder="视角名称" className={EDITOR_FIELD} />
-              <input value={view.hint} onChange={(event) => patch({ views: replaceAt(views, index, { hint: event.target.value }) })} placeholder="这个视角要拍成什么样" className={EDITOR_FIELD} />
-            </EditorRow>
-          ))}
-        </EditorSection>
-
-        <EditorSection
-          title="画面场景"
-          hint="点选后写进补充要求，只写场景不写商品"
-          addLabel="+ 添加场景"
-          empty={presets.length === 0}
-          onAdd={() => patch({ scenePresets: [...presets, { id: newRowId("scene"), label: "新场景", prompt: "" }] })}
-        >
-          {presets.map((preset, index) => (
-            <EditorRow
-              key={preset.id}
-              cols="grid-cols-[1fr_1.6fr]"
-              label={preset.label}
-              onRemove={() => patch({ scenePresets: presets.filter((_, presetIndex) => presetIndex !== index) })}
-            >
-              <input value={preset.label} onChange={(event) => patch({ scenePresets: replaceAt(presets, index, { label: event.target.value }) })} placeholder="标签名" className={EDITOR_FIELD} />
-              <input value={preset.prompt} onChange={(event) => patch({ scenePresets: replaceAt(presets, index, { prompt: event.target.value }) })} placeholder="30-60 字的画面描述" className={EDITOR_FIELD} />
-            </EditorRow>
-          ))}
-        </EditorSection>
-
-        <div className="mt-6 flex justify-end gap-2">
-          <Button variant="secondary" onClick={onCancel}>取消</Button>
-          <Button variant="primary" disabled={!draft.name.trim() || !draft.prompt.trim()} onClick={submit}>保存模板</Button>
-        </div>
-      </div>
     </div>
   );
 }

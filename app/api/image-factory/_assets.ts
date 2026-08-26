@@ -28,6 +28,8 @@ export interface SaveAssetItem {
   sourcePath: string;
   name: string;
   sourceLabel: string;
+  /** 主体特征描述，入库时一并记下，后续生成时随图一起喂给 CLI。 */
+  traits?: string;
 }
 
 /** 图片不内联进 JSON：列表只回它的取图地址，浏览器自己按需拉、按 id 缓存。 */
@@ -58,6 +60,7 @@ async function copyIntoLibrary(kind: AssetKind, item: SaveAssetItem): Promise<As
     sourceLabel: item.sourceLabel,
     createdAt: new Date().toISOString(),
     extension,
+    ...(item.traits ? { traits: item.traits } : {}),
   };
   await mkdir(assetRoot(kind), { recursive: true });
   await copyFile(resolved, assetFilePath(kind, record));

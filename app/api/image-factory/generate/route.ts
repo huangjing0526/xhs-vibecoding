@@ -50,12 +50,19 @@ function buildGenerationPrompt(options: {
   aspectRatio: string;
   viewLabel: string;
   viewHint: string;
+  identityName: string;
+  identityTraits: string;
   inputs: Array<{ label: string; path: string }>;
   outputPath: string;
 }) {
   const inputList = options.inputs.map((input, index) => `${index + 1}. ${input.label}: ${input.path}`).join("\n");
   const viewSection = options.viewLabel
     ? `\n本次输出视角：${options.viewLabel}\n视角要求：${options.viewHint || options.viewLabel}\n只输出这一个视角，不要把多个视角拼进同一张图。\n`
+    : "";
+
+  // 只给参考图锁不住脸，把库里记下的体貌描述一并交代，跨多次生成才是同一个人
+  const identitySection = options.identityTraits
+    ? `\n人物身份：${options.identityName || "参考图中的模特"}\n身份特征：${options.identityTraits}\n必须严格保持这位人物的五官、脸型、发型、肤色与体型，与参考图及上述描述一致，不要换人。\n`
     : "";
 
   return `你正在执行内容工作台的图片生成任务。
@@ -66,7 +73,7 @@ function buildGenerationPrompt(options: {
 模板要求：${options.templatePrompt}
 用户补充：${options.customPrompt || "无"}
 目标比例：${options.aspectRatio}
-${viewSection}
+${identitySection}${viewSection}
 参考图片：
 ${inputList || "无参考图片"}
 
@@ -104,12 +111,17 @@ export async function POST(request: Request) {
     const viewId = String(formData.get("viewId") || "").trim();
     const viewLabel = String(formData.get("viewLabel") || "").trim();
     const viewHint = String(formData.get("viewHint") || "").trim();
+    const model = String(formData.get("model") || "").trim();
+    const identityName = String(formData.get("identityName") || "").trim();
+    const identityTraits = String(formData.get("identityTraits") || "").trim();
 
     if (!templateName || !templatePrompt) return apiBadRequest("请选择有效模板后再生成");
     if (provider === "gemini") {
       return apiBadRequest("Gemini CLI 当前拒绝个人订阅登录，请迁移到 Antigravity 后再启用");
     }
     if (provider !== "codex" && provider !== "grok") return apiBadRequest("请选择可用的本地 CLI");
+    // 模型名会拼进命令行，只放行 CLI 真实使用的字符形态
+    if (model && !/^[A-Za-z0-9._:\/-]{1,64}$/.test(model)) return apiBadRequest("模型名不合法，请重新选择");
 
     // 同一次多视图运行共用一个 jobId，各视角落在各自子目录，产物在本机归到一起
     jobId = safeSegment(String(formData.get("jobId") || "").trim(), newShortId());
@@ -140,12 +152,14 @@ export async function POST(request: Request) {
       aspectRatio,
       viewLabel,
       viewHint,
+      identityName,
+      identityTraits,
       inputs: savedInputs,
       outputPath,
     });
     await writeFile(path.join(jobDir, "prompt.txt"), prompt, "utf8");
 
-    console.info("[ImageFactory] 开始 CLI 生图", { action: "imageFactory.generate", provider, jobId, viewId: viewId || "single" });
+    console.info("[ImageFactory] 开始 CLI 生图", { action: "imageFactory.generate", provider, model: model || "default", jobId, viewId: viewId || "single" });
 
     if (provider === "codex") {
       const imageArgs = savedInputs.flatMap((input) => ["-i", input.path]);
@@ -153,6 +167,7 @@ export async function POST(request: Request) {
         "codex",
         [
           "exec",
+          ...(model ? ["-m", model] : []),
           "--ephemeral",
           "--skip-git-repo-check",
           "-C",
@@ -172,6 +187,7 @@ export async function POST(request: Request) {
         "grok",
         [
           "--no-auto-update",
+          ...(model ? ["--model", model] : []),
           "--cwd",
           jobDir,
           "--sandbox",
@@ -198,6 +214,7 @@ export async function POST(request: Request) {
       {
         jobId,
         provider,
+        model: model || undefined,
         imageDataUrl: await readImageAsDataUrl(generatedPath),
         outputPath: generatedPath,
         runDir,

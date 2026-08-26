@@ -275,6 +275,45 @@ function renderThumb(thumb: ImageTemplateThumb | undefined, p: ThumbPalette) {
         </>
       );
 
+    // 衣架上挂着一件自然垂落的衣服
+    case "hanger-shot":
+      return (
+        <>
+          <path d="M60 14 v8" className={p.edge} strokeWidth="2" strokeLinecap="round" fill="none" />
+          <path d="M34 30 L60 20 L86 30" className={p.edge} strokeWidth="2.5" fill="none" strokeLinejoin="round" />
+          <path d="M44 30 q16 -6 32 0 l8 12 l-8 4 l0 32 q-16 5 -32 0 l0 -32 l-8 -4 Z" className={p.mid} />
+          <path d="M60 32 v42" className={p.edge} strokeWidth="1.5" fill="none" />
+        </>
+      );
+
+    // 同一件衣服的正 / 侧 / 背三格
+    case "garment-views":
+      return (
+        <>
+          {[8, 44, 80].map((x, index) => (
+            <g key={x}>
+              <rect x={x} y="18" width="32" height="54" rx="4" className={p.frame} strokeWidth="1" />
+              <path
+                d={`M${x + 8} 30 q8 -4 16 0 l4 8 l-4 2 l0 22 l-16 0 l0 -22 l-4 -2 Z`}
+                className={index === 0 ? p.strong : p.mid}
+              />
+            </g>
+          ))}
+        </>
+      );
+
+    // 封面底图：主体压一侧，另一侧留出叠字的空区
+    case "cover-base":
+      return (
+        <>
+          <rect x="26" y="8" width="68" height="74" rx="5" className={p.frame} strokeWidth="1" />
+          <path d="M26 82 V58 q18 -18 30 -4 q10 12 18 6 q10 -8 20 2 v20 Z" className={p.mid} />
+          <circle cx="76" cy="28" r="7" className={p.weak} />
+          <rect x="34" y="16" width="40" height="6" rx="3" className={p.strong} />
+          <rect x="34" y="27" width="26" height="5" rx="2.5" className={p.weak} />
+        </>
+      );
+
     // 自建模板兜底：一张通用图片占位
     default:
       return (

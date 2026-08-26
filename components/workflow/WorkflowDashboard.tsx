@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Download, FileText, Plus, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowLeft, Download, FileText, Plus, RefreshCw, Sparkles } from "lucide-react";
 import Button from "@/components/ui/Button";
 import CollapsiblePanel from "@/components/ui/CollapsiblePanel";
 import EmptyState from "@/components/ui/EmptyState";
@@ -121,7 +121,7 @@ interface AreaDef {
 const AREAS: Record<WorkbenchAreaId, AreaDef> = {
   workbench: { label: "工作台", hint: "写笔记 · 从选题到发布", subtitle: "选一篇笔记，从选题到发布一条龙" },
   library: { group: "内容流程", label: "素材库", hint: "攒料 · 出选题", subtitle: "攒料、提炼、导入——所有选题的来源。" },
-  images: { group: "内容流程", label: "图片工厂", hint: "封面 · 配图 · AI 生图", subtitle: "笔记的封面与配图，以及用本机 CLI 跑的 AI 生图。" },
+  images: { group: "内容流程", label: "图片工厂", hint: "模特 · 电商图 · 封面", subtitle: "模特资产、电商图、封面底图——全部由本机 CLI 生成。" },
   video: { group: "内容流程", label: "视频脚本", hint: "口播 · 分镜", subtitle: "把笔记转成口播 / 分镜视频脚本。" },
   videoFactory: {
     group: "内容流程",
@@ -137,15 +137,18 @@ const AREAS: Record<WorkbenchAreaId, AreaDef> = {
   watermark: { group: "AI 工具", label: "视频去水印", subtitle: "去掉 AI 生成视频的水印（豆包 / Gemini 等）。" },
 };
 
-// 图片工厂的三段：前两段是当前笔记的封面/配图（复用 CoverStudio 的 ImageMode），第三段是不依赖笔记的 AI 生图。
+/**
+ * 图片工厂默认就是 AI 生图：产出类型在 ImageFactory 内部排成一排 tab，一眼看完能做哪些图。
+ * 叠字排版是 AI 底图之后的下一环——中文标题交给 AI 画必糊，所以底图与文字层分开，
+ * 从底图点「拿去叠标题」才切到这里。
+ */
 type ImageTab = ImageMode | "ai";
-const IMAGE_TABS: Array<{ value: ImageTab; label: string; subtitle: string }> = [
-  { value: "cover", label: "封面图", subtitle: "为当前笔记生成封面方案与预览图。" },
-  { value: "content", label: "内容配图", subtitle: "为当前笔记生成正文里的配图。" },
-  { value: "ai", label: "AI 生图", subtitle: "上传素材、勾选要的产出，用本机订阅 CLI 一次生成多张目标图。" },
+const TEXT_LAYER_TABS: Array<{ value: ImageMode; label: string; subtitle: string }> = [
+  { value: "cover", label: "封面叠字", subtitle: "把 AI 底图配上标题排版，文字层本地渲染，字不会糊。" },
+  { value: "content", label: "配图叠字", subtitle: "把正文配图配上文字排版。" },
 ];
-// 分段控件只认 value/label，静态表提前算好，别每次渲染重建
-const IMAGE_TAB_OPTIONS = IMAGE_TABS.map(({ value, label }) => ({ value, label }));
+const TEXT_LAYER_OPTIONS = TEXT_LAYER_TABS.map(({ value, label }) => ({ value, label }));
+const AI_IMAGE_SUBTITLE = "上传素材、选产出类型与生成模型，用本机订阅 CLI 一次生成多张目标图。";
 
 // 侧栏导航，从 AREAS 派生：AREA_ORDER 是 Record 键的完整列表，
 // 新增区 id 时类型层会强制补 AREAS，从而保证它一定有导航入口。
@@ -311,7 +314,7 @@ export default function WorkflowDashboard() {
   const [selectedDraft, setSelectedDraft] = useState<DraftNote | null>(null);
   const [coverConfig, setCoverConfig] = useState<CoverConfig>({ ...DEFAULT_COVER_CONFIG });
   const [coverPlan, setCoverPlan] = useState<CoverPlan | null>(null);
-  const [imageTab, setImageTab] = useState<ImageTab>("cover");
+  const [imageTab, setImageTab] = useState<ImageTab>("ai");
 
   // 别处的「去做封面」入口：进图片工厂并落在封面那一段
   const openCover = useCallback(() => {
@@ -1378,19 +1381,34 @@ export default function WorkflowDashboard() {
           <ToolPage
             area="images"
             note={imageTab === "ai" ? undefined : selectedTopic}
-            subtitle={IMAGE_TABS.find((tab) => tab.value === imageTab)?.subtitle}
+            subtitle={
+              imageTab === "ai"
+                ? AI_IMAGE_SUBTITLE
+                : TEXT_LAYER_TABS.find((tab) => tab.value === imageTab)?.subtitle
+            }
             onGoWorkbench={() => setArea("workbench")}
           >
-            <div className="mb-4">
-              <SegmentedControl
-                options={IMAGE_TAB_OPTIONS}
-                value={imageTab}
-                onChange={setImageTab}
-                ariaLabel="图片类型"
-              />
-            </div>
+            {imageTab !== "ai" && (
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <Button variant="secondary" onClick={() => setImageTab("ai")} icon={<ArrowLeft size={15} />}>
+                  回到 AI 生图
+                </Button>
+                <SegmentedControl
+                  options={TEXT_LAYER_OPTIONS}
+                  value={imageTab}
+                  onChange={setImageTab}
+                  ariaLabel="叠字类型"
+                />
+              </div>
+            )}
             {imageTab === "ai" ? (
-              <ImageFactory />
+              <ImageFactory
+                onUseAsCover={(dataUrl) => {
+                  // AI 只出底图，标题仍由本地排版叠上去：底图直接落进封面配置的背景位
+                  setCoverConfig((current) => ({ ...current, backgroundImage: dataUrl }));
+                  setImageTab("cover");
+                }}
+              />
             ) : (
               <div className="space-y-3">
                 <CoverStudio

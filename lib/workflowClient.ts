@@ -550,7 +550,7 @@ export async function listModelAssets(): Promise<{ models: ModelAssetEntry[] }> 
  * 一次运行的多个视角属于同一位模特，整组一起提交，服务端只读写一次索引。
  */
 export async function saveModelAssets(
-  items: Array<{ sourcePath: string; name: string; sourceLabel: string }>
+  items: Array<{ sourcePath: string; name: string; sourceLabel: string; traits?: string }>
 ): Promise<{ models: ModelAssetEntry[] }> {
   return workflowRequest<{ models: ModelAssetEntry[] }>(
     "/api/image-factory/models",
