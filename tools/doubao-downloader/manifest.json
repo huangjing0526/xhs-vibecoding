@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "豆包下载器",
-  "version": "1.1.0",
-  "description": "在豆包 / Dola 网页端提取你自己生成的无水印图片、视频资源，支持预览与批量下载。纯本地运行，无卡密、无外连服务器。",
+  "version": "1.2.0",
+  "description": "在豆包 / Dola 网页端提取你自己生成的无水印图片、视频资源，支持预览、批量下载，以及直接送进内容工作台的视频工厂。纯本地运行，无卡密、无外连服务器。",
   "permissions": [
     "tabs",
     "downloads",
@@ -11,7 +11,9 @@
   "host_permissions": [
     "*://*.doubao.com/*",
     "*://*.dola.com/*",
-    "*://*.byteintlapi.com/*"
+    "*://*.byteintlapi.com/*",
+    "http://127.0.0.1:3000/*",
+    "http://localhost:3000/*"
   ],
   "background": {
     "service_worker": "service-worker.js"

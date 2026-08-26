@@ -1,4 +1,4 @@
-const EXTENSION_VERSION = "1.1.0";
+const EXTENSION_VERSION = "1.2.0";
 const DEBUG_LOG_ENABLED = false;
 const SETTINGS_KEY = "doubaoDolaHelperSettings";
 const DEFAULT_SETTINGS = {
@@ -7,6 +7,14 @@ const DEFAULT_SETTINGS = {
 };
 
 const TARGET_HOSTS = ["doubao.com", "dola.com"];
+
+/**
+ * 内容工作台的本机地址。next dev 默认 3000；换端口就改这里，
+ * 并同步把新端口加进 manifest.json 的 host_permissions，否则 fetch 会被扩展权限挡掉。
+ */
+const WORKBENCH_ORIGIN = "http://127.0.0.1:3000";
+/** 单个片子的体积上限，超了多半是抓错了资源，不往工作台推。 */
+const MAX_CLIP_BYTES = 200 * 1024 * 1024;
 const QAAB_SALT_HEX = "4dd4c2e6b83162090e52b3c7a6733ba4"
   + "1cb2462b829ab58a196b39db57177524"
   + "f49baf7f08e8d68d26a72e37c1a95a2f"
@@ -74,6 +82,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.warn("download failed:", error);
         sendResponse({ success: false, message: "下载失败" });
       });
+    return true;
+  }
+
+  if (message.type === "LIST_WORKBENCH_PROJECTS") {
+    listWorkbenchProjects()
+      .then((projects) => sendResponse({ success: true, projects }))
+      .catch((error) => sendResponse({ success: false, message: describeWorkbenchError(error) }));
+    return true;
+  }
+
+  if (message.type === "SEND_TO_WORKBENCH") {
+    sendClipToWorkbench(message)
+      .then(() => sendResponse({ success: true }))
+      .catch((error) => sendResponse({ success: false, message: describeWorkbenchError(error) }));
     return true;
   }
 
@@ -657,6 +679,92 @@ function fromBase64Utf8(base64Text) {
     bytes[index] = binary.charCodeAt(index);
   }
   return new TextDecoder().decode(bytes);
+}
+
+/**
+ * 工作台没开着是最常见的失败，fetch 抛的是干巴巴的 "Failed to fetch"。
+ * 这里翻成人能看懂的话，省得每次都去翻扩展的 console。
+ */
+function describeWorkbenchError(error) {
+  const raw = (error && error.message) || String(error || "");
+  if (/failed to fetch|networkerror|load failed/i.test(raw)) {
+    return `连不上内容工作台（${WORKBENCH_ORIGIN}），先把 npm run dev 跑起来`;
+  }
+  return raw || "送到工作台失败";
+}
+
+/**
+ * 读工作台返回的 { code, data, message } 信封，非 0 一律当失败抛出去。
+ * 信封契约的所有者在工作台侧的 app/api/feishu/_utils.ts（apiOk / apiBadRequest）；
+ * 扩展是无构建的裸 JS，导不进那边的 TS，所以这里只能照着实现一份。
+ */
+async function readEnvelope(response) {
+  if (!response.ok) {
+    throw new Error(`工作台返回 ${response.status}`);
+  }
+  const payload = await response.json();
+  if (!payload || payload.code !== 0) {
+    throw new Error((payload && payload.message) || "工作台拒绝了这次请求");
+  }
+  return payload.data || {};
+}
+
+/** 拉视频工厂的项目列表，面板用它填「送到哪个项目」的下拉。 */
+async function listWorkbenchProjects() {
+  const response = await fetch(`${WORKBENCH_ORIGIN}/api/video-factory/project`, { cache: "no-store" });
+  const data = await readEnvelope(response);
+  return (data.projects || []).map((project) => ({
+    id: project.id,
+    title: project.title || "未命名项目",
+    shotCount: (project.storyboard && project.storyboard.shots && project.storyboard.shots.length) || 0
+  }));
+}
+
+/**
+ * 把页面上抓到的无水印片推给视频工厂，挂到指定项目的指定镜头。
+ * 先在后台把字节取下来再转发，而不是把地址交给工作台自己下——
+ * 那个地址带着豆包的会话签名，出了浏览器就取不到了。
+ */
+async function sendClipToWorkbench(message) {
+  const { url, projectId, shotOrder, durationSec } = message || {};
+  // 只留 fetch 前必须的这一条；镜号范围、项目 id 合法性由工作台判，
+  // readEnvelope 会把它的中文报错原样冒泡上来，不在这儿再抄一份规则
+  if (!isHttpUrl(url)) {
+    throw new Error("资源地址不合法");
+  }
+
+  const media = await fetch(url, { cache: "no-store" });
+  if (!media.ok) {
+    throw new Error(`取视频失败（${media.status}）`);
+  }
+
+  // 有 content-length 就先看一眼，别把整个超大文件拉完再拒
+  const declaredBytes = Number(media.headers.get("content-length"));
+  if (declaredBytes > MAX_CLIP_BYTES) {
+    throw new Error(`视频超过 ${Math.round(MAX_CLIP_BYTES / 1024 / 1024)}MB，没往工作台推`);
+  }
+
+  const blob = await media.blob();
+  if (!blob.size) {
+    throw new Error("取回来的视频是空的");
+  }
+  // 分块响应没有 content-length，兜底再判一次
+  if (blob.size > MAX_CLIP_BYTES) {
+    throw new Error(`视频超过 ${Math.round(MAX_CLIP_BYTES / 1024 / 1024)}MB，没往工作台推`);
+  }
+
+  const form = new FormData();
+  form.append("projectId", String(projectId || ""));
+  form.append("shotOrder", String(shotOrder));
+  form.append("provider", "doubao");
+  if (Number(durationSec) > 0) {
+    form.append("durationSec", String(durationSec));
+  }
+  // 文件名只为了过工作台那边的 .mp4 后缀校验；真正的落盘路径由服务端的 clipPath() 决定
+  form.append("clipFile", blob, "clip.mp4");
+
+  const response = await fetch(`${WORKBENCH_ORIGIN}/api/video-factory/clip`, { method: "POST", body: form });
+  await readEnvelope(response);
 }
 
 function isHttpUrl(url) {

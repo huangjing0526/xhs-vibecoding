@@ -19,6 +19,8 @@
   let launcherTop = null;
   let launcherDrag = null;
   let launcherMoved = false;
+  /** 视频工厂的项目列表，填「送到哪个项目」的下拉；点「刷新」重拉。 */
+  let workbenchProjects = [];
   let settings = {
     enabled: true,
     watermarkEnabled: true
@@ -348,7 +350,7 @@
         font-size: 12px;
       }
 
-      .date-input {
+      .date-input, .shot-input {
         width: 106px;
         height: 32px;
         border: 0;
@@ -544,6 +546,48 @@
         color: var(--ink);
       }
 
+      .card-button.send-button {
+        grid-column: 1 / -1;
+      }
+
+      .card-button[disabled] {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .workbench {
+        flex: 0 0 auto;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 20px;
+        border-bottom: 1px solid var(--line);
+        background: var(--soft);
+      }
+
+      .workbench-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+
+      .workbench .select-wrap {
+        min-width: 180px;
+        background: var(--surface);
+      }
+
+      .shot-input {
+        width: 64px;
+        background: var(--surface);
+      }
+
+      .workbench-hint {
+        flex: 1 1 100%;
+        font-size: 12px;
+        color: var(--faint);
+      }
+
       .empty {
         min-height: 200px;
         display: grid;
@@ -644,6 +688,17 @@
         <button class="quiet-button download-all" type="button">全部下载</button>
       </div>
 
+      <div class="workbench" aria-label="送到内容工作台">
+        <span class="workbench-label">送到工作台</span>
+        <label class="select-wrap">
+          <select class="project-select" aria-label="视频工厂项目"></select>
+          <span class="select-arrow" aria-hidden="true"></span>
+        </label>
+        <input class="shot-input" type="number" min="1" max="99" step="1" value="1" title="镜号" aria-label="镜号" />
+        <button class="quiet-button refresh-projects" type="button" title="重新拉取项目列表">刷新</button>
+        <span class="workbench-hint"></span>
+      </div>
+
       <main class="content">
         <div class="empty">等待捕获资源</div>
       </main>
@@ -659,6 +714,10 @@
   const filterSelect = shadow.querySelector(".filter-select");
   const startDateInput = shadow.querySelector(".start-date");
   const endDateInput = shadow.querySelector(".end-date");
+  const projectSelect = shadow.querySelector(".project-select");
+  const shotInput = shadow.querySelector(".shot-input");
+  const refreshProjectsButton = shadow.querySelector(".refresh-projects");
+  const workbenchHint = shadow.querySelector(".workbench-hint");
   const downloadSelectedButton = shadow.querySelector(".download-selected");
   const downloadAllButton = shadow.querySelector(".download-all");
   const collapseButton = shadow.querySelector(".collapse-button");
@@ -692,6 +751,8 @@
     isCollapsed = true;
     render();
   });
+
+  refreshProjectsButton.addEventListener("click", () => loadWorkbenchProjects());
 
   settingToggles.forEach((toggle) => {
     toggle.addEventListener("change", () => {
@@ -744,6 +805,8 @@
   downloadAllButton.addEventListener("click", () => {
     downloadUrls(getFilteredItems().map((item) => item.url));
   });
+
+  loadWorkbenchProjects();
 
   chrome.runtime.sendMessage({ type: "GET_SETTINGS" }, (response) => {
     if (response?.settings) {
@@ -919,6 +982,9 @@
       render();
     });
 
+    // 视频卡片才会被 loadedmetadata 填上；图片卡片一直是 NaN，也用不到
+    let clipDurationSec = NaN;
+
     const preview = document.createElement("div");
     preview.className = "preview";
     preview.title = item.url;
@@ -940,6 +1006,11 @@
       video.muted = true;
       video.preload = "metadata";
       video.playsInline = true;
+      // 送片要报实际时长。量到就存进这个数，送片回调只闭包这个数字，
+      // 不闭包 <video> 元素本身——每次 render() 都会重建卡片，吊住元素会一路攒着不放
+      video.addEventListener("loadedmetadata", () => {
+        clipDurationSec = video.duration;
+      });
       preview.append(video, createPlayMark());
       video.addEventListener("play", () => {
         const marker = preview.querySelector(".play-mark");
@@ -968,9 +1039,144 @@
     downloadButton.addEventListener("click", () => downloadUrls([item.url]));
 
     actions.append(copyButton, downloadButton);
+
+    // 图片没有「挂到某一镜」的概念，送片入口只给视频
+    if (item.type !== "image") {
+      const sendButton = document.createElement("button");
+      sendButton.className = "card-button send-button";
+      sendButton.type = "button";
+      sendButton.textContent = "送到工作台";
+      sendButton.title = "挂到所选项目的这一镜上";
+      sendButton.addEventListener("click", () => sendToWorkbench(item, sendButton, () => clipDurationSec));
+      actions.append(sendButton);
+    }
+
     card.append(checkbox, preview, actions);
     return card;
   }
+
+  /**
+   * 给后台发消息并等回复。
+   * chrome.runtime.sendMessage 的错误分成 lastError 和信封里的 success 两路，
+   * 每个调用点各写一遍三分支太啰嗦，统一在这里收成一个会 reject 的 Promise。
+   */
+  function askBackground(message) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!response || !response.success) {
+          reject(new Error((response && response.message) || "后台没有响应"));
+          return;
+        }
+        resolve(response);
+      });
+    });
+  }
+
+  /** 按钮上闪一句反馈再还原，复制和送片都用它。 */
+  function flashButton(button, text, ms) {
+    const oldText = button.dataset.idleText || button.textContent;
+    button.dataset.idleText = oldText;
+    button.textContent = text;
+    setTimeout(() => {
+      button.textContent = button.dataset.idleText || oldText;
+      delete button.dataset.idleText;
+    }, ms);
+  }
+
+  function loadWorkbenchProjects() {
+    setWorkbenchHint("正在读项目列表…");
+    askBackground({ type: "LIST_WORKBENCH_PROJECTS" })
+      .then((response) => {
+        workbenchProjects = response.projects || [];
+        renderProjectOptions();
+        setWorkbenchHint(
+          workbenchProjects.length
+            ? `${workbenchProjects.length} 个项目可选`
+            : "工作台里还没有视频项目，先在视频工厂建一个"
+        );
+      })
+      .catch((error) => {
+        workbenchProjects = [];
+        renderProjectOptions();
+        setWorkbenchHint(error.message);
+      });
+  }
+
+  function renderProjectOptions() {
+    // 重画下拉会丢掉当前选择，先记下来再尽量还原
+    const previous = projectSelect.value;
+    projectSelect.textContent = "";
+
+    if (!workbenchProjects.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "无可用项目";
+      projectSelect.append(option);
+      return;
+    }
+
+    for (const project of workbenchProjects) {
+      const option = document.createElement("option");
+      option.value = project.id;
+      option.textContent = project.shotCount ? `${project.title}（${project.shotCount} 镜）` : project.title;
+      projectSelect.append(option);
+    }
+
+    if (previous && workbenchProjects.some((project) => project.id === previous)) {
+      projectSelect.value = previous;
+    }
+  }
+
+  function setWorkbenchHint(text) {
+    workbenchHint.textContent = text || "";
+  }
+
+  /**
+   * 把这条片子挂到所选项目的所选镜头上。
+   * durationSec 是卡片在 loadedmetadata 时量到的实际秒数——豆包的片子不是 6/10 秒，
+   * 工作台据实记录，靠它猜会把数据写错。
+   */
+  function sendToWorkbench(item, button, readDurationSec) {
+    const projectId = projectSelect.value;
+    if (!projectId) {
+      setWorkbenchHint("先选一个项目，没有就去视频工厂建一个");
+      return;
+    }
+
+    const shotOrder = Number(shotInput.value);
+    button.disabled = true;
+    button.dataset.idleText = button.textContent;
+    button.textContent = "送出中…";
+
+    askBackground({
+      type: "SEND_TO_WORKBENCH",
+      url: item.url,
+      projectId,
+      shotOrder,
+      durationSec: readDurationSec()
+    })
+      .then(() => {
+        flashButton(button, `已挂第 ${shotOrder} 镜`, 2000);
+        setWorkbenchHint(`第 ${shotOrder} 镜已挂上`);
+        // 连着送多镜是常态，镜号自动往后走一格，省得每次手改
+        if (shotOrder < 99) {
+          shotInput.value = String(shotOrder + 1);
+        }
+      })
+      .catch((error) => {
+        button.textContent = button.dataset.idleText;
+        delete button.dataset.idleText;
+        setWorkbenchHint(error.message);
+      })
+      .finally(() => {
+        button.disabled = false;
+      });
+  }
+
 
   function createPlayMark() {
     const playMark = document.createElement("span");
@@ -981,11 +1187,7 @@
   async function copyUrl(url, button) {
     try {
       await navigator.clipboard.writeText(url);
-      const oldText = button.textContent;
-      button.textContent = "已复制";
-      setTimeout(() => {
-        button.textContent = oldText;
-      }, 1000);
+      flashButton(button, "已复制", 1000);
     } catch {
       downloadUrls([url]);
     }

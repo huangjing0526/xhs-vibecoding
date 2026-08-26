@@ -8,8 +8,23 @@
 // 只取类型，运行时不成环：benchmark.ts 反过来要用这里的 SHOT_DURATIONS 常量
 import type { BenchmarkRhythm } from "./benchmark";
 
-/** 生成引擎：本机 grok CLI 的图生视频，或人工去即梦/可灵跑完回传。 */
-export type VideoGenProviderId = "grok-cli" | "manual";
+/**
+ * 生成引擎。照 SHOT_DURATIONS 的路子从常量数组派生类型，
+ * 免得联合类型、运行时白名单、引擎卡片三处各写一份再悄悄漂移。
+ */
+export const VIDEO_GEN_PROVIDERS = ["grok-cli", "doubao", "manual"] as const;
+export type VideoGenProviderId = (typeof VIDEO_GEN_PROVIDERS)[number];
+
+/**
+ * 走回传端点的通道：片子在别处生成好再传回来挂上，doubao 由扩展自动推、manual 由人选文件。
+ * grok-cli 不在其中——它在本机出片、自己落盘，走的是 generate 路由。
+ */
+export const UPLOAD_PROVIDERS = ["doubao", "manual"] as const;
+export type UploadProviderId = (typeof UPLOAD_PROVIDERS)[number];
+
+export function isUploadProvider(value: unknown): value is UploadProviderId {
+  return UPLOAD_PROVIDERS.includes(value as UploadProviderId);
+}
 
 /** 单个镜头的时长档位。grok 的 image_to_video 只认 6 和 10 秒，分镜必须按这两档切。 */
 export const SHOT_DURATIONS = [6, 10] as const;

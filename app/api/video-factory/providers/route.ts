@@ -91,6 +91,14 @@ export async function GET() {
       message: describeGrok(grokVersion, loggedIn, optOut),
     },
     {
+      id: "doubao",
+      name: "豆包（网页端 + 下载器）",
+      // 扩展装没装是浏览器里的事，服务端探测不到，只能常驻可用并把用法写在 message 里
+      available: true,
+      authenticated: true,
+      message: "在豆包网页端生成，用「豆包下载器」扩展的『送到工作台』直接挂到镜头上",
+    },
+    {
       id: "manual",
       name: "手动生成（即梦 / 可灵）",
       available: true,

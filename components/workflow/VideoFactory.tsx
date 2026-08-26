@@ -1361,6 +1361,12 @@ export default function VideoFactory({ onNotice, incomingSkeleton, onSkeletonCon
                     {!providerReady && provider === "grok-cli" && (
                       <span className="text-[11px] font-semibold text-warn">{selectedProvider?.message}</span>
                     )}
+                    {provider === "doubao" && (
+                      // 豆包这条路的回传由扩展自动完成，旁边那个「回传 mp4」只是手动兜底
+                      <span className="text-[11px] text-faint">
+                        提示词贴进豆包出片后，用「豆包下载器」的『送到工作台』直接挂上，不用手动回传
+                      </span>
+                    )}
                   </div>
 
                   {(frameVersion[shot.order] || clip?.framePath) && (
