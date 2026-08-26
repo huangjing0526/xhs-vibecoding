@@ -53,7 +53,7 @@ export default function ModelCardRow({
             }`}
           >
             <span className="relative block aspect-[3/4] bg-soft">
-              <Image src={profile.identity.imageUrl} alt={profile.name} fill sizes="96px" className="object-cover" />
+              <Image src={profile.cover.imageUrl} alt={profile.name} fill sizes="96px" className="object-cover" />
               {active && (
                 <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-brand-500 text-white">
                   <Check size={10} strokeWidth={3} />

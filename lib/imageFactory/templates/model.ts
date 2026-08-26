@@ -11,7 +11,7 @@ export const MODEL_TEMPLATES: ImageFactoryTemplate[] = [
     aspectRatio: "3:4",
     thumb: "model-asset",
     preview: "/template-previews/model-asset.jpg",
-    producesModelAsset: true,
+    producesAsset: "models",
     libraryFirst: true,
     slots: [
       { id: "model", label: "模特参考", description: "可选，传了就锁定这张脸；不传按文字描述新生成一位", required: false, fromModelLibrary: true },
@@ -49,7 +49,7 @@ export const MODEL_TEMPLATES: ImageFactoryTemplate[] = [
     aspectRatio: "3:4",
     thumb: "model-poses",
     preview: "/template-previews/model-poses.jpg",
-    producesModelAsset: true,
+    producesAsset: "models",
     slots: [
       { id: "model", label: "模特图", description: "已定妆的模特照，用于锁定人物身份与服装", required: true, fromModelLibrary: true },
       { id: "style", label: "场景参考", description: "可选，用于确定背景与拍摄风格", required: false },

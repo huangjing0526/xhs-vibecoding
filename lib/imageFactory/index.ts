@@ -1,21 +1,32 @@
 import type { ImageFactoryTemplate } from "./types";
-import { CREATIVE_TEMPLATES } from "./templates/creative";
-import { ECOMMERCE_TEMPLATES } from "./templates/ecommerce";
-import { FASHION_TEMPLATES } from "./templates/fashion";
+import { CONTENT_TEMPLATES } from "./templates/content";
+import { GENERAL_TEMPLATES } from "./templates/general";
 import { MODEL_TEMPLATES } from "./templates/model";
-import { XHS_TEMPLATES } from "./templates/xhs";
+import { OUTFIT_TEMPLATES } from "./templates/outfit";
+import { PRODUCT_DETAIL_TEMPLATES, PRODUCT_HERO_TEMPLATES } from "./templates/product";
 
 export * from "./types";
 export * from "./profiles";
+export * from "./libraries";
 
-/** 数组顺序决定模板库里分类标签与卡片的先后，改顺序前先想清楚 UI 影响。 */
+/**
+ * 分类按单一判据划开，同一层内不混维度：
+ * 模特资产（有人无货）→ 商品主图（有货无人·主图位）→ 详情图（有货无人·详情位）
+ * → 上身穿搭（人穿着货）→ 内容配图（进内容位不进商详页）→ 通用与自建（不绑定主体与坑位）。
+ * 数组顺序即分类标签与卡片的先后，改顺序前先想清楚 UI 影响。
+ */
 export const BUILT_IN_IMAGE_TEMPLATES: ImageFactoryTemplate[] = [
   ...MODEL_TEMPLATES,
-  ...ECOMMERCE_TEMPLATES,
-  ...FASHION_TEMPLATES,
-  ...XHS_TEMPLATES,
-  ...CREATIVE_TEMPLATES,
+  ...PRODUCT_HERO_TEMPLATES,
+  ...PRODUCT_DETAIL_TEMPLATES,
+  ...OUTFIT_TEMPLATES,
+  ...CONTENT_TEMPLATES,
+  ...GENERAL_TEMPLATES,
 ];
+
+/** 自建模板落这一类；老数据里的「自建」进来时统一改写成它。 */
+export const CUSTOM_TEMPLATE_CATEGORY = "通用与自建";
+const LEGACY_CUSTOM_CATEGORIES = ["自建"];
 
 export const IMAGE_FACTORY_STORAGE_KEY = "vibenote.image-factory.templates.v1";
 
@@ -27,7 +38,13 @@ export function loadCustomImageTemplates(): ImageFactoryTemplate[] {
   if (typeof window === "undefined") return [];
   try {
     const parsed = JSON.parse(localStorage.getItem(IMAGE_FACTORY_STORAGE_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    // 分类改版前存下的自建模板还带着老标签，放着不管会在 tab 上多出一个孤零零的分组。
+    return parsed.map((template: ImageFactoryTemplate) =>
+      LEGACY_CUSTOM_CATEGORIES.includes(template.category)
+        ? { ...template, category: CUSTOM_TEMPLATE_CATEGORY }
+        : template
+    );
   } catch (error) {
     console.warn("[ImageFactory] 自建模板读取失败", { action: "imageFactory.loadTemplates", error });
     return [];

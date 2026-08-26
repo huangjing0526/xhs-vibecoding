@@ -43,7 +43,7 @@ const RULES: Array<{ area: AreaId; keywords: string[] }> = [
   { area: "watermark", keywords: ["水印", "去水印"] },
   { area: "blogger", keywords: ["对标", "拆解", "博主", "道库", "同行"] },
   { area: "videoFactory", keywords: ["视频", "出片", "分镜", "短视频", "口播", "带货"] },
-  { area: "assets", keywords: ["模特库", "产品库", "资产库", "存进库"] },
+  { area: "assets", keywords: ["模特库", "产品库", "场景库", "资产库", "存进库"] },
   { area: "images", keywords: ["图", "封面", "配图", "电商图", "模特", "抠", "海报"] },
   { area: "templates", keywords: ["模板", "套图", "同款"] },
   { area: "rewrite", keywords: ["改写", "优化", "爆款", "润色", "标题"] },

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
+import { writeWorkMeta } from "@/app/api/image-factory/_works";
 import {
   JOB_ROOT,
   MIME_BY_EXTENSION,
@@ -104,7 +105,9 @@ export async function POST(request: Request) {
   try {
     const formData = await request.formData();
     provider = String(formData.get("provider") || "") as ImageCliProvider;
+    const templateId = String(formData.get("templateId") || "").trim();
     const templateName = String(formData.get("templateName") || "").trim();
+    const templateCategory = String(formData.get("templateCategory") || "").trim();
     const templatePrompt = String(formData.get("templatePrompt") || "").trim();
     const customPrompt = String(formData.get("customPrompt") || "").trim();
     const aspectRatio = String(formData.get("aspectRatio") || "1:1").trim();
@@ -209,6 +212,20 @@ export async function POST(request: Request) {
     if (!generatedPath) throw new Error(`${provider} 已结束，但没有生成目标图片文件`);
 
     const extension = path.extname(generatedPath).toLowerCase();
+
+    // 元数据只在跑成功后写：作品页扫的是 meta.json，跑挂的半成品就不会混进列表
+    await writeWorkMeta(jobDir, {
+      templateId: templateId || templateName,
+      templateName,
+      category: templateCategory,
+      viewLabel: viewLabel || undefined,
+      provider,
+      model: model || undefined,
+      aspectRatio,
+      customPrompt: customPrompt || undefined,
+      createdAt: new Date().toISOString(),
+      file: path.basename(generatedPath),
+    });
 
     return apiOk(
       {

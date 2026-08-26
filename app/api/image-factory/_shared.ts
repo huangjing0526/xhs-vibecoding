@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { LibraryAssetEntry } from "@/lib/imageFactory";
+import { LIBRARY_LABEL, type LibraryKind } from "@/lib/imageFactory/libraries";
+import type { LibraryAssetEntry, WorkEntry } from "@/lib/imageFactory";
 
 /** 本机生图产物的存储布局：生成产物与各素材库都挂在这一个根下。 */
 export const FACTORY_ROOT = path.join(process.cwd(), ".local", "image-factory");
@@ -9,14 +10,12 @@ export const JOB_ROOT = path.join(FACTORY_ROOT, "jobs");
 
 /**
  * 可复用的参考素材库。
- * 模特和产品的存法、校验、增删完全一样，只有文案不同，所以按 kind 参数化，不各写一套。
+ * 模特、产品、场景的存法、校验、增删完全一样，只有文案不同，所以按 kind 参数化，不各写一套；
+ * 库的种类与叫法由前后端共用的那张表定，服务端不再自己维护一份。
  */
-export type AssetKind = "models" | "products";
+export type AssetKind = LibraryKind;
 
-export const ASSET_LABEL: Record<AssetKind, string> = {
-  models: "模特库",
-  products: "产品库",
-};
+export const ASSET_LABEL = LIBRARY_LABEL;
 
 export function assetRoot(kind: AssetKind): string {
   return path.join(FACTORY_ROOT, kind);
@@ -64,6 +63,13 @@ export function isInside(root: string, target: string): boolean {
 
 /** 素材库索引里只存元数据，图片本体按 id 落在各自的库目录下。 */
 export type AssetRecord = Omit<LibraryAssetEntry, "imageUrl">;
+
+/**
+ * 作品的 meta.json 内容。
+ * id / imageUrl / outputPath 都是从 jobId + dir 推出来的，不落盘——
+ * 存一份推得出来的值，改起来就要两处同时改。
+ */
+export type WorkRecord = Omit<WorkEntry, "id" | "imageUrl" | "outputPath">;
 
 function assetIndexPath(kind: AssetKind): string {
   return path.join(assetRoot(kind), "index.json");

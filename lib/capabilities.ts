@@ -15,6 +15,7 @@ import {
   Scissors,
   Shapes,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -33,6 +34,7 @@ export type AreaId =
   | "note"
   | "library"
   | "assets"
+  | "works"
   | "images"
   | "video"
   | "videoFactory"
@@ -108,9 +110,17 @@ export const AREAS: Record<AreaId, AreaDef> = {
   },
   assets: {
     label: "资产库",
-    hint: "模特 · 产品",
-    subtitle: "反复要用的模特与产品参考图，存在本机，生成时随时取。",
+    hint: "模特 · 产品 · 场景",
+    subtitle: "反复要用的模特、产品与场景参考图，存在本机，生成时随时取。",
     icon: Library,
+    category: "做图",
+    tint: "from-soft",
+  },
+  works: {
+    label: "作品",
+    hint: "跑出来的图",
+    subtitle: "本机跑出来的全部产出，按模板翻，好用的存进资产库反复用。",
+    icon: Sparkles,
     category: "做图",
     tint: "from-soft",
   },
@@ -205,13 +215,13 @@ export function toolSections(): Array<{ category: ToolCategory; items: AreaId[] 
 }
 
 /** 左侧图标轨。「创建」是动作不是区，单独由外壳处理，不进这个列表。 */
-export const RAIL_AREAS: AreaId[] = ["home", "tools", "templates", "projects", "library", "assets"];
+export const RAIL_AREAS: AreaId[] = ["home", "tools", "templates", "projects", "library", "assets", "works"];
 
 /**
  * 直接坐在画布上的页：自己排版式，不套那张浮起的白面板。
  * 与「有没有 category」不是同一回事——笔记详情页同样没有 category，但要白面板。
  */
-export const PLAIN_AREAS: AreaId[] = ["home", "tools", "templates", "projects", "library", "assets"];
+export const PLAIN_AREAS: AreaId[] = ["home", "tools", "templates", "projects", "library", "assets", "works"];
 
 /** ⌘K 可跳转的区：侧栏大类 + 全部能力。笔记详情页要先选一篇，不在其中。 */
 export const COMMAND_AREAS: AreaId[] = Array.from(new Set<AreaId>([...RAIL_AREAS, ...TOOL_AREAS]));

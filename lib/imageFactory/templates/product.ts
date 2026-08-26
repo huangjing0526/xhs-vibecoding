@@ -1,31 +1,23 @@
 import type { ImageFactoryTemplate } from "../types";
 
-/** 电商通用商品图：白底、主图、场景、细节、对比。 */
-export const ECOMMERCE_TEMPLATES: ImageFactoryTemplate[] = [
-  {
-    id: "product-scene",
-    name: "商品场景图",
-    category: "电商",
-    description: "保持商品外观，把商品自然放进目标生活场景。",
-    prompt: "生成一张真实、可发布的商品场景图。严格保持商品的形状、颜色、材质、包装文字和品牌标识；只改变环境、构图与光线。商品必须是画面唯一主角，不添加参考图中不存在的配件。",
-    aspectRatio: "3:4",
-    thumb: "product-scene",
-    preview: "/template-previews/product-scene.jpg",
-    slots: [
-      { id: "product", label: "商品图", description: "清晰展示商品正面与外观", required: true },
-      { id: "scene", label: "场景参考", description: "可选，用于确定环境和氛围", required: false },
-    ],
-    builtIn: true,
-  },
+/**
+ * 商品图分两档，判据是坑位不是背景：
+ * 主图位要的是「整件看清、平台能过」的规范展示，详情位要的是氛围与局部。
+ * 挂拍图即便选了店内场景预设，它交付的仍是主图位，所以归在上面这组。
+ */
+
+/** 商品主图：平台主图位的规范展示，画面里没有真人。 */
+export const PRODUCT_HERO_TEMPLATES: ImageFactoryTemplate[] = [
   {
     id: "commerce-white-bg",
     name: "电商白底图",
-    category: "电商",
+    category: "商品主图",
     description: "生成可直传平台的纯白底商品图，一次出多个视角。",
     prompt: "生成一张合规的电商白底商品图。严格保持商品的外形轮廓、比例、颜色、材质质感、金属件色泽和做工细节完全不变；不要重新设计、不要改色、不要添加任何品牌标识、不要臆造原图中不存在的部件。背景必须是纯白无缝背景，柔和均匀的棚拍光线，无模特、无道具、无文字、无水印、无促销标签。商品居中放置，边缘干净锐利，四周留出均匀的呼吸空间。",
     aspectRatio: "1:1",
     thumb: "white-bg",
     preview: "/template-previews/commerce-white-bg.jpg",
+    producesAsset: "products",
     slots: [
       { id: "product", label: "商品图", description: "清晰、无遮挡的商品实拍", required: true },
     ],
@@ -38,9 +30,42 @@ export const ECOMMERCE_TEMPLATES: ImageFactoryTemplate[] = [
     builtIn: true,
   },
   {
+    id: "commerce-hero",
+    name: "电商主图",
+    category: "商品主图",
+    description: "从商品图生成干净、有销售力的主视觉。",
+    prompt: "生成一张专业电商主图。严格保持商品本身准确，背景干净，主体边缘清晰，光线自然，构图留有呼吸感。不要生成未经提供的价格、促销文字、功效声明或额外赠品。",
+    aspectRatio: "1:1",
+    thumb: "commerce-hero",
+    preview: "/template-previews/commerce-hero.jpg",
+    slots: [
+      { id: "product", label: "商品图", description: "清晰、无遮挡的商品参考", required: true },
+    ],
+    builtIn: true,
+  },
+  {
+    id: "garment-views",
+    name: "服装三视图",
+    category: "商品主图",
+    description: "同一件衣服的正面、侧面、背面，白底成套，用来讲清版型。",
+    prompt: "把参考图里的服装生成指定视角的展示图。三个视角必须是同一件衣服：颜色、图案、印花位置、面料质感、版型、长短与所有细节完全一致，不同视角之间不允许出现任何设计差异。服装以自然的立体形态呈现（可为隐形模特或自然撑起的挂拍形态），整件完整入画不被裁切，纯白背景，柔和均匀的棚拍光，阴影浅淡。画面中不出现真人、文字、水印、品牌标识与尺码标签。一次只输出当前视角的一张图。",
+    aspectRatio: "3:4",
+    thumb: "garment-views",
+    producesAsset: "products",
+    slots: [
+      { id: "garment", label: "服装图", description: "清晰、无遮挡的服装正面", required: true },
+    ],
+    views: [
+      { id: "front", label: "正面", hint: "正对镜头的正面平视图，展示领型、门襟与整体版型。" },
+      { id: "side", label: "侧面", hint: "身体侧转 90 度的侧面视图，展示厚度、袖型与侧缝线条。" },
+      { id: "back", label: "背面", hint: "正对镜头的背面平视图，展示后片结构与背部细节。" },
+    ],
+    builtIn: true,
+  },
+  {
     id: "hanger-shot",
     name: "服装挂拍图",
-    category: "电商",
+    category: "商品主图",
     description: "把平铺图变成挂在衣架上的挂拍图，版型与垂坠一眼看清。",
     prompt: "把参考图里的服装生成一张挂拍图：服装挂在一个简洁的衣架上自然垂落，正对镜头，整件完整入画且不被裁切。严格保持服装的颜色、图案、印花位置、面料质感、版型与所有细节完全不变，不改长短、不改领型、不增删任何设计元素。衣架样式简洁不抢主体，服装呈现自然的垂坠与轻微褶皱，避免僵硬的贴图感。柔和均匀的棚拍光，阴影浅淡。画面中不出现人物、模特架、文字、水印与品牌标识。只输出一张干净可直接上架的挂拍图。",
     aspectRatio: "3:4",
@@ -58,42 +83,30 @@ export const ECOMMERCE_TEMPLATES: ImageFactoryTemplate[] = [
     ],
     builtIn: true,
   },
+];
+
+/** 详情图：详情页的场景氛围与局部特写，画面里没有真人。 */
+export const PRODUCT_DETAIL_TEMPLATES: ImageFactoryTemplate[] = [
   {
-    id: "garment-views",
-    name: "服装三视图",
-    category: "电商",
-    description: "同一件衣服的正面、侧面、背面，白底成套，用来讲清版型。",
-    prompt: "把参考图里的服装生成指定视角的展示图。三个视角必须是同一件衣服：颜色、图案、印花位置、面料质感、版型、长短与所有细节完全一致，不同视角之间不允许出现任何设计差异。服装以自然的立体形态呈现（可为隐形模特或自然撑起的挂拍形态），整件完整入画不被裁切，纯白背景，柔和均匀的棚拍光，阴影浅淡。画面中不出现真人、文字、水印、品牌标识与尺码标签。一次只输出当前视角的一张图。",
+    id: "product-scene",
+    name: "商品场景图",
+    category: "详情图",
+    description: "保持商品外观，把商品自然放进目标生活场景。",
+    prompt: "生成一张真实、可发布的商品场景图。严格保持商品的形状、颜色、材质、包装文字和品牌标识；只改变环境、构图与光线。商品必须是画面唯一主角，不添加参考图中不存在的配件。",
     aspectRatio: "3:4",
-    thumb: "garment-views",
+    thumb: "product-scene",
+    preview: "/template-previews/product-scene.jpg",
+    producesAsset: "scenes",
     slots: [
-      { id: "garment", label: "服装图", description: "清晰、无遮挡的服装正面", required: true },
-    ],
-    views: [
-      { id: "front", label: "正面", hint: "正对镜头的正面平视图，展示领型、门襟与整体版型。" },
-      { id: "side", label: "侧面", hint: "身体侧转 90 度的侧面视图，展示厚度、袖型与侧缝线条。" },
-      { id: "back", label: "背面", hint: "正对镜头的背面平视图，展示后片结构与背部细节。" },
-    ],
-    builtIn: true,
-  },
-  {
-    id: "commerce-hero",
-    name: "电商主图",
-    category: "电商",
-    description: "从商品图生成干净、有销售力的主视觉。",
-    prompt: "生成一张专业电商主图。严格保持商品本身准确，背景干净，主体边缘清晰，光线自然，构图留有呼吸感。不要生成未经提供的价格、促销文字、功效声明或额外赠品。",
-    aspectRatio: "1:1",
-    thumb: "commerce-hero",
-    preview: "/template-previews/commerce-hero.jpg",
-    slots: [
-      { id: "product", label: "商品图", description: "清晰、无遮挡的商品参考", required: true },
+      { id: "product", label: "商品图", description: "清晰展示商品正面与外观", required: true },
+      { id: "scene", label: "场景参考", description: "可选，用于确定环境和氛围", required: false },
     ],
     builtIn: true,
   },
   {
     id: "detail-shots",
     name: "详情细节图",
-    category: "电商",
+    category: "详情图",
     description: "材质、做工、结构、垂坠四个视角的特写，一次出多张。",
     prompt: "生成一张商品细节特写图。严格保持商品的外形轮廓、颜色、材质质感、纹理走向、五金件色泽和做工细节完全不变；不要重新设计、不要改色、不要添加任何品牌标识或原图中不存在的部件。背景干净纯净，柔和均匀的棚拍光线，细节区域对焦清晰、边缘锐利，景深自然。画面中若出现手部，默认为亚洲人的手，肤色自然。画面中不出现文字、水印、尺寸标注、参数说明与促销标签，也不要编造任何材质成分或功效说明。只输出一张真实、可直接用于详情页的图片。",
     aspectRatio: "1:1",
@@ -121,7 +134,7 @@ export const ECOMMERCE_TEMPLATES: ImageFactoryTemplate[] = [
   {
     id: "compare-grid",
     name: "场景对比图",
-    category: "电商",
+    category: "详情图",
     description: "同一件商品左右分屏，只换场景与光线，不做效果对比。",
     prompt: "生成一张同款商品的左右分屏对比图。左右两侧必须是同一件商品，严格保持它的外形、颜色、材质与所有细节完全一致，只改变两侧的场景、光线或呈现状态。两侧构图对称、主体大小一致，中间有干净清晰的分隔。画面中若出现人物或手部，默认为亚洲人，肤色自然。画面中不出现文字、箭头、标签与水印，也不要暗示任何功效、前后改善或效果对比。只输出一张真实、可直接发布的图片。",
     aspectRatio: "1:1",

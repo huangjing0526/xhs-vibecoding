@@ -1,11 +1,15 @@
 import type { ImageFactoryTemplate } from "../types";
 
-/** 小红书笔记用的实拍感配图与出镜帧。 */
-export const XHS_TEMPLATES: ImageFactoryTemplate[] = [
+/**
+ * 内容配图：产出去向是笔记、封面、视频，不是商详页。
+ * 和「详情图」的分界不在画面里有什么，而在质感与坑位——
+ * 手机随手拍的物品图归这里，商业棚拍的物品图归详情图。
+ */
+export const CONTENT_TEMPLATES: ImageFactoryTemplate[] = [
   {
     id: "cover-base",
     name: "封面底图",
-    category: "小红书",
+    category: "内容配图",
     description: "生成留好叠字位置的封面底图，标题在编辑器里叠，字不会糊。",
     prompt: "生成一张小红书封面用的底图。画面要有明确的视觉主体与氛围，但必须按指定视角在画面里留出一整块干净、低对比、无碎细节的区域用来后期叠标题文字，这块区域不能被主体、强纹理或高光切碎。整体色调统一、观感高级，主体清晰不杂乱。画面里绝对不能出现任何文字、字母、数字、水印、logo 与贴纸——标题由后期叠加。只输出一张底图。",
     aspectRatio: "3:4",
@@ -33,7 +37,7 @@ export const XHS_TEMPLATES: ImageFactoryTemplate[] = [
   {
     id: "note-flatlay",
     name: "笔记实拍配图",
-    category: "小红书",
+    category: "内容配图",
     description: "手机随手拍质感的物品场景图，用作笔记内页配图。",
     prompt: "生成一张真实的实拍感配图。严格保持参考图中主体物品的外形、颜色、材质与所有细节完全不变；只改变它所处的环境、摆放方式与光线。画面要像手机随手拍下的真实照片，有自然的光影、轻微的景深和真实的材质反光，不要塑料感或过度渲染的效果。构图干净，主体清晰，周围陈设服务于主体、不喧宾夺主。画面中若出现手部，默认为亚洲人的手，肤色自然。画面中不出现文字、水印、可辨认的品牌标识与促销标签，不臆造参考图中没有的部件。只输出一张真实、可直接发布的成图。",
     aspectRatio: "3:4",
@@ -60,7 +64,7 @@ export const XHS_TEMPLATES: ImageFactoryTemplate[] = [
   {
     id: "talking-head",
     name: "人物出镜帧",
-    category: "小红书",
+    category: "内容配图",
     description: "对着镜头说话的瞬间，用作笔记首图或视频封面。",
     prompt: "生成一张人物出镜的场景图。严格保持人物参考图中的脸、发型、肤色、体型，以及服装的颜色、版型与细节完全不变；只改变环境、姿态与光线。人物面向镜头、神态自然，像是在对着镜头说话的瞬间，嘴部与眼神状态放松不僵硬。光线打在脸上均匀柔和，背景有真实的空间纵深与轻微虚化，人物与背景的光线方向一致。画面中不出现文字、水印、字幕条与品牌标识。只输出一张真实、可直接发布的成图。",
     aspectRatio: "3:4",
@@ -81,6 +85,26 @@ export const XHS_TEMPLATES: ImageFactoryTemplate[] = [
       { id: "vanity-mirror", label: "化妆台", prompt: "化妆台前，镜面灯提供均匀正面光，背景是化妆品与镜子的柔和反光。" },
       { id: "outdoor-cafe", label: "户外咖啡", prompt: "户外咖啡座，背景是街景与绿植的虚化，自然光柔和，日常松弛。" },
       { id: "in-car-seat", label: "车内", prompt: "驾驶座或副驾上对着镜头说话，车窗外是虚化街景，光线自然通透。" },
+    ],
+    builtIn: true,
+  },
+  {
+    id: "brand-kit",
+    name: "品牌视觉包",
+    category: "内容配图",
+    description: "从一张参考图提炼视觉语言，出一组留白的封面底图与背景。",
+    prompt: "从参考图提炼一套统一的视觉语言，生成可复用的素材。保持参考图的配色、材质感、光线氛围与构图逻辑；不要复制参考图中的人物、文字、logo 或任何独特标识。画面要留出足够干净的空白区域，方便后续叠加标题与文字。质感真实细腻，避免塑料感与过度渲染。画面中不出现任何文字、水印与品牌标识。只输出一张图片。",
+    aspectRatio: "3:4",
+    thumb: "brand-kit",
+    preview: "/template-previews/brand-kit.jpg",
+    slots: [
+      { id: "reference", label: "视觉参考", description: "用于提炼配色、材质与氛围的参考图", required: true },
+    ],
+    views: [
+      { id: "hero", label: "主视觉", hint: "可作封面底图的主视觉画面，主体偏一侧，中心或上方留出叠字空间", preview: "/template-previews/brand-kit__hero.jpg" },
+      { id: "backdrop", label: "纯背景", hint: "几乎没有主体的纯背景底图，只有材质与光影层次，整片可叠字", preview: "/template-previews/brand-kit__backdrop.jpg" },
+      { id: "texture", label: "局部纹理", hint: "材质或纹理的近距离特写，可作分隔条与点缀元素", preview: "/template-previews/brand-kit__texture.jpg" },
+      { id: "ambience", label: "氛围延展", hint: "同一视觉语言下的场景氛围图，用于系列内容的第二第三张", preview: "/template-previews/brand-kit__ambience.jpg" },
     ],
     builtIn: true,
   },

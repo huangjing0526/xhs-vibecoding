@@ -50,6 +50,10 @@ export interface ImageScenePreset {
   id: string;
   label: string;
   prompt: string;
+  /** 所属分组，UI 据此分档展示；不填的与其它无分组预设一起平铺。 */
+  group?: string;
+  /** 这组场景的封面样例，取每组第一条填了的那张；没有就只显示组名。 */
+  preview?: string;
 }
 
 export interface ImageFactoryTemplate {
@@ -67,8 +71,8 @@ export interface ImageFactoryTemplate {
   thumb?: ImageTemplateThumb;
   /** 该模板真实跑出来的一张样例，用作卡片预览；没有就回落到 thumb 的示意图。 */
   preview?: string;
-  /** 产出的是可复用的模特资产，结果区据此给出「存入模特库」入口。 */
-  producesModelAsset?: boolean;
+  /** 产出的是哪种可复用参考素材，结果区据此给出「存入 X 库」入口；不填表示产出不入库。 */
+  producesAsset?: LibraryKind;
   /**
    * 库里可能已经有现成的，进来先给「直接选现成的」，其次才是生成。
    * 模特这种一次做齐、反复复用的资产，默认让人再生成一遍是纯浪费。
@@ -140,8 +144,14 @@ export const IMAGE_TEMPLATE_THUMB_OPTIONS: Array<{ id: ImageTemplateThumb; label
 ];
 
 /**
+ * 可复用参考素材库的三种：模特 / 产品 / 场景。
+ * 三者的存法、增删、入库校验完全一样，只有文案不同，所以整套按 kind 参数化，不各写一套。
+ */
+export type LibraryKind = "models" | "products" | "scenes";
+
+/**
  * 可复用参考素材库里的一条：图片存在本机 .local 目录，列表只带取图地址，不内联图片本体。
- * 模特库和产品库共用这个形状——存法和增删完全一样，只有文案不同。
+ * 三种库共用这个形状——存法和增删完全一样，只有文案不同。
  */
 export interface LibraryAssetEntry {
   id: string;
@@ -156,6 +166,35 @@ export interface LibraryAssetEntry {
    * 只给图锁不住身份，描述跟着图一起喂给 CLI 才稳得住同一个人 / 同一件货。
    */
   traits?: string;
+}
+
+/**
+ * 作品：一次生成落在本机的一张产出。
+ * 与素材库条目的区别是「产出 vs 输入」——作品是刚跑出来的结果，
+ * 觉得值得反复用才「存入资产库」晋升成素材。
+ */
+export interface WorkEntry {
+  /** 前端列表用的稳定键；定位产物仍然靠 jobId + dir 两段，各自校验 */
+  id: string;
+  jobId: string;
+  /** 产物在运行目录下的子目录名；单图产出为空串 */
+  dir: string;
+  templateId: string;
+  templateName: string;
+  category: string;
+  /** 多视图产出才有，用来区分同一次运行里的哪一张 */
+  viewLabel?: string;
+  provider: ImageCliProvider;
+  model?: string;
+  aspectRatio: string;
+  /** 这次跑的补充要求，回头想复现同一张图时要看它 */
+  customPrompt?: string;
+  createdAt: string;
+  /** 产物文件名，取图与下载都按它拼 */
+  file: string;
+  imageUrl: string;
+  /** 产物绝对路径，「存入资产库」与「另存到输出目录」要用 */
+  outputPath: string;
 }
 
 /** 模特库条目。历史名字，保留给已有调用方。 */

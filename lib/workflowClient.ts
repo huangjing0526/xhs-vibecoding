@@ -16,7 +16,14 @@ import {
   type ReviewMetric,
   type ReviewResult,
 } from "@/lib/xhsWorkflow";
-import type { CliProviderStatus, ImageGenerationResult, LibraryAssetEntry, ModelAssetEntry } from "@/lib/imageFactory";
+import type {
+  CliProviderStatus,
+  ImageGenerationResult,
+  LibraryAssetEntry,
+  LibraryKind,
+  ModelAssetEntry,
+  WorkEntry,
+} from "@/lib/imageFactory";
 import type { LocalDocCategory, LocalDocFileSummary } from "@/lib/localDocs";
 import type { ExtractedClue } from "@/lib/clueIntake";
 import type { VideoExtractResult } from "@/lib/videoExtract";
@@ -539,24 +546,36 @@ export async function generateImage(
   return parseApiResponse<ImageGenerationResult>(response, "目标图生成失败");
 }
 
+/** 作品：本机跑出来的全部产出，按时间倒序。 */
+export async function listWorks(): Promise<{ works: WorkEntry[] }> {
+  const response = await fetch("/api/image-factory/works", { cache: "no-store" });
+  return parseApiResponse<{ works: WorkEntry[] }>(response, "作品读取失败");
+}
+
+/** 作品：把一件产出连同它的产物目录一起删掉。 */
+export async function deleteWork(jobId: string, dir: string): Promise<void> {
+  const query = new URLSearchParams({ job: jobId, dir });
+  const response = await fetch(`/api/image-factory/works?${query.toString()}`, { method: "DELETE" });
+  await parseApiResponse(response, "作品删除失败");
+}
+
 /** 模特库：读出本机已存的全部模特资产。 */
 export async function listModelAssets(): Promise<{ models: ModelAssetEntry[] }> {
   const response = await fetch("/api/image-factory/models", { cache: "no-store" });
   return parseApiResponse<{ models: ModelAssetEntry[] }>(response, "模特库读取失败");
 }
 
-/**
- * 模特库：把已生成的图存进库，传的是它们在本机的产物路径。
- * 一次运行的多个视角属于同一位模特，整组一起提交，服务端只读写一次索引。
- */
-export async function saveModelAssets(
+/** 素材库：把本机产物存进模特库 / 产品库 / 场景库，三库同一条链路。 */
+export async function saveLibraryAssets(
+  kind: LibraryKind,
   items: Array<{ sourcePath: string; name: string; sourceLabel: string; traits?: string }>
-): Promise<{ models: ModelAssetEntry[] }> {
-  return workflowRequest<{ models: ModelAssetEntry[] }>(
-    "/api/image-factory/models",
+): Promise<LibraryAssetEntry[]> {
+  const data = await workflowRequest<Record<string, LibraryAssetEntry[]>>(
+    `/api/image-factory/${kind}`,
     { method: "POST", body: JSON.stringify({ items }) },
-    "存入模特库失败"
+    kind === "models" ? "存入模特库失败" : "存入产品库失败"
   );
+  return data[kind] || [];
 }
 
 /** 模特库：移除一条模特资产，图片一并删掉。 */
@@ -624,17 +643,26 @@ export async function listBenchmarkRhythms(): Promise<{ rhythms: BenchmarkRhythm
   return parseApiResponse<{ rhythms: BenchmarkRhythm[] }>(response, "节奏模板读取失败");
 }
 
-/** 可复用参考素材库（模特 / 产品）：两种库同一套接口，只差路径。 */
-export async function listLibraryAssets(
-  kind: "models" | "products",
-): Promise<LibraryAssetEntry[]> {
+/** 可复用参考素材库（模特 / 产品 / 场景）：三种库同一套接口，只差路径。 */
+export async function listLibraryAssets(kind: LibraryKind): Promise<LibraryAssetEntry[]> {
   const response = await fetch(`/api/image-factory/${kind}`, { cache: "no-store" });
   const data = await parseApiResponse<Record<string, LibraryAssetEntry[]>>(response, "素材库读取失败");
   return data[kind] || [];
 }
 
+/**
+ * 素材库：把手上已有的图直接传进库。
+ * 自己拍的场景和商品实拍从没跑过生成，没有产物路径，只留「按路径入库」那条路它们永远进不来。
+ * 走 multipart，因此不能用 workflowRequest（它固定 JSON 头）。
+ */
+export async function uploadLibraryAssets(kind: LibraryKind, formData: FormData): Promise<LibraryAssetEntry[]> {
+  const response = await fetch(`/api/image-factory/${kind}`, { method: "POST", body: formData });
+  const data = await parseApiResponse<Record<string, LibraryAssetEntry[]>>(response, "上传入库失败");
+  return data[kind] || [];
+}
+
 /** 素材库：移除一条，图片一并删掉。 */
-export async function deleteLibraryAsset(kind: "models" | "products", assetId: string): Promise<{ id: string }> {
+export async function deleteLibraryAsset(kind: LibraryKind, assetId: string): Promise<{ id: string }> {
   return workflowRequest<{ id: string }>(
     `/api/image-factory/${kind}?id=${encodeURIComponent(assetId)}`,
     { method: "DELETE" },

@@ -24,6 +24,7 @@ import VideoStudio from "@/components/workflow/VideoStudio";
 import WorkbenchShell from "@/components/workflow/WorkbenchShell";
 import AssetLibrary from "@/components/workflow/AssetLibrary";
 import CanvasPage from "@/components/workflow/CanvasPage";
+import WorksLibrary from "@/components/workflow/WorksLibrary";
 import GalleryPage from "@/components/workflow/GalleryPage";
 import HomeHub from "@/components/home/HomeHub";
 import { AREAS, COMMAND_AREAS, PLAIN_AREAS, type AreaId } from "@/lib/capabilities";
@@ -1253,6 +1254,12 @@ export default function WorkflowDashboard() {
         {area === "assets" && (
           <CanvasPage title={AREAS.assets.label} subtitle={AREAS.assets.subtitle}>
             <AssetLibrary onNotice={setNotice} />
+          </CanvasPage>
+        )}
+
+        {area === "works" && (
+          <CanvasPage title={AREAS.works.label} subtitle={AREAS.works.subtitle}>
+            <WorksLibrary onNotice={setNotice} />
           </CanvasPage>
         )}
 
