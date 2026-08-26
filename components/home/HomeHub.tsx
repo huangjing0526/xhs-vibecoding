@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
 import { ArrowRight, ChevronRight } from "lucide-react";
 import PromptHero from "@/components/home/PromptHero";
 import TemplatePreview from "@/components/workflow/TemplatePreview";
@@ -9,24 +8,30 @@ import {
   AREAS,
   HOME_FEATURED,
   HOME_SCENES,
-  homeToolAreas,
+  HOME_TOOL_AREAS,
   type AreaId,
 } from "@/lib/capabilities";
 import { BUILT_IN_IMAGE_TEMPLATES } from "@/lib/imageFactory";
+import type { RecentEntry } from "@/lib/recentUsed";
 
 /** 首页只摆一排模板做引子，看全的路在「模板」页。 */
 const PREVIEW_TEMPLATES = BUILT_IN_IMAGE_TEMPLATES.slice(0, 6);
 
-const TABS: Array<{ id: "recommended" | "all"; label: string }> = [
-  { id: "recommended", label: "推荐工具" },
-  { id: "all", label: "全部能力" },
-];
-
-function SectionTitle({ title, action }: { title: string; action?: ReactNode }) {
+/** 分区标题；moreLabel/onMore 渲染右侧的「查看全部」链接——两处调用共用同一颗，不各写一份。 */
+function SectionTitle({ title, moreLabel, onMore }: { title: string; moreLabel?: string; onMore?: () => void }) {
   return (
     <div className="mb-3 flex items-center justify-between gap-3">
       <h2 className="text-[15px] font-bold tracking-tight text-ink">{title}</h2>
-      {action}
+      {moreLabel && onMore && (
+        <button
+          type="button"
+          onClick={onMore}
+          className="flex items-center gap-0.5 text-xs font-bold text-muted transition-colors hover:text-ink"
+        >
+          {moreLabel}
+          <ChevronRight size={14} />
+        </button>
+      )}
     </div>
   );
 }
@@ -56,20 +61,38 @@ export default function HomeHub({
   onOpenArea,
   onOpenTemplate,
   onSubmitIntent,
+  onPickExample,
   intentPending,
+  recent,
 }: {
   onOpenArea: (id: AreaId) => void;
   onOpenTemplate: (card: TemplateCard) => void;
   onSubmitIntent: (text: string) => void;
+  onPickExample: (text: string) => void;
   intentPending: boolean;
+  recent: RecentEntry[];
 }) {
-  const [tab, setTab] = useState<"recommended" | "all">("recommended");
-  // 两个 tab 都排掉上面已经摆过的区——切到「全部」不该看到刚刚在场景卡里点过的那几个
-  const tools = useMemo(() => homeToolAreas(tab), [tab]);
+  // 「最近在做」是快捷回位，不受「一个区最多露一次」约束——和工具目录的最近使用同一先例。
+  // own-property 校验而不是 in：localStorage 是用户可改的，"constructor" 这类 id 不能穿到 AREAS 的原型链上。
+  const recentAreas = recent
+    .filter((entry) => entry.kind === "area" && Object.prototype.hasOwnProperty.call(AREAS, entry.id))
+    .map((entry) => entry.id as AreaId)
+    .slice(0, 4);
 
   return (
     <div className="mx-auto max-w-6xl px-5 pb-12 pt-6 md:pt-10">
-      <PromptHero onSubmit={onSubmitIntent} pending={intentPending} />
+      <PromptHero onSubmit={onSubmitIntent} onPickExample={onPickExample} pending={intentPending} />
+
+      {recentAreas.length > 0 && (
+        <div className="mt-8">
+          <SectionTitle title="最近在做" />
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+            {recentAreas.map((id) => (
+              <AreaTile key={id} id={id} onOpen={onOpenArea} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 场景卡：六种最常见的开工方式，比工具名更贴近「我今天要干嘛」 */}
       <div className="mt-8 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
@@ -79,24 +102,7 @@ export default function HomeHub({
       </div>
 
       <div className="mt-9">
-        <div className="mb-3 flex items-center gap-4">
-          {TABS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setTab(item.id)}
-              aria-current={tab === item.id ? "true" : undefined}
-              className={`relative pb-1 text-[15px] font-bold tracking-tight transition-colors ${
-                tab === item.id ? "text-ink" : "text-faint hover:text-muted"
-              }`}
-            >
-              {item.label}
-              {tab === item.id && (
-                <span className="absolute inset-x-0 -bottom-0.5 h-0.5 rounded-full bg-ink" aria-hidden="true" />
-              )}
-            </button>
-          ))}
-        </div>
+        <SectionTitle title="工具" moreLabel="全部能力" onMore={() => onOpenArea("tools")} />
 
         <div className="grid gap-2.5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
           {/* 两条完整流水线单独占位：它们是「一件事做到底」，不是单点工具 */}
@@ -142,7 +148,7 @@ export default function HomeHub({
           </div>
 
           <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-            {tools.map((id) => (
+            {HOME_TOOL_AREAS.map((id) => (
               <AreaTile key={id} id={id} onOpen={onOpenArea} />
             ))}
           </div>
@@ -150,19 +156,7 @@ export default function HomeHub({
       </div>
 
       <div className="mt-9">
-        <SectionTitle
-          title="一键同款"
-          action={
-            <button
-              type="button"
-              onClick={() => onOpenArea("templates")}
-              className="flex items-center gap-0.5 text-xs font-bold text-muted transition-colors hover:text-ink"
-            >
-              全部模板
-              <ChevronRight size={14} />
-            </button>
-          }
-        />
+        <SectionTitle title="一键同款" moreLabel="全部模板" onMore={() => onOpenArea("templates")} />
         <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 lg:grid-cols-6">
           {PREVIEW_TEMPLATES.map((template) => (
             <button

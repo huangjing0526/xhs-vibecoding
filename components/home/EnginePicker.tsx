@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Cpu } from "lucide-react";
 import {
   DEFAULT_ENGINE,
   loadProviders,
@@ -92,8 +91,6 @@ export default function EnginePicker() {
 
   return (
     <div className="flex items-center gap-1.5">
-      <Cpu size={13} className="text-faint" aria-hidden="true" />
-
       <span className="relative inline-flex">
         <select
           aria-label="生成引擎"

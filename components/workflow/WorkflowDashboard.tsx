@@ -29,7 +29,7 @@ import { TemplateGallery, ToolsGallery } from "@/components/workflow/GalleryPage
 import HomeHub from "@/components/home/HomeHub";
 import { AREAS, COMMAND_AREAS, PLAIN_AREAS, type AreaId } from "@/lib/capabilities";
 import { pushRecent, readRecent, type RecentEntry } from "@/lib/recentUsed";
-import { ROUTABLE_AREAS } from "@/lib/intentRouting";
+import { ROUTABLE_AREAS, routeByKeyword } from "@/lib/intentRouting";
 import PageHeader from "@/components/workflow/PageHeader";
 import NoteList, { getNoteStatus } from "@/components/workflow/NoteList";
 import NoteEditor from "@/components/workflow/NoteEditor";
@@ -166,11 +166,11 @@ function ToolScroll({ children }: { children: ReactNode }) {
   );
 }
 
-// 工具页的「当前笔记」上下文条：工具页脱离了三栏，用它提示正在处理哪篇
+// 工具页的「当前项目」上下文条：工具页脱离了三栏，用它提示正在处理哪一个
 function NoteContextBar({ note, onGoProjects }: { note: ContentCard | null; onGoProjects: () => void }) {
   return (
     <div className="flex items-center gap-2 rounded-2xl border border-line bg-surface px-4 py-2.5 text-xs shadow-card">
-      <span className="shrink-0 font-bold text-faint">当前笔记</span>
+      <span className="shrink-0 font-bold text-faint">当前项目</span>
       <span className="truncate font-bold text-ink">
         {note ? note.titleCandidates[0] || note.coreViewpoint : "未选择"}
       </span>
@@ -185,7 +185,7 @@ function NoteContextBar({ note, onGoProjects }: { note: ContentCard | null; onGo
   );
 }
 
-// 工具页无笔记时的空态：把用户引回工作台选一篇
+// 工具页没选中项目时的空态：把用户引回项目页选一个
 function EmptyNote({ hint, onGoProjects }: { hint: string; onGoProjects: () => void }) {
   return (
     <EmptyState
@@ -193,7 +193,7 @@ function EmptyNote({ hint, onGoProjects }: { hint: string; onGoProjects: () => v
       title={hint}
       action={
         <Button variant="primary" onClick={onGoProjects}>
-          去项目页选笔记
+          去项目页选一个
         </Button>
       }
     />
@@ -366,7 +366,7 @@ export default function WorkflowDashboard() {
   // 编辑弹窗：素材 / 选题
   const [editingMaterial, setEditingMaterial] = useState<MaterialItem | null>(null);
   const [editingTopic, setEditingTopic] = useState<ContentCard | null>(null);
-  // 新增弹窗：素材（素材库工具条）/ 选题（新建笔记）
+  // 新增弹窗：素材（素材库工具条）/ 选题（新建项目）
   const [addingMaterial, setAddingMaterial] = useState(false);
   const [addingTopic, setAddingTopic] = useState(false);
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("demo");
@@ -1102,32 +1102,52 @@ export default function WorkflowDashboard() {
     [handleSelectNote],
   );
 
+  /**
+   * 路由结果的唯一落地口：换区、挂页顶横幅、给目标工具递起手参数。
+   * 打字（AI 判）和示例 chip（关键词判）都走这里，将来新增 pending* 交接只用改这一处。
+   */
+  const applyIntent = useCallback(
+    // area 收 string 而不是 AreaId：AI 路径回来的是未经校验的模型输出，验区正是这里的活
+    (result: { area: string; reason: string; brief: string; url: string }): boolean => {
+      const target = ROUTABLE_AREAS.find((id) => id === result.area);
+      if (!target) return false;
+      openArea(target);
+      setHandoff({ area: target, brief: result.brief, reason: result.reason });
+      // 只把目标工具真接得住的那一样递过去，接不住的不硬塞
+      if (target === "extract" && result.url) setPendingExtractUrl(result.url);
+      if (target === "images") setPendingImageBrief(result.brief);
+      if (target === "videoFactory") setPendingVideoTopic(result.brief);
+      // 成功时不再弹 toast：页面已经换了、页顶横幅也写着本次要求，
+      // 再飘一条说同一件事的绿条，等于同一句话说三遍
+      return true;
+    },
+    [openArea],
+  );
+
   // 首页输入框：一句话判去哪个区。后端判不出来时已回落到关键词规则，这里只兜「回了个不认识的区」。
   const handleRouteIntent = useCallback(
     async (text: string) => {
       setIsRoutingIntent(true);
       try {
         const result = await routeIntent(text);
-        const target = ROUTABLE_AREAS.find((id) => id === result.area);
-        if (!target) {
+        if (!applyIntent(result)) {
           setNotice({ type: "error", message: "没看懂这句话要做什么，换个说法或从下面挑一个入口" });
-          return;
         }
-        openArea(target);
-        setHandoff({ area: target, brief: result.brief, reason: result.reason });
-        // 只把目标工具真接得住的那一样递过去，接不住的不硬塞
-        if (target === "extract" && result.url) setPendingExtractUrl(result.url);
-        if (target === "images") setPendingImageBrief(result.brief);
-        if (target === "videoFactory") setPendingVideoTopic(result.brief);
-        // 成功时不再弹 toast：页面已经换了、页顶横幅也写着本次要求，
-        // 再飘一条说同一件事的绿条，等于同一句话说三遍
       } catch (error) {
         setFriendlyError("意图识别", error);
       } finally {
         setIsRoutingIntent(false);
       }
     },
-    [openArea, setFriendlyError, setNotice],
+    [applyIntent, setFriendlyError, setNotice],
+  );
+
+  // 示例 chip：意图是现成的，本地关键词就判得动，不必花一次 AI 往返
+  const handlePickExample = useCallback(
+    (text: string) => {
+      applyIntent(routeByKeyword(text));
+    },
+    [applyIntent],
   );
 
   const boundDaokuName = DAOKU_OPTIONS.find(
@@ -1167,8 +1187,8 @@ export default function WorkflowDashboard() {
 
     const noteCommands: Command[] = usableTopics.slice(0, 30).map((topic) => ({
       id: `note-${topic.topicId || topic.recordId}`,
-      group: "笔记",
-      label: topic.titleCandidates[0] || topic.coreViewpoint || "未命名笔记",
+      group: "项目",
+      label: topic.titleCandidates[0] || topic.coreViewpoint || "未命名项目",
       hint: getNoteStatus(topic, usableDrafts),
       keywords: topic.painPoint,
       icon: <FileText size={15} />,
@@ -1179,7 +1199,7 @@ export default function WorkflowDashboard() {
       {
         id: "action-new-note",
         group: "动作",
-        label: "新建笔记",
+        label: "新建项目",
         icon: <Plus size={15} />,
         run: () => setAddingTopic(true),
       },
@@ -1194,11 +1214,11 @@ export default function WorkflowDashboard() {
         id: "action-generate-draft",
         group: "动作",
         label: "生成草稿",
-        hint: selectedTopic ? undefined : "先选一篇笔记",
+        hint: selectedTopic ? undefined : "先选一个项目",
         icon: <Sparkles size={15} />,
         run: () => {
           if (!selectedTopic) {
-            setNotice({ type: "error", message: "先选一篇笔记再生成草稿" });
+            setNotice({ type: "error", message: "先选一个项目再生成草稿" });
             setArea("projects");
             return;
           }
@@ -1258,7 +1278,9 @@ export default function WorkflowDashboard() {
             onOpenArea={openArea}
             onOpenTemplate={openTemplate}
             onSubmitIntent={handleRouteIntent}
+            onPickExample={handlePickExample}
             intentPending={isRoutingIntent}
+            recent={recent}
           />
         )}
 
@@ -1320,7 +1342,7 @@ export default function WorkflowDashboard() {
                         onClick={() => setAddingTopic(true)}
                         icon={<Plus size={14} strokeWidth={2.6} />}
                       >
-                        新建笔记
+                        新建项目
                       </Button>
                     }
                   />
@@ -1377,7 +1399,7 @@ export default function WorkflowDashboard() {
                 </div>
               </div>
             ) : (
-              <EmptyNote hint="还没选中笔记" onGoProjects={() => setArea("projects")} />
+              <EmptyNote hint="还没选中项目" onGoProjects={() => setArea("projects")} />
             )}
           </div>
         )}
@@ -1418,7 +1440,7 @@ export default function WorkflowDashboard() {
               <CollapsiblePanel title="录入与提炼" hint="线索采集、选题池、本地文档——三选一导入">
                 <div className="space-y-3 p-5">
                   <p className="text-sm leading-6 text-muted">
-                    勾选下方素材，点右上「生成选题」即可提炼——每条选题就是一篇新笔记。已选{" "}
+                    勾选下方素材，点右上「生成选题」即可提炼——每条选题就是一个新项目。已选{" "}
                     <span className="font-rounded font-bold tabular-nums text-ink">{selectedMaterials.length}</span> 条。
                   </p>
                   <SegmentedControl
@@ -1574,7 +1596,7 @@ export default function WorkflowDashboard() {
             area="video"
             note={selectedTopic}
             ready={Boolean(selectedTopic || selectedDraft)}
-            emptyHint="做视频前，先在工作台选一篇笔记。"
+            emptyHint="做视频前，先去项目页选一个项目。"
             onGoProjects={() => setArea("projects")}
           >
             <VideoStudio
@@ -1593,7 +1615,7 @@ export default function WorkflowDashboard() {
             area="rewrite"
             note={selectedTopic}
             ready={Boolean(selectedTopic || selectedDraft)}
-            emptyHint="改写前，先在工作台选一篇笔记。"
+            emptyHint="改写前，先去项目页选一个项目。"
             onGoProjects={() => setArea("projects")}
           >
             <RewriteStudio
@@ -1762,7 +1784,7 @@ export default function WorkflowDashboard() {
         open={addingTopic}
         onOpenChange={setAddingTopic}
         asModal
-        title="新建笔记（选题）"
+        title="新建项目（选题）"
         submitLabel="创建"
         fields={TOPIC_FIELDS}
         onSubmit={(values) =>
