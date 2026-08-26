@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { ArrowLeft, Library, Loader2, Upload } from "lucide-react";
+import { ArrowLeft, Library, Loader2, Sparkles, Upload } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
 import Card from "@/components/ui/Card";
@@ -32,7 +32,14 @@ import type { Notice } from "./types";
 
 const KIND_OPTIONS = LIBRARY_KINDS.map((value) => ({ value, label: LIBRARY_COPY[value].label }));
 
-export default function AssetLibrary({ onNotice }: { onNotice: (notice: Notice) => void }) {
+export default function AssetLibrary({
+  onNotice,
+  onUseAssets,
+}: {
+  onNotice: (notice: Notice) => void;
+  /** 资产库唯一的出口动作：去挑个模板开跑，槽位那头再从这里取图。 */
+  onUseAssets: () => void;
+}) {
   const [kind, setKind] = useState<LibraryKind>("models");
   const [assets, setAssets] = useState<LibraryAssetEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,9 +113,15 @@ export default function AssetLibrary({ onNotice }: { onNotice: (notice: Notice) 
     <div className="mt-6 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SegmentedControl value={kind} options={KIND_OPTIONS} onChange={switchKind} ariaLabel="资产类型" />
-        <Button size="sm" icon={<Upload size={14} />} onClick={() => setUploading(true)}>
-          上传到{copy.label}
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* 存进来的东西得有地方用掉，否则这个库就是只进不出 */}
+          <Button size="sm" variant="secondary" icon={<Sparkles size={14} />} onClick={onUseAssets}>
+            用它生成
+          </Button>
+          <Button size="sm" icon={<Upload size={14} />} onClick={() => setUploading(true)}>
+            上传到{copy.label}
+          </Button>
+        </div>
       </div>
 
       {errorMessage && <Callout tone="danger">{errorMessage}</Callout>}

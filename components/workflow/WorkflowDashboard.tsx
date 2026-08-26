@@ -1270,7 +1270,7 @@ export default function WorkflowDashboard() {
 
         {area === "assets" && (
           <CanvasPage title={AREAS.assets.label} subtitle={AREAS.assets.subtitle}>
-            <AssetLibrary onNotice={setNotice} />
+            <AssetLibrary onNotice={setNotice} onUseAssets={() => openArea("templates")} />
           </CanvasPage>
         )}
 
