@@ -17,17 +17,18 @@ export const MODEL_TEMPLATES: ImageFactoryTemplate[] = [
       { id: "model", label: "模特参考", description: "可选，传了就锁定这张脸；不传按文字描述新生成一位", required: false, fromModelLibrary: true },
     ],
     // 规格来自实拍档案的做法：九宫格头部锁身份，定妆主图当门面，全身三视图供换装用。
-    // 头肩近景走横幅、全身走竖幅，各自带自己的画幅，不迁就模板那个统一比例。
+    // 头肩与全身都走 9:16 竖幅——这套资产是拿去铺抖音的，定妆主图留 3:4 当图文门面。
+    // 各视角带自己的画幅，不迁就模板那个统一比例。
     views: [
-      { id: "head-front", group: "头部九宫格", label: "正面头肩", hint: "严格正面头肩近景，视线看向镜头，表情自然放松，作为锁定身份的主锚点。", aspectRatio: "16:9", preview: "/template-previews/model-asset__head-front.jpg" },
-      { id: "head-left-45", group: "头部九宫格", label: "左转 45°", hint: "头部向人物自身左侧转 45 度的头肩近景，视线跟随转向，五官仍清晰可读。", aspectRatio: "16:9", preview: "/template-previews/model-asset__head-left-45.jpg" },
-      { id: "head-right-45", group: "头部九宫格", label: "右转 45°", hint: "头部向人物自身右侧转 45 度的头肩近景，与左侧 45 度严格对称同一张脸。", aspectRatio: "16:9", preview: "/template-previews/model-asset__head-right-45.jpg" },
-      { id: "head-left-profile", group: "头部九宫格", label: "左正侧脸", hint: "向人物自身左侧转 90 度的正侧脸，展示鼻梁、唇形与下颌的侧面轮廓线。", aspectRatio: "16:9", preview: "/template-previews/model-asset__head-left-profile.jpg" },
-      { id: "head-right-profile", group: "头部九宫格", label: "右正侧脸", hint: "向人物自身右侧转 90 度的正侧脸，与左侧脸保持同一套骨相。", aspectRatio: "16:9", preview: "/template-previews/model-asset__head-right-profile.jpg" },
-      { id: "head-up", group: "头部九宫格", label: "微抬头", hint: "头部上抬约 15 度的头肩近景，展示下颌与颈部的连接关系。", aspectRatio: "16:9", preview: "/template-previews/model-asset__head-up.jpg" },
-      { id: "head-down", group: "头部九宫格", label: "微低头", hint: "头部下压约 15 度的头肩近景，视线略向下，展示眼睑与额头的形态。", aspectRatio: "16:9", preview: "/template-previews/model-asset__head-down.jpg" },
-      { id: "expression-smile", group: "头部九宫格", label: "柔和微笑", hint: "正面头肩近景的不露齿微笑，只改变嘴角、面颊与下眼睑，头部角度与光线保持不变。", aspectRatio: "16:9", preview: "/template-previews/model-asset__expression-smile.jpg" },
-      { id: "expression-eyes-closed", group: "头部九宫格", label: "闭眼", hint: "正面头肩近景的自然闭眼，睫毛与眼睑形态清晰，其余一切保持不变。", aspectRatio: "16:9", preview: "/template-previews/model-asset__expression-eyes-closed.jpg" },
+      { id: "head-front", group: "头部九宫格", label: "正面头肩", hint: "严格正面头肩近景，视线看向镜头，表情自然放松，作为锁定身份的主锚点。", aspectRatio: "9:16", preview: "/template-previews/model-asset__head-front.jpg" },
+      { id: "head-left-45", group: "头部九宫格", label: "左转 45°", hint: "头部向人物自身左侧转 45 度的头肩近景，视线跟随转向，五官仍清晰可读。", aspectRatio: "9:16", preview: "/template-previews/model-asset__head-left-45.jpg" },
+      { id: "head-right-45", group: "头部九宫格", label: "右转 45°", hint: "头部向人物自身右侧转 45 度的头肩近景，与左侧 45 度严格对称同一张脸。", aspectRatio: "9:16", preview: "/template-previews/model-asset__head-right-45.jpg" },
+      { id: "head-left-profile", group: "头部九宫格", label: "左正侧脸", hint: "向人物自身左侧转 90 度的正侧脸，展示鼻梁、唇形与下颌的侧面轮廓线。", aspectRatio: "9:16", preview: "/template-previews/model-asset__head-left-profile.jpg" },
+      { id: "head-right-profile", group: "头部九宫格", label: "右正侧脸", hint: "向人物自身右侧转 90 度的正侧脸，与左侧脸保持同一套骨相。", aspectRatio: "9:16", preview: "/template-previews/model-asset__head-right-profile.jpg" },
+      { id: "head-up", group: "头部九宫格", label: "微抬头", hint: "头部上抬约 15 度的头肩近景，展示下颌与颈部的连接关系。", aspectRatio: "9:16", preview: "/template-previews/model-asset__head-up.jpg" },
+      { id: "head-down", group: "头部九宫格", label: "微低头", hint: "头部下压约 15 度的头肩近景，视线略向下，展示眼睑与额头的形态。", aspectRatio: "9:16", preview: "/template-previews/model-asset__head-down.jpg" },
+      { id: "expression-smile", group: "头部九宫格", label: "柔和微笑", hint: "正面头肩近景的不露齿微笑，只改变嘴角、面颊与下眼睑，头部角度与光线保持不变。", aspectRatio: "9:16", preview: "/template-previews/model-asset__expression-smile.jpg" },
+      { id: "expression-eyes-closed", group: "头部九宫格", label: "闭眼", hint: "正面头肩近景的自然闭眼，睫毛与眼睑形态清晰，其余一切保持不变。", aspectRatio: "9:16", preview: "/template-previews/model-asset__expression-eyes-closed.jpg" },
       { id: "key-visual", group: "定妆主图", label: "定妆主图", hint: "腰部以上的半身定妆照，身体略侧、脸转向镜头，是这位模特对外的门面图。", aspectRatio: "3:4", preview: "/template-previews/model-asset__key-visual.jpg" },
       { id: "body-front", group: "全身三视图", label: "正面全身", hint: "正面平视全身站姿，双臂自然垂放，头到脚完整入画，展示整体身材比例。", aspectRatio: "9:16", preview: "/template-previews/model-asset__body-front.jpg" },
       { id: "body-side", group: "全身三视图", label: "侧面全身", hint: "身体侧转 90 度的全身站姿，展示侧面轮廓与身形曲线。", aspectRatio: "9:16", preview: "/template-previews/model-asset__body-side.jpg" },

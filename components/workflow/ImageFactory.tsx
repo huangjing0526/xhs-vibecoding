@@ -46,6 +46,7 @@ import {
   saveLibraryAssets,
 } from "@/lib/workflowClient";
 import {
+  aspectRatioStyle,
   BUILT_IN_IMAGE_TEMPLATES,
   CUSTOM_TEMPLATE_CATEGORY,
   groupModelProfiles,
@@ -810,7 +811,8 @@ export default function ImageFactory({
               </div>
             )}
 
-            <div className={`mt-4 grid gap-3 ${activeSlots.length > 1 ? "sm:grid-cols-2" : ""}`}>
+            {/* 只有一个槽位时不铺满整列：4:3 的框拉到一整列宽就有半屏高，把下面的配置全顶出视野 */}
+            <div className={`mt-4 grid gap-3 ${activeSlots.length > 1 ? "sm:grid-cols-2" : "max-w-[340px]"}`}>
               {activeSlots.map((slot) => {
                 const input = selectedInputs[slot.id];
                 return (
@@ -998,10 +1000,15 @@ export default function ImageFactory({
                         checked ? "border-brand-400 bg-brand-50" : "border-line bg-surface hover:border-brand-300"
                       }`}
                     >
-                      {/* 有样例就摆出来——「4 视图」这三个字说不清每个视角拍成什么样 */}
-                      <div className="relative aspect-square border-b border-line bg-soft">
+                      {/* 有样例就摆出来——「4 视图」这三个字说不清每个视角拍成什么样。
+                          框按这个视角自己的画幅取形：头肩近景和全身站姿本就不是同一个比例，
+                          一律摆成正方形等于把这个差别抹掉。 */}
+                      <div
+                        style={aspectRatioStyle(view.aspectRatio || activeTemplate.aspectRatio)}
+                        className="relative border-b border-line bg-soft"
+                      >
                         {view.preview ? (
-                          <Image src={view.preview} alt="" fill sizes="140px" className={`object-cover ${checked ? "" : "opacity-85"}`} unoptimized />
+                          <Image src={view.preview} alt="" fill sizes="140px" className={`object-contain ${checked ? "" : "opacity-85"}`} unoptimized />
                         ) : (
                           <span className="flex h-full items-center justify-center px-2 text-center text-[10px] leading-4 text-faint">{view.hint || "暂无样例"}</span>
                         )}
@@ -1121,8 +1128,12 @@ export default function ImageFactory({
                           return (
                             <div key={item.job.key} className="group">
                               <div className="relative overflow-hidden rounded-2xl border border-line bg-soft">
-                                <div className="relative aspect-[4/5]">
-                                  <Image src={item.result.imageDataUrl} alt={`${group.template.name}产出`} fill sizes="320px" className="object-cover" unoptimized />
+                                {/* 产出框按这一张实际要的画幅取形——跑出来的图被裁成 4:5 再看，等于没法验收 */}
+                                <div
+                                  style={aspectRatioStyle(item.job.view?.aspectRatio || item.job.template.aspectRatio)}
+                                  className="relative"
+                                >
+                                  <Image src={item.result.imageDataUrl} alt={`${group.template.name}产出`} fill sizes="320px" className="object-contain" unoptimized />
                                 </div>
                                 <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
                                   {assetKind && assetCopy && (

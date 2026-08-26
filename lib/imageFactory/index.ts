@@ -50,3 +50,15 @@ export function loadCustomImageTemplates(): ImageFactoryTemplate[] {
     return [];
   }
 }
+
+/**
+ * 把「3:4」这类声明画幅换成 CSS 的 aspect-ratio。
+ * 样例框从前写死 4/5 与正方形，跟头部标的画幅对不上——同一张图，
+ * 上面说 1:1、下面摆一张竖图，人只能按摆出来的那个形状去理解产出。
+ * 自建模板的比例是手填的自由文本，解不出来就退回正方形：
+ * 这里永远给得出一个形状，调用处才不用再挂一个 aspect-* 类当备胎。
+ */
+export function aspectRatioStyle(ratio?: string): { aspectRatio: string } {
+  const [width, height] = (ratio || "").split(/[:/]/).map(Number);
+  return width > 0 && height > 0 ? { aspectRatio: `${width} / ${height}` } : { aspectRatio: "1 / 1" };
+}

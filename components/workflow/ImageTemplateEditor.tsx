@@ -6,6 +6,7 @@ import { Trash2, X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import TemplateThumb from "@/components/workflow/TemplateThumb";
 import {
+  aspectRatioStyle,
   IMAGE_TEMPLATE_THUMB_OPTIONS,
   type ImageFactoryTemplate,
   type ImageTemplateThumb,
@@ -31,9 +32,13 @@ export function PreviewLightbox({ template, onClose }: { template: ImageFactoryT
             <X size={16} />
           </button>
         </div>
-        <div className="relative mt-3 aspect-[4/5] overflow-hidden rounded-2xl border border-line bg-soft">
+        {/* 放大只为看清效果，画幅与裁切都跟详情页那块保持一致——同一张图点开变个形状最让人犯疑 */}
+        <div
+          style={aspectRatioStyle(template.aspectRatio)}
+          className="relative mt-3 overflow-hidden rounded-2xl border border-line bg-soft"
+        >
           {template.preview ? (
-            <Image src={template.preview} alt={`${template.name}的产出样例`} fill sizes="420px" className="object-cover" unoptimized />
+            <Image src={template.preview} alt={`${template.name}的产出样例`} fill sizes="420px" className="object-contain" unoptimized />
           ) : (
             <TemplateThumb thumb={template.thumb} />
           )}
@@ -44,9 +49,12 @@ export function PreviewLightbox({ template, onClose }: { template: ImageFactoryT
             <div className="mt-2 grid grid-cols-4 gap-2">
               {(template.views || []).map((view) => (
                 <div key={view.id}>
-                  <div className="relative aspect-square overflow-hidden rounded-xl border border-line bg-soft">
+                  <div
+                    style={aspectRatioStyle(view.aspectRatio || template.aspectRatio)}
+                    className="relative overflow-hidden rounded-xl border border-line bg-soft"
+                  >
                     {view.preview ? (
-                      <Image src={view.preview} alt={view.label} fill sizes="96px" className="object-cover" unoptimized />
+                      <Image src={view.preview} alt={view.label} fill sizes="96px" className="object-contain" unoptimized />
                     ) : (
                       <span className="flex h-full items-center justify-center text-[10px] text-faint">暂无</span>
                     )}
