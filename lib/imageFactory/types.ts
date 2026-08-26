@@ -1,5 +1,56 @@
 export type ImageCliProvider = "codex" | "gemini" | "grok";
 
+/**
+ * 一个出图引擎能接受什么。
+ *
+ * 和 lib/videoFactory 的 PROVIDER_CAPS 是同一个思路，但这里要多表达一件事：
+ * **比例是硬参数还是一句建议**。Gemini 走 API，比例是 `imageConfig.aspectRatio`，
+ * 传表外的值直接 400；codex / grok 走 CLI，比例只是提示词里的「目标比例：3:4」，
+ * 模型尽力而为、不报错也不保证。同一个模板换个引擎行为就不同，
+ * 这个差别以前只存在于各自的实现里，谁也看不见。
+ */
+export interface ImageGenCapability {
+  /** cli = 起本机进程，图按路径给；http = 图随请求内联送走 */
+  transport: "cli" | "http";
+  /**
+   * 能当硬参数交出去的比例。
+   * 空数组表示这个引擎不收比例参数——比例只能写进提示词，出来什么样看模型。
+   */
+  aspectRatios: readonly string[];
+  /** 参考图总字节上限；0 表示无明确上限（CLI 直接读本机文件，不进请求体） */
+  maxInputBytes: number;
+  /** 不指定模型能不能跑。CLI 有自己的默认模型，HTTP 引擎必须显式给 */
+  needsExplicitModel: boolean;
+}
+
+export const IMAGE_PROVIDER_CAPS: Record<ImageCliProvider, ImageGenCapability> = {
+  // CLI 通道：比例靠提示词交代，参考图按绝对路径给，模型留空就跟随 CLI 自己的默认值
+  codex: { transport: "cli", aspectRatios: [], maxInputBytes: 0, needsExplicitModel: false },
+  grok: { transport: "cli", aspectRatios: [], maxInputBytes: 0, needsExplicitModel: false },
+  gemini: {
+    transport: "http",
+    // 照官方文档，传表外的值会 400
+    aspectRatios: [
+      "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9",
+      // 长条比例，做头图 / 横幅会用到
+      "1:4", "1:8", "4:1", "8:1",
+    ],
+    // base64 会膨胀约 1/3，请求体里还要再占几份，所以按源文件字节卡在 13MB
+    maxInputBytes: 13 * 1024 * 1024,
+    needsExplicitModel: true,
+  },
+};
+
+/**
+ * 这个引擎能不能**保证**出这个比例。
+ * false 有两种情况，对用户是同一件事（出来可能不是这个比例）：
+ * 引擎压根不收比例参数（CLI），或者收但不认这个值（Gemini 的表外比例）。
+ */
+export function ratioIsEnforced(provider: ImageCliProvider, ratio: string): boolean {
+  const caps = IMAGE_PROVIDER_CAPS[provider];
+  return caps.aspectRatios.length > 0 && caps.aspectRatios.includes(ratio);
+}
+
 /** 模板示意图标识，对应 TemplateThumb 里的一张内联 SVG；自建模板不填走通用兜底。 */
 export type ImageTemplateThumb =
   | "model-asset"

@@ -1,40 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import Card from "@/components/ui/Card";
+import ProviderButton from "@/components/ui/ProviderButton";
 import type { CliProviderStatus, ImageCliProvider } from "@/lib/imageFactory";
 
 const CUSTOM_MODEL_VALUE = "__custom__";
 
-function ProviderButton({
-  provider,
-  selected,
-  onSelect,
-}: {
-  provider: CliProviderStatus;
-  selected: boolean;
-  onSelect: (provider: ImageCliProvider) => void;
-}) {
-  const enabled = provider.available && provider.authenticated;
-  return (
-    <button
-      type="button"
-      disabled={!enabled}
-      onClick={() => onSelect(provider.id)}
-      aria-pressed={selected}
-      className={`rounded-2xl border p-3 text-left transition-all ${
-        selected ? "border-brand-400 bg-brand-50 ring-2 ring-brand-100" : "border-line bg-surface"
-      } ${enabled ? "hover:border-brand-300" : "cursor-not-allowed opacity-55"}`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-bold text-ink">{provider.name}</span>
-        {enabled && <Check size={14} className="text-ok" />}
-      </div>
-      <p className="mt-1 text-[11px] leading-4 text-faint">{provider.message}</p>
-    </button>
-  );
-}
 
 /**
  * 生成引擎与模型。

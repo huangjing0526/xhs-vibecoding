@@ -7,23 +7,17 @@
  * 步骤多，但每一步的失败都是明确的，不需要「跑完了去目录里找找看」那种兜底。
  */
 
-import { writeFile } from "node:fs/promises";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { GEMINI_API_BASE, geminiRequest, readGeminiKey } from "./index";
-import { describeQuotaError, recordQuotaExhausted } from "./quota";
+import { createWriteStream } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
+import { geminiRequest, readGeminiKey, readInlineImage } from "./index";
+import { withQuotaTracking } from "./quota";
 
 /** 轮询间隔。Veo 一条片子通常要 1~3 分钟，问得太勤只是白发请求。 */
 const POLL_INTERVAL_MS = 10_000;
 /** 总等待上限，超了就当这次失败——比让请求一直挂着强。 */
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
-
-const MIME_BY_EXTENSION: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-};
 
 interface OperationResponse {
   name?: string;
@@ -52,16 +46,27 @@ export interface VeoRequest {
   signal?: AbortSignal;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function readFrame(framePath: string): Promise<{ mimeType: string; data: string }> {
-  const extension = path.extname(framePath).toLowerCase();
-  const mimeType = MIME_BY_EXTENSION[extension];
-  if (!mimeType) throw new Error("首帧图只支持 png / jpg / webp");
-  const bytes = await readFile(framePath);
-  return { mimeType, data: bytes.toString("base64") };
+/**
+ * 可被取消的等待。
+ * 裸 setTimeout 的问题是：abort 落在睡眠窗口里时它照样 resolve，
+ * 于是还会再发一次注定失败的轮询；signal 缺席时更糟，循环会一路空转到 10 分钟上限。
+ */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("已取消"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(new Error("已取消"));
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /**
@@ -74,10 +79,15 @@ async function downloadVideo(uri: string, outputPath: string, signal?: AbortSign
   if (!key) throw new Error("没有配置 GEMINI_API_KEY");
 
   const response = await fetch(uri, { headers: { "x-goog-api-key": key }, signal });
-  if (!response.ok) {
+  if (!response.ok || !response.body) {
     throw new Error(`视频下载失败（HTTP ${response.status}），片子已生成但没取回来`);
   }
-  await writeFile(outputPath, Buffer.from(await response.arrayBuffer()));
+  // 几十兆的片子别走 arrayBuffer + Buffer.from，那是在流之外再复制两份；
+  // app/api/video-factory/clip/route.ts 回传成片走的就是这一套
+  await pipeline(
+    Readable.fromWeb(response.body as NodeWebReadableStream),
+    createWriteStream(outputPath),
+  );
 }
 
 /**
@@ -88,7 +98,7 @@ async function downloadVideo(uri: string, outputPath: string, signal?: AbortSign
  * 真要改成异步，改这一个函数的调用方即可，协议这一层不用动。
  */
 export async function generateVeoVideo(request: VeoRequest): Promise<{ outputPath: string }> {
-  const image = await readFrame(request.framePath);
+  const image = await readInlineImage(request.framePath, "首帧图");
 
   const body = {
     instances: [{ prompt: request.prompt, image: { inlineData: image } }],
@@ -100,20 +110,13 @@ export async function generateVeoVideo(request: VeoRequest): Promise<{ outputPat
     },
   };
 
-  let operation: OperationResponse;
-  try {
-    operation = await geminiRequest<OperationResponse>(
-      `models/${request.model}:predictLongRunning`,
-      { method: "POST", body, signal: request.signal },
-    );
-  } catch (error) {
-    const verdict = describeQuotaError(error);
-    if (verdict.isQuota) {
-      await recordQuotaExhausted(request.model, verdict);
-      throw new Error(verdict.message);
-    }
-    throw error;
-  }
+  const operation = await withQuotaTracking(request.model, () =>
+    geminiRequest<OperationResponse>(`models/${request.model}:predictLongRunning`, {
+      method: "POST",
+      body,
+      signal: request.signal,
+    }),
+  );
 
   const operationName = operation.name;
   if (!operationName) throw new Error("Veo 没有返回任务号，重试一次");
@@ -125,7 +128,7 @@ export async function generateVeoVideo(request: VeoRequest): Promise<{ outputPat
     if (Date.now() > deadline) {
       throw new Error("Veo 出片超时（10 分钟），任务可能还在跑，稍后再试或换更短的镜头");
     }
-    await sleep(POLL_INTERVAL_MS);
+    await sleep(POLL_INTERVAL_MS, request.signal);
     // operation name 本身就是完整路径（operations/xxx），直接接在 base 后面
     current = await geminiRequest<OperationResponse>(operationName, {
       method: "GET",
@@ -150,6 +153,3 @@ export async function generateVeoVideo(request: VeoRequest): Promise<{ outputPat
   await downloadVideo(uri, request.outputPath, request.signal);
   return { outputPath: request.outputPath };
 }
-
-/** 让调用方知道 base，operation 轮询用的是同一个前缀。 */
-export const VEO_API_BASE = GEMINI_API_BASE;

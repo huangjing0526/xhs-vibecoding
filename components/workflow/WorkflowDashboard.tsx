@@ -129,11 +129,22 @@ const AI_IMAGE_SUBTITLE = "上传素材、选产出类型与生成模型，用�
  * 目标工具只吃得下其中一部分（拆片只要链接、生图只要一句要求），剩下的原话留在页顶，
  * 让人照着填——比丢掉它、或硬塞进不匹配的字段都诚实。
  */
-function HandoffBanner({ brief, onDismiss }: { brief: string; onDismiss: () => void }) {
+function HandoffBanner({
+  brief,
+  reason,
+  onDismiss,
+}: {
+  brief: string;
+  reason: string;
+  onDismiss: () => void;
+}) {
   return (
     <div className="flex items-start gap-2 rounded-2xl border border-brand-200 bg-brand-50 px-3.5 py-2.5">
       <Sparkles size={14} className="mt-0.5 shrink-0 text-brand-500" aria-hidden="true" />
-      <p className="min-w-0 flex-1 text-xs font-semibold leading-5 text-ink">本次要求：{brief}</p>
+      <p className="min-w-0 flex-1 text-xs font-semibold leading-5 text-ink">
+        本次要求：{brief}
+        {reason && <span className="ml-1.5 font-medium text-muted">（{reason}）</span>}
+      </p>
       <button
         type="button"
         onClick={onDismiss}
@@ -317,7 +328,7 @@ export default function WorkflowDashboard() {
   const [isRoutingIntent, setIsRoutingIntent] = useState(false);
   // 首页那句话的三份去处：横幅给人看，另外两个是目标工具真正吃得下的起手参数。
   // 各自独立而不是塞一个对象，是因为消费者不同、清空时机也不同（谁接住谁清）。
-  const [handoff, setHandoff] = useState<{ area: AreaId; brief: string } | null>(null);
+  const [handoff, setHandoff] = useState<{ area: AreaId; brief: string; reason: string } | null>(null);
   const [pendingExtractUrl, setPendingExtractUrl] = useState<string | null>(null);
   const [pendingImageBrief, setPendingImageBrief] = useState<string | null>(null);
   const [pendingVideoTopic, setPendingVideoTopic] = useState<string | null>(null);
@@ -1103,12 +1114,13 @@ export default function WorkflowDashboard() {
           return;
         }
         openArea(target);
-        setHandoff({ area: target, brief: result.brief });
+        setHandoff({ area: target, brief: result.brief, reason: result.reason });
         // 只把目标工具真接得住的那一样递过去，接不住的不硬塞
         if (target === "extract" && result.url) setPendingExtractUrl(result.url);
         if (target === "images") setPendingImageBrief(result.brief);
         if (target === "videoFactory") setPendingVideoTopic(result.brief);
-        setNotice({ type: "success", message: `${result.reason}，已打开「${AREAS[target].label}」` });
+        // 成功时不再弹 toast：页面已经换了、页顶横幅也写着本次要求，
+        // 再飘一条说同一件事的绿条，等于同一句话说三遍
       } catch (error) {
         setFriendlyError("意图识别", error);
       } finally {
@@ -1237,7 +1249,7 @@ export default function WorkflowDashboard() {
         plain={PLAIN_AREAS.includes(area)}
         banner={
           handoff?.area === area ? (
-            <HandoffBanner brief={handoff.brief} onDismiss={() => setHandoff(null)} />
+            <HandoffBanner brief={handoff.brief} reason={handoff.reason} onDismiss={() => setHandoff(null)} />
           ) : null
         }
       >

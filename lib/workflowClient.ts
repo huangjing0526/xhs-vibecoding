@@ -36,6 +36,7 @@ import type {
   ShotGenerationResult,
   Storyboard,
   TopicInput,
+  VideoGenProviderId,
   VideoGenProviderStatus,
   VideoProject,
 } from "@/lib/videoFactory";
@@ -614,6 +615,8 @@ export async function analyzeStoryboard(options: {
   script: ScriptDraft;
   visualStyle?: string;
   rhythm?: BenchmarkRhythm | null;
+  /** 项目选定的出片引擎，决定每镜能切成几秒 */
+  genProvider?: VideoGenProviderId;
   signal?: AbortSignal;
 }): Promise<{ storyboard: Storyboard; usedFallback: boolean; provider: string }> {
   return workflowRequest(
@@ -625,6 +628,7 @@ export async function analyzeStoryboard(options: {
         script: options.script,
         visualStyle: options.visualStyle,
         rhythm: options.rhythm,
+        genProvider: options.genProvider,
       }),
     },
     "分镜拆解失败"

@@ -116,6 +116,21 @@ export async function recordQuotaExhausted(model: string, verdict: QuotaVerdict)
   }
 }
 
+/**
+ * 包住一次会计费的调用：撞到配额就记一笔并翻成人话，其余错误原样抛。
+ * 生图和出片各写一遍这段 catch 是没有意义的——它们对配额的处置完全相同。
+ */
+export async function withQuotaTracking<T>(model: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    const verdict = describeQuotaError(error);
+    if (!verdict.isQuota) throw error;
+    await recordQuotaExhausted(model, verdict);
+    throw new Error(verdict.message);
+  }
+}
+
 /** 读回今天的配额状态；跨天的记录当作已重置，不再显示。 */
 export async function readQuotaState(): Promise<QuotaRecord | null> {
   try {

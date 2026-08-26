@@ -90,11 +90,20 @@ ${text}
 - brief 是要带进工具里当起手参数的，只写「要做成什么」，不要写链接、不要写寒暄。`;
 }
 
+/**
+ * 削掉句尾标点。
+ * reason 要塞进页顶横幅的括号里当补充说明，而模型给的那句十有八九自带句号，
+ * 不削就会出现「（……提取脚本结构与节奏。）」这种读着别扭的括注。
+ */
+function trimTrailingPunctuation(value: string): string {
+  return value.replace(/[。．.！!？?，,、；;：:\s]+$/u, "");
+}
+
 /** 归一化模型输出：只兜「不是合法区」这一种错，兜不住就退回关键词规则。 */
 export function normalizeIntent(raw: Partial<IntentResult> | null | undefined, text: string): IntentResult {
   const area = raw?.area;
   if (!area || !ROUTABLE_AREAS.includes(area)) return routeByKeyword(text);
-  const reason = typeof raw?.reason === "string" ? raw.reason.trim() : "";
+  const reason = typeof raw?.reason === "string" ? trimTrailingPunctuation(raw.reason.trim()) : "";
   const brief = typeof raw?.brief === "string" ? raw.brief.trim() : "";
   return {
     area,

@@ -5,25 +5,13 @@
  * 不用跑完再去目录里捞产物，也就不需要 findOutputImage 那套兜底。
  */
 
-import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { geminiRequest } from "./index";
-import { describeQuotaError, recordQuotaExhausted } from "./quota";
+import { stat, writeFile } from "node:fs/promises";
+import { IMAGE_PROVIDER_CAPS, ratioIsEnforced } from "@/lib/imageFactory";
+import { geminiRequest, readInlineImage } from "./index";
+import { withQuotaTracking } from "./quota";
 
-/** Gemini 认的比例。不在表里的一律不传，让模型跟随参考图——传错值会直接 400。 */
-const SUPPORTED_ASPECT_RATIOS = new Set([
-  "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9",
-]);
-
-/** 整个请求体（含所有参考图的 base64）的上限。留出余量，超了先说清楚而不是让 Google 拒。 */
-const MAX_INLINE_BYTES = 18 * 1024 * 1024;
-
-const MIME_BY_EXTENSION: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-};
+/** 引擎能力由能力表说了算，这里不再自留一份 —— 自留的那份没人知道，也没人会跟着改 */
+const CAPS = IMAGE_PROVIDER_CAPS.gemini;
 
 interface InlinePart {
   inlineData: { mimeType: string; data: string };
@@ -35,16 +23,6 @@ interface GenerateContentResponse {
     finishReason?: string;
   }>;
   promptFeedback?: { blockReason?: string };
-}
-
-async function readInlineImage(filePath: string): Promise<InlinePart> {
-  const extension = path.extname(filePath).toLowerCase();
-  const mimeType = MIME_BY_EXTENSION[extension];
-  if (!mimeType) {
-    throw new Error(`参考图 ${path.basename(filePath)} 的格式不支持，只能用 png / jpg / webp`);
-  }
-  const bytes = await readFile(filePath);
-  return { inlineData: { mimeType, data: bytes.toString("base64") } };
 }
 
 export interface GeminiImageRequest {
@@ -70,21 +48,31 @@ export interface GeminiImageResult {
  * 图放在文字前面，与 lib/workflowAi.ts 的做法一致：模型先看完素材再读要求，比反过来准。
  */
 export async function generateGeminiImage(request: GeminiImageRequest): Promise<GeminiImageResult> {
-  const imageParts: InlinePart[] = [];
-  let totalBytes = 0;
-
-  for (const inputPath of request.inputPaths) {
-    const part = await readInlineImage(inputPath);
-    totalBytes += part.inlineData.data.length;
-    if (totalBytes > MAX_INLINE_BYTES) {
-      throw new Error("参考图加起来太大（超过 18MB），去掉几张或先压缩再试");
-    }
-    imageParts.push(part);
+  // 先按文件大小判一次：读完再判等于内存已经吃掉了，那道检查什么也没省下
+  const sizes = await Promise.all(request.inputPaths.map((item) => stat(item)));
+  const totalBytes = sizes.reduce((sum, info) => sum + info.size, 0);
+  if (CAPS.maxInputBytes && totalBytes > CAPS.maxInputBytes) {
+    const limitMb = Math.round(CAPS.maxInputBytes / 1024 / 1024);
+    throw new Error(`参考图加起来太大（超过 ${limitMb}MB），去掉几张或先压缩再试`);
   }
 
-  const aspectRatio = request.aspectRatio && SUPPORTED_ASPECT_RATIOS.has(request.aspectRatio)
-    ? request.aspectRatio
-    : undefined;
+  const imageParts: InlinePart[] = (
+    await Promise.all(request.inputPaths.map((item) => readInlineImage(item, "参考图")))
+  ).map((image) => ({ inlineData: image }));
+
+  const aspectRatio =
+    request.aspectRatio && ratioIsEnforced("gemini", request.aspectRatio)
+      ? request.aspectRatio
+      : undefined;
+  if (request.aspectRatio && !aspectRatio) {
+    // 静默降级最难查：图出来了、比例不对、界面上什么都没说。至少留一行痕
+    console.warn("[Gemini] 比例不被支持，已改为跟随参考图", {
+      userId: "local",
+      action: "gemini.image.aspectRatio",
+      requested: request.aspectRatio,
+      model: request.model,
+    });
+  }
 
   // 不传 responseModalities：图像模型本来就输出图，多传一个约束只会多一种 400 的可能
   const body = {
@@ -92,20 +80,13 @@ export async function generateGeminiImage(request: GeminiImageRequest): Promise<
     ...(aspectRatio ? { generationConfig: { imageConfig: { aspectRatio } } } : {}),
   };
 
-  let data: GenerateContentResponse;
-  try {
-    data = await geminiRequest<GenerateContentResponse>(
-      `models/${request.model}:generateContent`,
-      { method: "POST", body, signal: request.signal },
-    );
-  } catch (error) {
-    const verdict = describeQuotaError(error);
-    if (verdict.isQuota) {
-      await recordQuotaExhausted(request.model, verdict);
-      throw new Error(verdict.message);
-    }
-    throw error;
-  }
+  const data = await withQuotaTracking(request.model, () =>
+    geminiRequest<GenerateContentResponse>(`models/${request.model}:generateContent`, {
+      method: "POST",
+      body,
+      signal: request.signal,
+    }),
+  );
 
   const parts = data.candidates?.[0]?.content?.parts || [];
   const image = parts.find((part) => part.inlineData)?.inlineData;

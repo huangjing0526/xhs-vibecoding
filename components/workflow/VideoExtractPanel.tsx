@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
@@ -167,15 +167,34 @@ export default function VideoExtractPanel({
   const [result, setResult] = useState<VideoExtractResult | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
 
-  // 首页带来的链接直接填进去。输入框里已经有东西就不动——手上那条没拆完，不该被顶掉。
+  /**
+   * 首页带来的链接：填进去并直接开跑。
+   *
+   * 只填不跑的话，首页那句「说一句就开工」等于没兑现——人说完一句话被换到一个新页面，
+   * 还得自己再找一次按钮。拆片是本机跑的、不花钱，自动执行没有代价。
+   *
+   * 输入框里已经有东西就什么都不做：手上那条没拆完，不该被顶掉，更不该替他重跑一遍。
+   */
+  /**
+   * 已经开跑过的链接。
+   * 父组件的 onUrlConsumed 是行内箭头函数，每次渲染都是新引用，effect 会跟着反复触发；
+   * React 严格模式在开发下还会再双调一次。没有这道闸，一条链接会被抓两遍。
+   */
+  const startedUrlRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!incomingUrl) return;
-    setInput((current) => current.trim() || incomingUrl);
+    if (!incomingUrl || startedUrlRef.current === incomingUrl) return;
+    startedUrlRef.current = incomingUrl;
     onUrlConsumed?.();
+    if (input.trim()) return;
+    setInput(incomingUrl);
+    void runExtract(incomingUrl);
+    // runExtract 只读 state 不进依赖，否则每次输入都会重跑一遍
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incomingUrl, onUrlConsumed]);
 
-  const handleExtract = async () => {
-    const text = input.trim();
+  const runExtract = async (rawText: string) => {
+    const text = rawText.trim();
     if (!text) {
       onNotice({ type: "error", message: "请粘贴一条抖音/小红书视频链接或分享口令" });
       return;
@@ -198,6 +217,8 @@ export default function VideoExtractPanel({
       setIsExtracting(false);
     }
   };
+
+  const handleExtract = () => runExtract(input);
 
   const handleSink = () => {
     if (!result) return;

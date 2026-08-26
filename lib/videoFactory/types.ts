@@ -66,9 +66,13 @@ export const PROVIDER_CAPS: Record<VideoGenProviderId, VideoGenCapability> = {
   manual: { durations: [], resolutions: [], aspectRatios: [] },
 };
 
-/** 由我们发起生成的引擎（有档位约束的那些），与回传通道相对。 */
+/**
+ * 由我们发起生成的引擎，与回传通道相对。
+ * 直接取 UPLOAD_PROVIDERS 的补集，不另立一张表——两张表迟早会给出相反的答案，
+ * 而信它们的两个调用方（界面画哪种按钮、clip 路由收不收文件）会各信一个。
+ */
 export function isGenerativeProvider(id: VideoGenProviderId): boolean {
-  return PROVIDER_CAPS[id].durations.length > 0;
+  return !isUploadProvider(id);
 }
 
 /** 改写后脚本里的一段，与拆片拆出的 stage 一一对应。 */
@@ -186,20 +190,53 @@ export interface CastRef {
   path: string;
 }
 
-/** 角色和产品两个槽位。生成每一镜首帧时都会带上，这是跨镜一致性的唯一抓手。 */
+/** 角色、产品、场景三个槽位。生成每一镜首帧时都会带上，这是跨镜一致性的唯一抓手。 */
 export interface ProjectCast {
   role: CastRef | null;
   product: CastRef | null;
+  scene: CastRef | null;
 }
 
 export type CastSlot = keyof ProjectCast;
 
-export const CAST_SLOTS: Array<{ id: CastSlot; label: string; hint: string; library: "models" | "products" }> = [
-  { id: "role", label: "角色", hint: "出镜的人。不选的话每一镜都会换脸。", library: "models" },
-  { id: "product", label: "产品", hint: "要卖的东西。不选的话每一镜的货都长得不一样。", library: "products" },
+/**
+ * 槽位表。库名沿用图片工厂那三个库，但这里写字面量而不是引 LibraryKind——
+ * 图片和视频两条线的类型不互相牵连（见文件头）。
+ *
+ * usage 是写进首帧提示词的用途约束，必须逐槽位写：
+ * 参考图给了却不说清楚只取它的哪一部分，模型会把角色图里的场景、场景图里的人一起抄过来。
+ */
+export const CAST_SLOTS: Array<{
+  id: CastSlot;
+  label: string;
+  hint: string;
+  library: "models" | "products" | "scenes";
+  usage: string;
+}> = [
+  {
+    id: "role",
+    label: "角色",
+    hint: "出镜的人。不选的话每一镜都会换脸。",
+    library: "models",
+    usage: "只参考这个人的长相、发型、肤色和体型，不要照搬图里的衣着、场景和光线",
+  },
+  {
+    id: "product",
+    label: "产品",
+    hint: "要卖的东西。不选的话每一镜的货都长得不一样。",
+    library: "products",
+    usage: "只参考这件东西的款式、颜色、材质和细节，不要照搬图里的场景和光线",
+  },
+  {
+    id: "scene",
+    label: "场景",
+    hint: "在哪儿拍。不绑就按分镜提示词现编，同一句「门店」每镜也不是同一家。",
+    library: "scenes",
+    usage: "参考这个环境的空间结构、陈设、光线方向和色调，画面里的人和货不从这张图取",
+  },
 ];
 
-export const EMPTY_CAST: ProjectCast = { role: null, product: null };
+export const EMPTY_CAST: ProjectCast = { role: null, product: null, scene: null };
 
 export interface VideoProject {
   id: string;
@@ -226,6 +263,13 @@ export interface VideoProject {
   clips: ShotClip[];
 }
 
+/** 引擎下可选的驱动模型。形状与 lib/imageFactory 的 ImageCliModel 一致，但不跨模块引用——
+ *  图片和视频两条线的模型来源不同，共用一个类型只会让改动互相牵连。 */
+export interface VideoGenModel {
+  id: string;
+  label: string;
+}
+
 /** 图生视频引擎的可用状态，形状对齐 lib/imageFactory 的 CliProviderStatus。 */
 export interface VideoGenProviderStatus {
   id: VideoGenProviderId;
@@ -234,6 +278,10 @@ export interface VideoGenProviderStatus {
   authenticated: boolean;
   version?: string;
   message: string;
+  /** 探到的可选模型；CLI 与回传通道没有这个概念，留空即可 */
+  models?: VideoGenModel[];
+  /** 不选模型时用哪个，用于在下拉里标「默认」 */
+  defaultModel?: string;
 }
 
 /** 一次图生视频的产出。 */

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { JOB_ROOT, isSafeSegment, newShortId } from "@/app/api/image-factory/_shared";
-import type { VideoProject } from "@/lib/videoFactory";
+import { EMPTY_CAST, type VideoProject } from "@/lib/videoFactory";
 
 // 路径安全校验与短 id 的规则两个工厂完全一致，直接复用图片工厂那份，不再造第二套
 export { isSafeSegment };
@@ -92,7 +92,12 @@ export function framePath(projectId: string, shotOrder: number, extension: strin
 export async function readProject(projectId: string): Promise<VideoProject | null> {
   try {
     const parsed = JSON.parse(await readFile(projectFile(projectId), "utf8"));
-    return parsed && typeof parsed === "object" ? (parsed as VideoProject) : null;
+    if (!parsed || typeof parsed !== "object") return null;
+    // 加 genProvider 之前存的项目没有这个字段，读出来就地补上：
+    // 界面拿它去查引擎能力表（时长档位、分辨率），拿到 undefined 会直接崩在渲染里
+    const project = { genProvider: "grok-cli", ...parsed } as VideoProject;
+    // 同理，加场景槽位之前存的项目 cast 里只有角色和产品，缺的槽位补成未绑定
+    return { ...project, cast: { ...EMPTY_CAST, ...project.cast } };
   } catch (error) {
     // 首次保存前文件不存在是正常的，其余情况要留痕再按空项目继续
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {

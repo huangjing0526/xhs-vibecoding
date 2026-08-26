@@ -6,7 +6,41 @@
  * 只有「发请求 + 把 Google 的错误翻译成人话」。
  */
 
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 export const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+
+/**
+ * 送进请求体的图片格式。
+ * 与 app/api/image-factory/_shared.ts 那张表内容相同，但不能反过来 import——
+ * lib/ 依赖 app/ 是反向依赖。等哪天这张表下沉到 lib/media，两处一起换。
+ */
+const MIME_BY_EXTENSION: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+};
+
+/** 一张随请求内联送走的图。 */
+export interface InlineImage {
+  mimeType: string;
+  data: string;
+}
+
+/**
+ * 读一张本机图片成 inline 数据。
+ * 生图的参考图和 Veo 的首帧图走的是同一件事，只是外面包的壳不同，
+ * `label` 只用于把报错说成人话（「参考图」/「首帧图」）。
+ */
+export async function readInlineImage(filePath: string, label: string): Promise<InlineImage> {
+  const extension = path.extname(filePath).toLowerCase();
+  const mimeType = MIME_BY_EXTENSION[extension];
+  if (!mimeType) throw new Error(`${label}只支持 png / jpg / webp`);
+  const bytes = await readFile(filePath);
+  return { mimeType, data: bytes.toString("base64") };
+}
 
 /** 与 lib/workflowAi.ts 用的是同一个环境变量，一份 key 供文本 / 图片 / 视频三处共用。 */
 export function readGeminiKey(): string | undefined {

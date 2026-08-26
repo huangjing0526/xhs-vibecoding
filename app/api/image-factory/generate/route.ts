@@ -12,7 +12,7 @@ import {
 } from "@/app/api/image-factory/_shared";
 import { generateGeminiImage } from "@/lib/engines/gemini/image";
 import { listGeminiModels } from "@/lib/engines/gemini/models";
-import type { ImageCliProvider } from "@/lib/imageFactory";
+import { IMAGE_PROVIDER_CAPS, type ImageCliProvider } from "@/lib/imageFactory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -125,12 +125,14 @@ function buildDirectImagePrompt(options: {
 }
 
 /**
- * Gemini 必须显式指定模型（CLI 那两家可以留空跟随自己的默认值）。
+ * 解析出这次要用的模型。
+ * 「必须显式指定」是引擎能力的一部分（见 IMAGE_PROVIDER_CAPS.needsExplicitModel）——
+ * CLI 那两家留空就跟随自己的默认值，HTTP 引擎没有这回事。
  * 前端正常会带上选好的那个，这里只兜「没带」的情况：现拉一次目录取第一个正式版，
  * 而不是写死一个 id——图像模型换代很快，写死的那天迟早会变成一次白跑。
  */
 async function resolveGeminiImageModel(model: string): Promise<string> {
-  if (model) return model;
+  if (model || !IMAGE_PROVIDER_CAPS.gemini.needsExplicitModel) return model;
   const catalog = await listGeminiModels();
   const fallback = catalog.image[0]?.id;
   if (!fallback) throw new Error("没探到可用的 Gemini 图像模型，检查 GEMINI_API_KEY 是否有效");

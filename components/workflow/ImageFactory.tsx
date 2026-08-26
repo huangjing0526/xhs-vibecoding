@@ -41,6 +41,8 @@ import {
 } from "@/lib/workflowClient";
 import {
   aspectRatioStyle,
+  IMAGE_PROVIDER_CAPS,
+  ratioIsEnforced,
   BUILT_IN_IMAGE_TEMPLATES,
   deleteCustomImageTemplate,
   imageTemplateCategories,
@@ -560,6 +562,19 @@ export default function ImageFactory({
               <p className="mt-0.5 text-[11px] leading-4 text-faint">
                 {activeTemplate.category}
                 <span className="ml-1.5">· {activeTemplate.aspectRatio}</span>
+                {/* 比例保不保证由引擎决定：CLI 那两条只是把它写进提示词，模型尽力而为 */}
+                {!ratioIsEnforced(provider, activeTemplate.aspectRatio) && (
+                  <span
+                    className="ml-1.5 text-warn"
+                    title={
+                      IMAGE_PROVIDER_CAPS[provider].aspectRatios.length
+                        ? `${selectedProvider?.name || provider} 不认 ${activeTemplate.aspectRatio}，会跟随参考图`
+                        : `${selectedProvider?.name || provider} 不收比例参数，只能在提示词里交代，出来的比例不保证`
+                    }
+                  >
+                    · 比例不保证
+                  </span>
+                )}
                 {activeViews.length > 0 && <span className="ml-1.5">· {activeViews.length} 视图</span>}
               </p>
             </div>

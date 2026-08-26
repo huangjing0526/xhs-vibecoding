@@ -4,9 +4,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { apiOk } from "@/app/api/feishu/_utils";
-import { readGeminiKey } from "@/lib/engines/gemini";
-import { listGeminiModels } from "@/lib/engines/gemini/models";
-import { readQuotaState } from "@/lib/engines/gemini/quota";
+import { probeGeminiEngine } from "@/lib/engines/gemini/probe";
 import type { VideoGenProviderStatus } from "@/lib/videoFactory";
 
 export const runtime = "nodejs";
@@ -74,37 +72,39 @@ function describeGrok(version: string | null, loggedIn: boolean, optOut: boolean
 /**
  * Veo 探的是 API key，跟本机装没装 gemini CLI 无关——
  * 个人账号登录 CLI 会被 Code Assist 拒掉，但 AI Studio 的 key 走的是另一条路，是通的。
+ *
+ * 但「key 有效」不等于「跑得了」：Veo 三个变体在免费层全是 Not available，只有 API 付费层能用。
+ * 这一点探测探不出来（要真发一次合法请求才知道，而那一次就已经计费了），
+ * 所以写死在文案里说清楚——否则卡片显示「API key 可用」，人点下去才吃一个拒绝。
+ *
+ * 注意跟 Flow（labs.google/flow）的积分不是一回事：那是 Google AI Pro/Ultra 订阅的额度，
+ * 只有网页端能用、没有 API 出口。有订阅想省钱的话走下面 manual 那条回传通道。
  */
 async function detectVeo(): Promise<VideoGenProviderStatus> {
-  const base = { id: "gemini-veo" as const, name: "Google · Veo 3.1", available: false, authenticated: false };
+  const probe = await probeGeminiEngine("video");
+  const base = { id: "gemini-veo" as const, name: "Google · Veo 3.1" };
 
-  if (!readGeminiKey()) {
-    return { ...base, message: "未配置 GEMINI_API_KEY，在 .env.local 里填上即可启用" };
+  if (!probe.hasKey) {
+    return { ...base, available: false, authenticated: false, message: "未配置 GEMINI_API_KEY，在 .env.local 里填上即可启用" };
+  }
+  if (probe.error) {
+    return { ...base, available: true, authenticated: false, message: `Veo 探测失败：${probe.error}` };
+  }
+  if (!probe.models.length) {
+    return { ...base, available: true, authenticated: false, message: "这个 key 下没有可用的 Veo 模型" };
   }
 
-  try {
-    const [catalog, quota] = await Promise.all([listGeminiModels(), readQuotaState()]);
-    if (!catalog.video.length) {
-      return { ...base, available: true, message: "这个 key 下没有可用的 Veo 模型" };
-    }
-    return {
-      ...base,
-      available: true,
-      // 额度用完不算「未认证」：key 是好的，只是今天跑不了，翻成未登录会把人引去查 key
-      authenticated: true,
-      message: quota
-        ? quota.message
-        : `API key 可用，${catalog.video.length} 个 Veo 模型（每镜 4/6/8 秒，720p/1080p）`,
-    };
-  } catch (error) {
-    console.error("[VideoFactory] Veo 探测失败", {
-      userId: "local",
-      action: "videoFactory.providers.veo",
-      error,
-    });
-    const message = error instanceof Error ? error.message : "探测失败";
-    return { ...base, available: true, message: `Veo 探测失败：${message}` };
-  }
+  return {
+    ...base,
+    available: true,
+    // 同图片侧：额度用完不算「未认证」，key 是好的，只是今天跑不了
+    authenticated: true,
+    message:
+      probe.quotaMessage ||
+      `${probe.models.length} 个模型（每镜 4/6/8 秒，720p/1080p）· 需 API 付费层，免费层不支持 Veo`,
+    models: probe.models.map((item) => ({ id: item.id, label: item.label })),
+    defaultModel: probe.defaultModel,
+  };
 }
 
 export async function GET() {
@@ -144,7 +144,7 @@ export async function GET() {
       name: "手动生成（即梦 / 可灵）",
       available: true,
       authenticated: true,
-      message: "复制每镜的提示词和首帧图去平台生成，再把 mp4 传回来挂到镜头上",
+      message: "复制每镜的提示词和首帧图去 Flow / 即梦 / 可灵生成，再把 mp4 传回来挂到镜头上",
     },
   ];
 

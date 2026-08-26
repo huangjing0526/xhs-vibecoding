@@ -25,6 +25,8 @@ import PipelineRail from "@/components/ui/PipelineRail";
 import CastBoard from "@/components/workflow/CastBoard";
 import RhythmBoard from "@/components/workflow/RhythmBoard";
 import SegmentedControl from "@/components/workflow/SegmentedControl";
+import ProviderButton from "@/components/ui/ProviderButton";
+import { cachedProbe, pickUsableProvider } from "@/lib/enginePreference";
 import {
   analyzeStoryboard,
   attachShotClip,
@@ -45,15 +47,19 @@ import {
 } from "@/lib/workflowClient";
 import {
   CAMERA_MOVES,
+  CAST_SLOTS,
   DEFAULT_TARGET_DURATION_SEC,
   EMPTY_CAST,
+  PROVIDER_CAPS,
   SHOT_DURATIONS,
-  SHOT_RESOLUTIONS,
+  isGenerativeProvider,
+  snapShotDuration,
   VIDEO_FACTORY_STEPS,
   applyCameraMove,
   checkScriptDuration,
   estimateDurationSec,
   secondsToChars,
+  replanRhythm,
   rhythmShotCount,
   storyboardDurationSec,
   type BenchmarkRhythm,
@@ -62,6 +68,7 @@ import {
   type CastSlot,
   type ScriptDraft,
   type Shot,
+  type ShotAspectRatio,
   type ShotDuration,
   type ShotResolution,
   type VideoFactoryStepId,
@@ -173,32 +180,118 @@ function CopyButton({ text, label = "复制" }: { text: string; label?: string }
   );
 }
 
-function ProviderButton({
-  provider,
-  selected,
-  onSelect,
+
+/**
+ * 出片引擎与它的参数。
+ *
+ * 摆在拆分镜之前：每镜能切几秒由引擎决定（grok 6/10、Veo 4/6/8），
+ * 先拆好再选引擎的话，拆出来的分镜有一半时长是非法的。
+ * 拆完之后仍然允许改——改了会把已有分镜的时长吸附到新引擎的档位上。
+ */
+function EngineChooser({
+  providers,
+  value,
+  model,
+  resolution,
+  aspectRatio,
+  isLoading,
+  onSelectProvider,
+  onSelectModel,
+  onSelectResolution,
+  onSelectAspectRatio,
+  onRefresh,
 }: {
-  provider: VideoGenProviderStatus;
-  selected: boolean;
-  onSelect: (id: VideoGenProviderId) => void;
+  providers: VideoGenProviderStatus[];
+  value: VideoGenProviderId;
+  model: string;
+  resolution: ShotResolution;
+  aspectRatio: ShotAspectRatio | "";
+  isLoading: boolean;
+  onSelectProvider: (id: VideoGenProviderId) => void;
+  onSelectModel: (id: string) => void;
+  onSelectResolution: (value: ShotResolution) => void;
+  onSelectAspectRatio: (value: ShotAspectRatio) => void;
+  onRefresh: () => void;
 }) {
-  const enabled = provider.available && provider.authenticated;
+  const caps = PROVIDER_CAPS[value];
+  const current = providers.find((item) => item.id === value);
+  const models = current?.models || [];
+  const durationHint = caps.durations.length
+    ? `每镜 ${caps.durations.join(" / ")} 秒`
+    : "片子在别处生成好再传回来，不受档位约束";
+
   return (
-    <button
-      type="button"
-      disabled={!enabled}
-      onClick={() => onSelect(provider.id)}
-      aria-pressed={selected}
-      className={`rounded-2xl border p-3 text-left transition-all ${
-        selected ? "border-brand-400 bg-brand-50 ring-2 ring-brand-100" : "border-line bg-surface"
-      } ${enabled ? "hover:border-brand-300" : "cursor-not-allowed opacity-55"}`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-bold text-ink">{provider.name}</span>
-        {enabled && <Check size={14} className="text-ok" />}
+    <Card>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-bold text-ink">出片引擎</h2>
+          <p className="mt-0.5 text-[11px] text-faint">
+            {durationHint}
+            {caps.resolutions.length ? `，${caps.resolutions.join(" / ")}` : ""}
+            {caps.aspectRatios.length ? `，可指定比例` : "，比例跟首帧图走"}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={isLoading}
+          className="rounded-xl p-2 text-faint hover:bg-soft hover:text-ink"
+          aria-label="刷新引擎状态"
+        >
+          <RefreshCw size={15} className={isLoading ? "animate-spin" : ""} />
+        </button>
       </div>
-      <p className="mt-1 text-[11px] leading-4 text-faint">{provider.message}</p>
-    </button>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {providers.map((item) => (
+          <ProviderButton key={item.id} provider={item} selected={value === item.id} onSelect={onSelectProvider} />
+        ))}
+      </div>
+
+      {(models.length > 0 || caps.resolutions.length > 0 || caps.aspectRatios.length > 0) && (
+        <div className="mt-3 flex flex-wrap gap-4">
+          {models.length > 0 && (
+            <Field label="模型">
+              <select
+                value={model}
+                onChange={(event) => onSelectModel(event.target.value)}
+                className="rounded-xl border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink"
+              >
+                {/* 留空表示跟随探测到的第一个正式版，服务端会自己解析 */}
+                <option value="">默认模型</option>
+                {models.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          {caps.resolutions.length > 0 && (
+            <Field label="分辨率">
+              <SegmentedControl
+                ariaLabel="分辨率"
+                compact
+                value={resolution}
+                options={caps.resolutions.map((item) => ({ value: item, label: item }))}
+                onChange={(next) => onSelectResolution(next as ShotResolution)}
+              />
+            </Field>
+          )}
+          {caps.aspectRatios.length > 0 && (
+            <Field label="比例">
+              <SegmentedControl
+                ariaLabel="比例"
+                compact
+                value={aspectRatio}
+                options={caps.aspectRatios.map((item) => ({ value: item, label: item }))}
+                onChange={(next) => onSelectAspectRatio(next as ShotAspectRatio)}
+              />
+            </Field>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -283,9 +376,16 @@ export default function VideoFactory({
   const [isCuttingShots, setIsCuttingShots] = useState(false);
 
   const [providers, setProviders] = useState<VideoGenProviderStatus[]>([]);
-  const [provider, setProvider] = useState<VideoGenProviderId>("grok-cli");
   const [isLoadingProviders, setIsLoadingProviders] = useState(false);
-  const [resolution, setResolution] = useState<ShotResolution>("480p");
+  /**
+   * 分辨率与比例存的是「偏好」，不是权威值——权威值在渲染时按当前引擎的能力表夹一次。
+   * 存权威值的话，每一条能改 genProvider 的路径（手动换、探测顶替、切项目）都得记得同步重置，
+   * 漏一条就是界面显示 480p、请求也发 480p，而 Veo 根本没这一档。
+   */
+  const [preferredResolution, setPreferredResolution] = useState<ShotResolution>("480p");
+  const [preferredAspectRatio, setPreferredAspectRatio] = useState<ShotAspectRatio | "">("");
+  /** 引擎下的驱动模型（目前只有 Veo 有多个），留空跟随服务端解析出的第一个正式版 */
+  const [genModel, setGenModel] = useState("");
 
   const [frames, setFrames] = useState<FrameCandidate[]>([]);
   const [isLoadingFrames, setIsLoadingFrames] = useState(false);
@@ -307,6 +407,8 @@ export default function VideoFactory({
 
   const script = project.script;
   const storyboard = project.storyboard;
+  /** 已绑上参考图的槽位，首帧那一段的文案与提醒都按它算，别再写死角色和产品 */
+  const boundCastSlots = CAST_SLOTS.filter((slot) => project.cast[slot.id]);
 
   /**
    * 开一条全新的项目。
@@ -361,13 +463,23 @@ export default function VideoFactory({
     onTopicConsumed?.();
   }, [incomingTopic, onTopicConsumed]);
 
-  const refreshProviders = useCallback(async () => {
+  const refreshProviders = useCallback(async (force = false) => {
     setIsLoadingProviders(true);
     try {
-      const data = await getVideoGenProviders();
+      // 探一次要 spawn 两个 grok 子进程（其中一个还联网）+ 一次 Gemini ListModels，
+      // 而工作台里来回切页会反复卸载重挂这个组件。刷新按钮走 force，那是真要看当前状态。
+      const providerList = await cachedProbe(
+        "video",
+        async () => (await getVideoGenProviders()).providers,
+        force,
+      );
+      const data = { providers: providerList };
       setProviders(data.providers);
-      const usable = data.providers.find((item) => item.available && item.authenticated);
-      if (usable) setProvider(usable.id);
+      // 只在项目当前选的这个用不了时才换：人选过的引擎不该被一次探测悄悄改掉
+      setProject((current) => {
+        const next = pickUsableProvider(data.providers, current.genProvider ?? "grok-cli");
+        return next === current.genProvider ? current : { ...current, genProvider: next };
+      });
     } catch (error) {
       console.error("[VideoFactory] 引擎状态检查失败", { action: "videoFactory.providers", error });
     } finally {
@@ -662,7 +774,12 @@ export default function VideoFactory({
     if (!script) return;
     setIsCuttingShots(true);
     try {
-      const data = await analyzeStoryboard({ script, visualStyle, rhythm: project.rhythm });
+      const data = await analyzeStoryboard({
+        script,
+        visualStyle,
+        rhythm: project.rhythm,
+        genProvider,
+      });
       // 新分镜作废了旧片子。clips 归服务端所有，自动存盘不带它，
       // 所以这里要显式存一次说清「清空」，否则旧 clips 会留在盘上对不上新镜头
       const next: VideoProject = { ...project, storyboard: data.storyboard, clips: [] };
@@ -719,6 +836,16 @@ export default function VideoFactory({
       formData.append("videoPrompt", shot.videoPrompt);
       formData.append("durationSec", String(shot.durationSec));
       formData.append("resolution", resolution);
+      // 送 genProvider 而不是 project.genProvider：老项目那个字段是空的，
+      // 裸值会被 String() 成 "undefined" 送出去，服务端只好回一个「引擎不能出片」
+      formData.append("provider", genProvider);
+      // 没手动选就用探测时已经拿到的默认模型：服务端拿到空串会自己再拉一次模型目录，
+      // 那份数据探测时就取过了，逐镜重拉纯属白跑一趟网络
+      const model = genModel || selectedProvider?.defaultModel || "";
+      if (model) formData.append("model", model);
+      // 界面上比例控件在没选时显示的就是首档，这里跟着送同一个值，
+      // 否则「看着是 9:16、出来是 16:9」
+      if (aspectRatio) formData.append("aspectRatio", aspectRatio);
       if (pending?.file) formData.append("frameFile", pending.file);
       else if (framePath) formData.append("framePath", framePath);
       // 两者都没有时不传，交给服务端去认项目目录里已生成的那张
@@ -813,10 +940,73 @@ export default function VideoFactory({
 
   const plannedDuration = storyboard ? storyboardDurationSec(storyboard) : 0;
   const durationCheck = checkScriptDuration(script?.estimatedDurationSec || 0, project.targetDurationSec);
-  // 刚拆出来的优先显示；没有就显示项目里已经套用的那份
-  const shownRhythm = detectedRhythm || project.rhythm;
-  const selectedProvider = providers.find((item) => item.id === provider);
+  // 刚拆出来的优先显示；没有就显示项目里已经套用的那份。
+  // 按当前引擎重算一遍 plan——模板里存的那份是切镜时按默认引擎算的，
+  // 直接拿来显示的话，选了 Veo 时「切成 N 段」和真正拆出来的镜头数会是两个数
+  const shownRhythm = useMemo(() => {
+    const raw = detectedRhythm || project.rhythm;
+    return raw ? replanRhythm(raw, project.genProvider ?? "grok-cli") : null;
+  }, [detectedRhythm, project.rhythm, project.genProvider]);
+  // 老项目的 JSON 里没有这个字段，服务端读取时已就地补过一次，这里再兜一道：
+  // 项目还可能从新建、扩展推送等别的路径进来，少一个 ?? 就是一次白屏
+  const genProvider = project.genProvider ?? "grok-cli";
+  const selectedProvider = providers.find((item) => item.id === genProvider);
   const providerReady = Boolean(selectedProvider?.available && selectedProvider.authenticated);
+  const genCaps = PROVIDER_CAPS[genProvider];
+  /** 档位为空的是回传通道，时长仍要能设（进提示词用），这时退回全量并集 */
+  const durationOptions = genCaps.durations.length ? genCaps.durations : SHOT_DURATIONS;
+
+
+  // 界面显示的和请求里送的都取这两个，所以「显示了却没送」这类不一致在这里就被消掉了
+  const resolution = genCaps.resolutions.includes(preferredResolution)
+    ? preferredResolution
+    : genCaps.resolutions[0] ?? preferredResolution;
+  const aspectRatio =
+    preferredAspectRatio && genCaps.aspectRatios.includes(preferredAspectRatio)
+      ? preferredAspectRatio
+      : genCaps.aspectRatios[0] ?? "";
+
+  /**
+   * 换引擎。
+   * 已拆好的分镜要跟着吸附到新引擎的档位上——按 grok 切的 10 秒镜头改用 Veo 时会变成 8 秒，
+   * 不吸附的话这些镜头会带着一个该引擎根本不接受的时长走到生成那一步。
+   * 分辨率与比例不在这里改，交给上面那个 effect 统一收——载入项目那条路也要走同样的校正。
+   */
+  const selectGenProvider = (next: VideoGenProviderId) => {
+    setProject((current) => ({
+      ...current,
+      genProvider: next,
+      storyboard: current.storyboard
+        ? {
+            ...current.storyboard,
+            shots: current.storyboard.shots.map((shot) => ({
+              ...shot,
+              durationSec: snapShotDuration(shot.durationSec, next),
+            })),
+          }
+        : current.storyboard,
+    }));
+    // 模型是跟着引擎走的，换引擎必须清掉，否则会把 grok 的模型名塞给 Veo。
+    // 分辨率与比例不用管，它们在渲染时按新引擎的能力表夹。
+    setGenModel("");
+  };
+
+  /** 拆分镜前后各挂一次，同一份 props——写两遍迟早会漏掉其中一处的新参数 */
+  const engineChooser = (
+    <EngineChooser
+      providers={providers}
+      value={genProvider}
+      model={genModel}
+      resolution={resolution}
+      aspectRatio={aspectRatio}
+      isLoading={isLoadingProviders}
+      onSelectProvider={selectGenProvider}
+      onSelectModel={setGenModel}
+      onSelectResolution={setPreferredResolution}
+      onSelectAspectRatio={setPreferredAspectRatio}
+      onRefresh={() => refreshProviders(true)}
+    />
+  );
 
   return (
     <div className="space-y-5">
@@ -1079,6 +1269,7 @@ export default function VideoFactory({
                 </div>
               </div>
             </Card>
+            {engineChooser}
 
             <Card>
               <CardHeader
@@ -1086,7 +1277,7 @@ export default function VideoFactory({
                 description={
                   project.rhythm
                     ? `照对标「${project.rhythm.sourceLabel}」的节奏切，${rhythmShotCount(project.rhythm)} 段，时长一秒不改`
-                    : "每镜只能是 6 秒或 10 秒——这是图生视频模型的硬约束"
+                    : `每镜只能是 ${durationOptions.join(" 或 ")} 秒——这是 ${selectedProvider?.name || "出片引擎"} 的硬约束`
                 }
                 action={
                   project.rhythm ? (
@@ -1156,7 +1347,7 @@ export default function VideoFactory({
                     ariaLabel={`第 ${shot.order} 镜时长`}
                     compact
                     value={String(shot.durationSec)}
-                    options={SHOT_DURATIONS.map((value) => ({ value: String(value), label: `${value} 秒` }))}
+                    options={durationOptions.map((value) => ({ value: String(value), label: `${value} 秒` }))}
                     onChange={(value) => patchShot(shot.order, { durationSec: Number(value) as ShotDuration })}
                   />
                   {shot.trimToSec !== undefined && shot.trimToSec < shot.durationSec && (
@@ -1252,49 +1443,15 @@ export default function VideoFactory({
       {step === "generate" && (
         storyboard ? (
           <>
-            <Card>
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-bold text-ink">生成引擎</h2>
-                  <p className="mt-0.5 text-[11px] text-faint">每镜 6 或 10 秒，480p / 720p，比例跟首帧图走</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={refreshProviders}
-                  disabled={isLoadingProviders}
-                  className="rounded-xl p-2 text-faint hover:bg-soft hover:text-ink"
-                  aria-label="刷新引擎状态"
-                >
-                  <RefreshCw size={15} className={isLoadingProviders ? "animate-spin" : ""} />
-                </button>
-              </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {providers.map((item) => (
-                  <ProviderButton key={item.id} provider={item} selected={provider === item.id} onSelect={setProvider} />
-                ))}
-              </div>
-              {provider === "grok-cli" && (
-                <div className="mt-3">
-                  <Field label="分辨率">
-                    <SegmentedControl
-                      ariaLabel="分辨率"
-                      compact
-                      value={resolution}
-                      options={SHOT_RESOLUTIONS.map((value) => ({ value, label: value }))}
-                      onChange={(value) => setResolution(value as ShotResolution)}
-                    />
-                  </Field>
-                </div>
-              )}
-            </Card>
+            {engineChooser}
 
             <Card>
               <CardHeader
                 title="首帧图"
                 description={
-                  project.cast.role || project.cast.product
-                    ? `按每镜提示词生成，自动带上${[project.cast.role && "角色", project.cast.product && "产品"].filter(Boolean).join("和")}参考图`
-                    : "还没绑角色和产品——现在生成的话，每镜的人和货都会不一样"
+                  boundCastSlots.length
+                    ? `按每镜提示词生成，自动带上${boundCastSlots.map((slot) => slot.label).join("、")}参考图`
+                    : "还没绑角色、产品和场景——现在生成的话，每镜的人、货和地方都会不一样"
                 }
                 action={
                   <Button
@@ -1322,9 +1479,9 @@ export default function VideoFactory({
                     onChange={(value) => setFrameProvider(value as "codex" | "grok")}
                   />
                 </Field>
-                {!project.cast.role && !project.cast.product && (
+                {boundCastSlots.length === 0 && (
                   <Button size="sm" variant="ghost" onClick={() => setStep("source")}>
-                    去绑角色和产品
+                    去绑参考图
                   </Button>
                 )}
               </div>
@@ -1383,7 +1540,7 @@ export default function VideoFactory({
                   </div>
 
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    {provider === "grok-cli" ? (
+                    {isGenerativeProvider(genProvider) ? (
                       <Button
                         variant="ai"
                         size="sm"
@@ -1413,10 +1570,10 @@ export default function VideoFactory({
                         </label>
                       </>
                     )}
-                    {!providerReady && provider === "grok-cli" && (
+                    {!providerReady && isGenerativeProvider(genProvider) && (
                       <span className="text-[11px] font-semibold text-warn">{selectedProvider?.message}</span>
                     )}
-                    {provider === "doubao" && (
+                    {genProvider === "doubao" && (
                       // 豆包这条路的回传由扩展自动完成，旁边那个「回传 mp4」只是手动兜底
                       <span className="text-[11px] text-faint">
                         提示词贴进豆包出片后，用「豆包下载器」的『送到工作台』直接挂上，不用手动回传
