@@ -48,6 +48,8 @@ import {
 import {
   CAMERA_MOVES,
   CAST_SLOTS,
+  clipUrl,
+  describeProjectProgress,
   DEFAULT_TARGET_DURATION_SEC,
   EMPTY_CAST,
   PROVIDER_CAPS,
@@ -89,6 +91,12 @@ interface VideoFactoryProps {
   /** 首页那句话判成「做视频」时带过来的要求，填进「这条视频讲什么」的主题 */
   incomingTopic?: string | null;
   onTopicConsumed?: () => void;
+  /** 项目页/⌘K 点开的视频项目，整条对象直接带进来；消费后由父级清空。 */
+  incomingProject?: VideoProject | null;
+  onProjectConsumed?: () => void;
+  /** 全局「创建 → 视频项目」的一次性信号：开一条全新的项目。 */
+  incomingFresh?: boolean;
+  onFreshConsumed?: () => void;
 }
 
 interface FrameCandidate {
@@ -360,6 +368,10 @@ export default function VideoFactory({
   onRhythmConsumed,
   incomingTopic,
   onTopicConsumed,
+  incomingProject,
+  onProjectConsumed,
+  incomingFresh,
+  onFreshConsumed,
 }: VideoFactoryProps) {
   const [project, setProject] = useState<VideoProject>(EMPTY_PROJECT);
   const [projects, setProjects] = useState<VideoProject[]>([]);
@@ -426,6 +438,14 @@ export default function VideoFactory({
     [onNotice],
   );
 
+  /** 切到一条已存在的项目：恢复它进度所在的步，标记已存盘，清掉未套用的拆片节奏。 */
+  const selectProject = useCallback((item: VideoProject) => {
+    setProject(item);
+    setDetectedRhythm(null);
+    savedRef.current = JSON.stringify({ ...item, updatedAt: "" });
+    setStep(item.storyboard ? "storyboard" : item.script ? "script" : "source");
+  }, []);
+
   // 拆片页送过来的结构骨架：直接开一个新项目接住，不覆盖手上正在做的那条
   useEffect(() => {
     if (!incomingSkeleton) return;
@@ -462,6 +482,20 @@ export default function VideoFactory({
     setStep("source");
     onTopicConsumed?.();
   }, [incomingTopic, onTopicConsumed]);
+
+  // 项目页/⌘K 点开某条视频项目：父级手上就有整条对象，直接切过去，不再拉一次列表
+  useEffect(() => {
+    if (!incomingProject) return;
+    selectProject(incomingProject);
+    onProjectConsumed?.();
+  }, [incomingProject, onProjectConsumed, selectProject]);
+
+  // 全局「创建 → 视频项目」：开一条全新的
+  useEffect(() => {
+    if (!incomingFresh) return;
+    startFreshProject({}, null);
+    onFreshConsumed?.();
+  }, [incomingFresh, onFreshConsumed, startFreshProject]);
 
   const refreshProviders = useCallback(async (force = false) => {
     setIsLoadingProviders(true);
@@ -1164,21 +1198,9 @@ export default function VideoFactory({
                       item.id === project.id ? "border-brand-300 bg-brand-50" : "border-line bg-surface"
                     }`}
                   >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProject(item);
-                        setDetectedRhythm(null);
-                        savedRef.current = JSON.stringify({ ...item, updatedAt: "" });
-                        setStep(item.storyboard ? "storyboard" : item.script ? "script" : "source");
-                      }}
-                      className="min-w-0 flex-1 text-left"
-                    >
+                    <button type="button" onClick={() => selectProject(item)} className="min-w-0 flex-1 text-left">
                       <span className="block truncate text-sm font-bold text-ink">{item.title}</span>
-                      <span className="mt-0.5 block text-[11px] text-faint">
-                        {item.storyboard ? `${item.storyboard.shots.length} 镜` : item.script ? "已出脚本" : "只有选题"}
-                        {item.clips.length > 0 && ` · 已生成 ${item.clips.length} 镜`}
-                      </span>
+                      <span className="mt-0.5 block text-[11px] text-faint">{describeProjectProgress(item)}</span>
                     </button>
                     <Button size="sm" variant="danger" onClick={() => handleDeleteProject(item.id)} icon={<Trash2 size={13} />}>
                       删除
@@ -1595,9 +1617,7 @@ export default function VideoFactory({
                   {clip && (
                     <video
                       controls
-                      src={`/api/video-factory/clip?projectId=${encodeURIComponent(project.id)}&shot=${shot.order}&v=${
-                        clipVersion[shot.order] || 1
-                      }`}
+                      src={clipUrl(project.id, shot.order, clipVersion[shot.order] || 1)}
                       className="mt-3 w-full max-w-[240px] rounded-2xl border border-line bg-black"
                     />
                   )}

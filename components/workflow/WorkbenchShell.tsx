@@ -11,8 +11,9 @@ import type { WorkflowMode } from "@/lib/workflowClient";
 interface WorkbenchShellProps {
   area: AreaId;
   onAreaChange: (id: AreaId) => void;
-  /** 图标轨顶部的「创建」，是动作不是区，由外部决定弹什么。 */
-  onCreate: () => void;
+  /** 图标轨顶部的「创建」菜单：两种项目各自的新建入口，是动作不是区。 */
+  onCreateNote: () => void;
+  onCreateVideo: () => void;
   workflowMode: WorkflowMode;
   aiProvider?: string | null;
   syncing: boolean;
@@ -33,7 +34,8 @@ interface WorkbenchShellProps {
 export default function WorkbenchShell({
   area,
   onAreaChange,
-  onCreate,
+  onCreateNote,
+  onCreateVideo,
   workflowMode,
   aiProvider,
   syncing,
@@ -54,7 +56,7 @@ export default function WorkbenchShell({
 
   return (
     <main className="flex h-screen overflow-hidden bg-canvas text-ink">
-      <AppRail area={area} onAreaChange={onAreaChange} onCreate={onCreate} />
+      <AppRail area={area} onAreaChange={onAreaChange} onCreateNote={onCreateNote} onCreateVideo={onCreateVideo} />
 
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="z-30 flex h-14 shrink-0 items-center gap-3 px-3 md:px-5">

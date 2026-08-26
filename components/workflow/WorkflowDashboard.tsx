@@ -31,7 +31,7 @@ import { AREAS, COMMAND_AREAS, PLAIN_AREAS, type AreaId } from "@/lib/capabiliti
 import { pushRecent, readRecent, type RecentEntry } from "@/lib/recentUsed";
 import { ROUTABLE_AREAS, routeByKeyword } from "@/lib/intentRouting";
 import PageHeader from "@/components/workflow/PageHeader";
-import NoteList, { getNoteStatus } from "@/components/workflow/NoteList";
+import ProjectList, { getNoteStatus, type ProjectLane } from "@/components/workflow/ProjectList";
 import NoteEditor from "@/components/workflow/NoteEditor";
 import NoteInspector from "@/components/workflow/NoteInspector";
 import QualityGate from "@/components/workflow/QualityGate";
@@ -90,6 +90,7 @@ import {
   getWorkflowBootstrap,
   deleteRecord,
   isAbortError,
+  listVideoProjects,
   publishDraft,
   saveDraft,
   saveMaterial,
@@ -103,7 +104,7 @@ import {
   type WorkflowSnapshot,
 } from "@/lib/workflowClient";
 import type { VideoPlan } from "@/lib/videoWorkflow";
-import type { BenchmarkRhythm, BenchmarkSkeleton } from "@/lib/videoFactory";
+import { describeProjectProgress, type BenchmarkRhythm, type BenchmarkSkeleton, type VideoProject } from "@/lib/videoFactory";
 import { templateTarget, type TemplateCard } from "@/lib/templates";
 import VideoFactory from "./VideoFactory";
 import SourceWorkspace from "./SourceWorkspace";
@@ -335,17 +336,27 @@ export default function WorkflowDashboard() {
   const [bloggerDistillation, setBloggerDistillation] = useState<BloggerDistillation | null>(null);
   // 拆片页送往视频工厂的结构骨架，视频工厂接住后立刻清空——否则来回切区会重复灌一次
   const [videoSkeleton, setVideoSkeleton] = useState<BenchmarkSkeleton | null>(null);
+  // 项目页并排列出的视频项目；挂载时拉一次给 ⌘K，每次进项目页再刷新
+  const [videoProjects, setVideoProjects] = useState<VideoProject[]>([]);
+  // 项目页/⌘K 点开的视频项目（整条对象，工厂不用再拉列表按 id 找），工厂接住后清空
+  const [pendingVideoProject, setPendingVideoProject] = useState<VideoProject | null>(null);
+  // 全局「创建 → 视频项目」的一次性信号
+  const [pendingFreshVideo, setPendingFreshVideo] = useState(false);
+  // 项目页当前看哪条 lane。放这层是因为它是页面级事实：从视频 lane 进工厂再回来，还该停在视频 lane
+  const [projectLane, setProjectLane] = useState<ProjectLane>("post");
   // 每条选题各自绑定的对标博主道库：topicId -> bloggerId（""=不绑定）
   const [topicDaokuMap, setTopicDaokuMap] = useState<Record<string, string>>({});
   const [videoPlan, setVideoPlan] = useState<VideoPlan | null>(null);
   const [videoRendered, setVideoRendered] = useState(false);
   const setNotice = useCallback((notice: Notice) => {
+    // 带 action 的提示渲染成 toast 上的一个按钮，给「生成完了去哪看」这类承接用
+    const options = notice.action ? { action: { label: notice.action.label, onClick: notice.action.run } } : undefined;
     if (notice.type === "success") {
-      toast.success(notice.message);
+      toast.success(notice.message, options);
     } else if (notice.type === "error") {
-      toast.error(notice.message);
+      toast.error(notice.message, options);
     } else {
-      toast.info(notice.message);
+      toast.info(notice.message, options);
     }
   }, []);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -760,7 +771,10 @@ export default function WorkflowDashboard() {
       setArea("note");
       setNotice({
         type: "success",
-        message: shouldWriteBack ? "已基于已选素材生成选题，并写回飞书" : "已基于 Demo 素材生成选题",
+        message: shouldWriteBack
+          ? `已生成 ${result.cards.length} 条选题并写回飞书，已打开第一条`
+          : `已生成 ${result.cards.length} 条选题，已打开第一条`,
+        action: { label: "看全部项目", run: () => setArea("projects") },
       });
       if (shouldWriteBack) {
         await loadFeishuSnapshot();
@@ -1081,6 +1095,36 @@ export default function WorkflowDashboard() {
     if (AREAS[id].category) setRecent(pushRecent("area", id));
   }, []);
 
+  const refreshVideoProjects = useCallback(async () => {
+    try {
+      const data = await listVideoProjects();
+      setVideoProjects(data.projects);
+    } catch (error) {
+      console.error("[WorkflowDashboard] 视频项目列表读取失败", { action: "projects.videoList", error });
+    }
+  }, []);
+
+  // 挂载即拉、每次切区顺手刷新：⌘K 与项目页共用这一份列表，从工厂出来它就该是新的
+  useEffect(() => {
+    refreshVideoProjects();
+  }, [area, refreshVideoProjects]);
+
+  // 项目页/⌘K 点开视频项目、全局创建视频项目：都落到视频工厂（走 openArea，「最近使用」不漏记），谁接住谁清
+  const openVideoProject = useCallback(
+    (project: VideoProject) => {
+      setPendingVideoProject(project);
+      setProjectLane("video");
+      openArea("videoFactory");
+    },
+    [openArea],
+  );
+
+  const createVideoProject = useCallback(() => {
+    setPendingFreshVideo(true);
+    setProjectLane("video");
+    openArea("videoFactory");
+  }, [openArea]);
+
   /**
    * 模板目录点「照这个做」：按模板类型送进对应的工厂。
    * 模板目录是挑模板的唯一入口，工厂只负责跑，所以分发只有这一处。
@@ -1195,13 +1239,29 @@ export default function WorkflowDashboard() {
       run: () => openNote(topic),
     }));
 
+    const videoProjectCommands: Command[] = videoProjects.slice(0, 20).map((project) => ({
+      id: `video-project-${project.id}`,
+      group: "项目",
+      label: project.title,
+      hint: describeProjectProgress(project),
+      icon: <NavIcon id="videoFactory" size={15} />,
+      run: () => openVideoProject(project),
+    }));
+
     const actionCommands: Command[] = [
       {
         id: "action-new-note",
         group: "动作",
-        label: "新建项目",
+        label: "新建图文项目",
         icon: <Plus size={15} />,
         run: () => setAddingTopic(true),
+      },
+      {
+        id: "action-new-video-project",
+        group: "动作",
+        label: "新建视频项目",
+        icon: <Plus size={15} />,
+        run: createVideoProject,
       },
       {
         id: "action-sync",
@@ -1238,18 +1298,21 @@ export default function WorkflowDashboard() {
       },
     ];
 
-    return [...areaCommands, ...noteCommands, ...actionCommands];
+    return [...areaCommands, ...noteCommands, ...videoProjectCommands, ...actionCommands];
   }, [
+    createVideoProject,
     handleGenerateCover,
     handleGenerateDraft,
     loadSnapshot,
     openArea,
     openCover,
     openNote,
+    openVideoProject,
     selectedTopic,
     setNotice,
     usableDrafts,
     usableTopics,
+    videoProjects,
     workflowMode,
   ]);
 
@@ -1259,7 +1322,8 @@ export default function WorkflowDashboard() {
       <WorkbenchShell
         area={area}
         onAreaChange={openArea}
-        onCreate={() => setAddingTopic(true)}
+        onCreateNote={() => setAddingTopic(true)}
+        onCreateVideo={createVideoProject}
         workflowMode={workflowMode}
         aiProvider={bootstrapConfig?.aiProvider ?? null}
         syncing={isSyncing}
@@ -1303,14 +1367,18 @@ export default function WorkflowDashboard() {
         )}
 
         {area === "projects" && (
-          <NoteList
-            variant="page"
+          <ProjectList
             notes={usableTopics}
             drafts={usableDrafts}
             selectedTopicId={selectedTopic?.topicId ?? null}
+            lane={projectLane}
+            onLaneChange={setProjectLane}
             onSelect={openNote}
             onNew={() => setAddingTopic(true)}
             onGenerateFromMaterials={() => openArea("library")}
+            videoProjects={videoProjects}
+            onSelectVideoProject={openVideoProject}
+            onNewVideoProject={createVideoProject}
           />
         )}
 
@@ -1440,7 +1508,7 @@ export default function WorkflowDashboard() {
               <CollapsiblePanel title="录入与提炼" hint="线索采集、选题池、本地文档——三选一导入">
                 <div className="space-y-3 p-5">
                   <p className="text-sm leading-6 text-muted">
-                    勾选下方素材，点右上「生成选题」即可提炼——每条选题就是一个新项目。已选{" "}
+                    勾选下方素材，点右上「生成选题」即可提炼——每条选题就是一篇新的图文项目。已选{" "}
                     <span className="font-rounded font-bold tabular-nums text-ink">{selectedMaterials.length}</span> 条。
                   </p>
                   <SegmentedControl
@@ -1646,6 +1714,10 @@ export default function WorkflowDashboard() {
               onRhythmConsumed={() => setPendingRhythm(null)}
               incomingTopic={pendingVideoTopic}
               onTopicConsumed={() => setPendingVideoTopic(null)}
+              incomingProject={pendingVideoProject}
+              onProjectConsumed={() => setPendingVideoProject(null)}
+              incomingFresh={pendingFreshVideo}
+              onFreshConsumed={() => setPendingFreshVideo(false)}
             />
           </ToolPage>
         )}
@@ -1660,7 +1732,7 @@ export default function WorkflowDashboard() {
               onGoBlogger={() => setArea("blogger")}
               onSendToVideoFactory={(skeleton) => {
                 setVideoSkeleton(skeleton);
-                setArea("videoFactory");
+                openArea("videoFactory");
               }}
             />
           </ToolPage>

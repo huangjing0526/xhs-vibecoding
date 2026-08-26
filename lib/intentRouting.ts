@@ -45,7 +45,7 @@ const RULES: Array<{ area: AreaId; keywords: string[] }> = [
   { area: "review", keywords: ["复盘", "数据", "效果", "阅读量", "涨粉"] },
   { area: "works", keywords: ["跑出来的", "出过的图", "作品", "历史产出", "之前生成"] },
   { area: "library", keywords: ["素材", "攒料", "选题", "灵感", "导入"] },
-  { area: "projects", keywords: ["笔记", "写", "草稿", "正文", "文案"] },
+  { area: "projects", keywords: ["项目", "笔记", "写", "草稿", "正文", "文案"] },
 ];
 
 /**
@@ -58,7 +58,7 @@ export function extractUrl(text: string): string {
   return text.match(URL_PATTERN)?.[0] || "";
 }
 
-/** 关键词兜底：命中就返回，全不命中回到项目页，让人自己挑一篇笔记。 */
+/** 关键词兜底：命中就返回，全不命中回到项目页，让人自己挑一个项目。 */
 export function routeByKeyword(text: string): IntentResult {
   const normalized = text.toLowerCase();
   const shared = { brief: text, url: extractUrl(text) };
@@ -66,7 +66,7 @@ export function routeByKeyword(text: string): IntentResult {
     const hit = rule.keywords.find((keyword) => normalized.includes(keyword));
     if (hit) return { ...shared, area: rule.area, reason: `按关键词「${hit}」判断` };
   }
-  return { ...shared, area: DEFAULT_INTENT_AREA, reason: "没看出具体要做什么，先来项目页挑一篇笔记" };
+  return { ...shared, area: DEFAULT_INTENT_AREA, reason: "没看出具体要做什么，先来项目页挑一个项目" };
 }
 
 export function buildIntentPrompt(text: string): string {
