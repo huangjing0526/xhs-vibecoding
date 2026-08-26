@@ -7,7 +7,7 @@ import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import { NextRequest, NextResponse } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import { clipPath, framePath, isSafeSegment, projectDir, readProject, writeProject } from "@/app/api/video-factory/_shared";
-import { isUploadProvider, snapShotDuration, type ShotClip } from "@/lib/videoFactory";
+import { isUploadProvider, snapShotDuration, type ShotClip, type VideoProject } from "@/lib/videoFactory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,12 +22,27 @@ const MAX_CLIP_DURATION_SEC = 600;
  * 回传片子的实际时长。
  * 这里记的是「这条片子有多长」，不是「要向 grok 请求几秒」——后者才归 SHOT_DURATIONS 的 6/10 档管。
  * 所以据实记录：网页端送的本来就是 6/10，原样通过；豆包送的是任意秒数，也原样留住。
- * 只有读不出有效值时才回落到 snapShotDuration，免得写进一个 NaN。
+ *
+ * 没带这个字段的老调用回落到 snapShotDuration；带了但离谱（0、负数、超上限）返回 null 让调用方吃 400。
+ * 之前这两种情况都回落成 6，等于把一个编出来的数字写进数据，还看不出来。
  */
-function resolveDuration(raw: unknown): number {
+function resolveDuration(raw: FormDataEntryValue | null): number | null {
+  if (raw === null || String(raw).trim() === "") return snapShotDuration(raw);
   const seconds = Number(raw);
-  if (!(seconds > 0) || seconds > MAX_CLIP_DURATION_SEC) return snapShotDuration(raw);
+  if (!(seconds > 0) || seconds > MAX_CLIP_DURATION_SEC) return null;
   return Math.round(seconds * 10) / 10;
+}
+
+/**
+ * 这一镜在分镜表里存不存在。
+ * 只卡 1-99 不够：面板选错镜号、或者项目重拆过分镜镜头变少了，
+ * 片子会挂到一个渲染不出来的镜头上——UI 是照 storyboard.shots 画的，
+ * 那条 clip 永远不显示，几十兆却一直占着盘。
+ */
+function hasShot(project: VideoProject | null, shotOrder: number): boolean {
+  // 项目还没落盘、或分镜还没拆，这时无从校验，放行交给后面的流程
+  if (!project?.storyboard) return true;
+  return project.storyboard.shots.some((shot) => shot.order === shotOrder);
 }
 
 /**
@@ -110,10 +125,16 @@ export async function POST(request: NextRequest) {
     if (!isSafeSegment(projectId)) return apiBadRequest("项目 id 不合法");
     if (!Number.isInteger(shotOrder) || shotOrder < 1 || shotOrder > 99) return apiBadRequest("镜号不合法");
     if (!isUploadProvider(provider)) return apiBadRequest("回传通道不合法");
+    if (durationSec === null) return apiBadRequest(`片长要在 0 到 ${MAX_CLIP_DURATION_SEC} 秒之间`);
 
     const file = formData.get("clipFile");
     if (!(file instanceof File) || file.size === 0) return apiBadRequest("请选择一个 mp4 文件");
     if (path.extname(file.name).toLowerCase() !== ".mp4") return apiBadRequest("只支持 mp4");
+
+    // 落盘前先比一遍分镜表，不合就别写——写了再拒等于留个孤儿文件在盘上
+    if (!hasShot(await readProject(projectId), shotOrder)) {
+      return apiBadRequest(`第 ${shotOrder} 镜不在分镜表里，先确认镜号`);
+    }
 
     const dir = projectDir(projectId);
     await mkdir(dir, { recursive: true });

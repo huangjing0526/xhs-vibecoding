@@ -728,10 +728,14 @@ export async function listVideoProjects(): Promise<{ projects: VideoProject[] }>
 }
 
 /** 视频工厂：整份覆盖保存，每步结束存一次。 */
-export async function saveVideoProject(project: Partial<VideoProject>): Promise<{ project: VideoProject }> {
+export async function saveVideoProject(
+  project: Partial<VideoProject>,
+  /** clips 归服务端所有，存盘不会收前端那份；重拆分镜要清空得显式说一声。 */
+  options?: { resetClips?: boolean },
+): Promise<{ project: VideoProject }> {
   return workflowRequest<{ project: VideoProject }>(
     "/api/video-factory/project",
-    { method: "POST", body: JSON.stringify({ project }) },
+    { method: "POST", body: JSON.stringify({ project, resetClips: options?.resetClips }) },
     "项目保存失败"
   );
 }

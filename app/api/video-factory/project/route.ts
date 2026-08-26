@@ -29,10 +29,20 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** 整份覆盖保存。四步共用一个项目，前端每步结束存一次，刷新不丢。 */
+/**
+ * 整份覆盖保存。四步共用一个项目，前端每步结束存一次，刷新不丢。
+ *
+ * 唯一的例外是 clips：它归产物路由所有（generate 出片、clip 回传都在服务端写），
+ * 这里一律以盘上的为准、不收前端送来的那份。否则页面开着时它手里的 clips 是旧的，
+ * 一次自动存盘就能把扩展刚推回来的片子从项目里抹掉，只留一个孤儿 mp4 在盘上。
+ * 前端要清空只能显式说 resetClips —— 重拆分镜是唯一会用到的场景。
+ */
 export async function POST(request: NextRequest) {
   try {
-    const body = await readJsonBody<{ project?: Partial<VideoProject> }>(request, "videoFactory.project.readJson");
+    const body = await readJsonBody<{ project?: Partial<VideoProject>; resetClips?: boolean }>(
+      request,
+      "videoFactory.project.readJson",
+    );
     const incoming = body.project;
     if (!incoming) return apiBadRequest("缺少项目内容");
 
@@ -52,7 +62,8 @@ export async function POST(request: NextRequest) {
       cast: incoming.cast ?? existing?.cast ?? EMPTY_CAST,
       script: incoming.script ?? existing?.script ?? null,
       storyboard: incoming.storyboard ?? existing?.storyboard ?? null,
-      clips: incoming.clips ?? existing?.clips ?? [],
+      // 注意这里不看 incoming.clips，理由见上面的注释
+      clips: body.resetClips ? [] : existing?.clips ?? [],
     };
 
     return apiOk({ project: await writeProject(project) }, "已保存");

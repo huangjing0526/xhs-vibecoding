@@ -348,10 +348,17 @@ export default function VideoFactory({ onNotice, incomingSkeleton, onSkeletonCon
 
   /** 存盘：整份覆盖。返回带 id 的项目，生成环节要靠这个 id 定产物目录。 */
   const persist = useCallback(
-    async (next: VideoProject): Promise<VideoProject> => {
-      const { project: saved } = await saveVideoProject(next);
+    async (next: VideoProject, options?: { resetClips?: boolean }): Promise<VideoProject> => {
+      const { project: saved } = await saveVideoProject(next, options);
       savedRef.current = JSON.stringify({ ...saved, updatedAt: "" });
-      setProject((current) => (current.id ? current : { ...current, id: saved.id, createdAt: saved.createdAt }));
+      setProject((current) => ({
+        ...current,
+        id: current.id || saved.id,
+        createdAt: current.id ? current.createdAt : saved.createdAt,
+        // clips 归服务端所有，存盘时不上送，这里再把盘上那份接回来——
+        // 否则扩展推进来的片子在页面上永远不出现，得手动重选项目才看得到
+        clips: saved.clips,
+      }));
       return saved;
     },
     [],
@@ -603,7 +610,11 @@ export default function VideoFactory({ onNotice, incomingSkeleton, onSkeletonCon
     setIsCuttingShots(true);
     try {
       const data = await analyzeStoryboard({ script, visualStyle, rhythm: project.rhythm });
-      setProject((current) => ({ ...current, storyboard: data.storyboard, clips: [] }));
+      // 新分镜作废了旧片子。clips 归服务端所有，自动存盘不带它，
+      // 所以这里要显式存一次说清「清空」，否则旧 clips 会留在盘上对不上新镜头
+      const next: VideoProject = { ...project, storyboard: data.storyboard, clips: [] };
+      setProject(next);
+      if (next.id) await persist(next, { resetClips: true });
       setStep("storyboard");
       onNotice({
         type: data.usedFallback ? "info" : "success",
