@@ -110,13 +110,22 @@ export const IMAGE_TEMPLATE_THUMB_OPTIONS: Array<{ id: ImageTemplateThumb; label
   { id: "style-transfer", label: "风格迁移" },
 ];
 
-/** 模特库里的一条模特资产：图片存在本机 .local 目录，列表只带取图地址，不内联图片本体。 */
-export interface ModelAssetEntry {
+/**
+ * 可复用参考素材库里的一条：图片存在本机 .local 目录，列表只带取图地址，不内联图片本体。
+ * 模特库和产品库共用这个形状——存法和增删完全一样，只有文案不同。
+ */
+export interface LibraryAssetEntry {
   id: string;
   name: string;
-  /** 来源模板与视角，用于在库里区分「同一位模特的正面/侧面」。 */
+  /** 来源模板与视角，用于区分「同一位模特的正面/侧面」「同一件货的正面/细节」。 */
   sourceLabel: string;
   createdAt: string;
   extension: string;
   imageUrl: string;
 }
+
+/** 模特库条目。历史名字，保留给已有调用方。 */
+export type ModelAssetEntry = LibraryAssetEntry;
+
+/** 产品库条目。 */
+export type ProductAssetEntry = LibraryAssetEntry;
