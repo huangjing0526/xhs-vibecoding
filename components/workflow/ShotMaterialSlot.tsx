@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ImagePlus, Loader2, Trash2, Upload } from "lucide-react";
 import Button from "@/components/ui/Button";
 import { LibraryPicker } from "@/components/workflow/CastBoard";
@@ -37,6 +37,15 @@ export default function ShotMaterialSlot({
   const fileRef = useRef<HTMLInputElement>(null);
   const ready = Boolean(projectId);
 
+  /**
+   * 换绑后要绕开浏览器缓存：同一镜的图是同名覆盖的。
+   * 用计数器而不是把 path 拼进 URL——那会把整个绝对路径塞进 query string 和访问日志。
+   */
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    setVersion((current) => current + 1);
+  }, [material?.path]);
+
   return (
     <div className="mt-3 rounded-xl border border-line bg-soft px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -46,7 +55,7 @@ export default function ShotMaterialSlot({
           ) : material ? (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img
-              src={`/api/video-factory/shot-material?projectId=${encodeURIComponent(projectId)}&shotOrder=${shotOrder}&t=${encodeURIComponent(material.path)}`}
+              src={`/api/video-factory/shot-material?projectId=${encodeURIComponent(projectId)}&shotOrder=${shotOrder}&v=${version}`}
               alt={material.label}
               className="h-full w-full object-cover"
             />
