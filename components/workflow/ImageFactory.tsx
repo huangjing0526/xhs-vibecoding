@@ -22,6 +22,7 @@ import Callout from "@/components/ui/Callout";
 import Card from "@/components/ui/Card";
 import DirectoryField from "@/components/workflow/DirectoryField";
 import ImageEngineCard from "@/components/workflow/ImageEngineCard";
+import AssetPickerDialog from "@/components/workflow/AssetPickerDialog";
 import TemplateSpecCard from "@/components/workflow/TemplateSpecCard";
 import TemplateEditor, { PreviewLightbox } from "@/components/workflow/ImageTemplateEditor";
 import { useAbortableTasks } from "@/components/workflow/useAbortableTasks";
@@ -46,6 +47,7 @@ import {
   BUILT_IN_IMAGE_TEMPLATES,
   deleteCustomImageTemplate,
   imageTemplateCategories,
+  LIBRARY_COPY as ASSET_LIBRARY_COPY,
   LIBRARY_COPY,
   loadCustomImageTemplates,
   saveCustomImageTemplate,
@@ -54,6 +56,7 @@ import {
   type ImageFactoryTemplate,
   type ImageGenerationResult,
   type ImageTemplateSlot,
+  type LibraryAssetEntry,
   type ImageTemplateView,
   type LibraryKind,
 } from "@/lib/imageFactory";
@@ -121,6 +124,8 @@ export default function ImageFactory({
   /** 额外加入本次批次的产出，配好一种就攒一种，最后一起跑 */
   const [batchIds, setBatchIds] = useState<string[]>([]);
   const [selectedInputs, setSelectedInputs] = useState<Record<string, SelectedInput>>({});
+  /** 正在给哪个槽位从资产库挑图；null 表示弹层关着 */
+  const [pickingSlot, setPickingSlot] = useState<ImageTemplateSlot | null>(null);
   /** 产出 -> 勾选的视图；没记录过的视为全选，省掉一次初始化 */
   const [viewPicks, setViewPicks] = useState<Record<string, string[]>>({});
   /** 补充要求按产出各记一份，攒批次时不会互相串味 */
@@ -369,6 +374,60 @@ export default function ImageFactory({
       return { ...current, [slotId]: { slotId, file, previewUrl: URL.createObjectURL(file) } };
     });
     setResults([]);
+  };
+
+  // 粘贴截图直接进槽位：按槽位顺序填第一个空的；全满就不动——替换该由人先点移除。
+  // 只认剪贴板里的图片，粘文字进输入框不受影响。
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      const file = [...(event.clipboardData?.items || [])]
+        .find((item) => item.kind === "file" && item.type.startsWith("image/"))
+        ?.getAsFile();
+      if (!file) return;
+      const slot = activeSlots.find((item) => !selectedInputs[item.id]);
+      if (!slot) return;
+      event.preventDefault();
+      selectInput(slot.id, file);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  });
+
+  /**
+   * 从资产库取一张填进槽位。
+   * 资产图挂在同源路由上，取回来包成 File 就能复用「上传」那条通路——
+   * 槽位、校验、FormData 全不用动，服务端也不用知道这张图是传的还是取的。
+   */
+  const pickFromLibrary = async (entry: LibraryAssetEntry, kind: LibraryKind) => {
+    const slot = pickingSlot;
+    if (!slot) return;
+    setPickingSlot(null);
+    try {
+      const response = await fetch(entry.imageUrl);
+      if (!response.ok) throw new Error(`资产图取回失败（${response.status}）`);
+      const blob = await response.blob();
+      const file = new File([blob], `${entry.name}${entry.extension}`, { type: blob.type });
+      selectInput(slot.id, file);
+      // 特征描述是这条资产锁得住身份的原因，取用时一并带进补充要求，别让它留在库里当摆设
+      if (entry.traits?.trim()) {
+        setPromptByTemplate((current) => {
+          const existing = current[activeTemplateId] || "";
+          return existing.includes(entry.traits!.trim())
+            ? current
+            : { ...current, [activeTemplateId]: [existing, entry.traits!.trim()].filter(Boolean).join("\n") };
+        });
+      }
+    } catch (error) {
+      console.error("[ImageFactory] 资产取用失败", {
+        action: "imageFactory.pickFromLibrary",
+        kind,
+        assetId: entry.id,
+        error,
+      });
+      setErrorMessage(
+        error instanceof Error ? error.message : `从${ASSET_LIBRARY_COPY[kind].label}取图失败`,
+      );
+    }
   };
 
   /** 整组或单张都走这一条：一次请求存完，服务端只读写一次索引。 */
@@ -639,24 +698,37 @@ export default function ImageFactory({
                         </button>
                       </div>
                     ) : (
-                      <label className="flex aspect-[4/3] cursor-pointer flex-col items-center justify-center p-5 text-center hover:bg-brand-50/50">
-                        <ImagePlus size={26} className="text-brand-400" />
-                        <span className="mt-2.5 text-sm font-bold text-ink">
-                          {slot.label}
-                          {slot.required && <span className="text-danger"> *</span>}
-                        </span>
-                        <span className="mt-1 text-[11px] leading-4 text-faint">{slot.description || "点击选择图片"}</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="sr-only"
-                          onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (file) selectInput(slot.id, file);
-                            event.target.value = "";
-                          }}
-                        />
-                      </label>
+                      <>
+                        <label className="flex aspect-[4/3] cursor-pointer flex-col items-center justify-center p-5 pb-10 text-center hover:bg-brand-50/50">
+                          <ImagePlus size={26} className="text-brand-400" />
+                          <span className="mt-2.5 text-sm font-bold text-ink">
+                            {slot.label}
+                            {slot.required && <span className="text-danger"> *</span>}
+                          </span>
+                          <span className="mt-1 text-[11px] leading-4 text-faint">{slot.description || "点击选择图片"}</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="sr-only"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) selectInput(slot.id, file);
+                              event.target.value = "";
+                            }}
+                          />
+                        </label>
+                        {/*
+                          压在框底而不是放进 label 里：label 里的按钮点了会同时触发选文件。
+                          与「上传」平级、不抢默认——主体该由人决定从哪来，进来先挑一位模特是反的。
+                        */}
+                        <button
+                          type="button"
+                          onClick={() => setPickingSlot(slot)}
+                          className="absolute inset-x-0 bottom-0 border-t border-line bg-surface/90 py-2 text-[11px] font-bold text-brand-600 transition-colors hover:bg-brand-50"
+                        >
+                          从资产里选
+                        </button>
+                      </>
                     )}
                   </div>
                 );
@@ -1097,6 +1169,14 @@ export default function ImageFactory({
       </div>
 
       {previewTemplate && <PreviewLightbox template={previewTemplate} onClose={() => setPreviewTemplate(null)} />}
+
+      {pickingSlot && (
+        <AssetPickerDialog
+          slotLabel={pickingSlot.label}
+          onPick={pickFromLibrary}
+          onClose={() => setPickingSlot(null)}
+        />
+      )}
 
       {editingTemplate && (
         <TemplateEditor
