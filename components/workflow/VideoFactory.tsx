@@ -143,9 +143,16 @@ const FieldLabel = ({ children }: { children: React.ReactNode }) => (
 );
 
 /**
- * 运镜选择条。
- * 模型偏爱「静止」，光靠 prompt 压不住，给人一排能直接点的运镜——
- * 点完连运动提示词的开头一起改掉，不用手打。
+ * 运镜。
+ *
+ * 运镜是拍摄手艺，不该当成一道必答题摆在用户面前——AI 本来就已经替这一镜选好了
+ * （模型偏爱「静止」，光靠 prompt 压不住，所以 CAMERA_MOVES 既是词表也是可点的选项）。
+ * 从前八个按钮一字排开、选中的只是变黑，看着像「你必须挑一个」，而唯一的解释
+ * 藏在 title 里——鼠标悬停才出来，手机上永远看不到。
+ *
+ * 所以默认只显示选好的那一个，连它「什么时候用」一起说出来；想换才展开。
+ * 展开后每行都带上那句话，把「选一种运镜技术」变成「挑一句像我这情况的话」——
+ * 这句话 CAMERA_MOVES 里一直有，只是没给人看过。
  */
 function CameraMovePicker({
   value,
@@ -154,22 +161,64 @@ function CameraMovePicker({
   value: string;
   onPick: (move: CameraMove) => void;
 }) {
-  return (
-    <div className="flex flex-wrap gap-1">
-      {CAMERA_MOVES.map((move) => (
-        <button
-          key={move.id}
-          type="button"
-          title={move.use}
-          onClick={() => onPick(move)}
-          aria-pressed={value === move.label}
-          className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold transition-colors ${
-            value === move.label ? "bg-ink text-white" : "bg-soft text-muted hover:bg-sunken hover:text-ink"
+  const [open, setOpen] = useState(false);
+  const current = CAMERA_MOVES.find((move) => move.label === value);
+
+  if (!open) {
+    return (
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {/* 认得出的运镜才做成实心胶囊：模型没填时旁边已经有一条「未定运镜」的告警，
+            这里再摆一个笃定的黑底标签，会看着像已经选好了 */}
+        <span
+          className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+            current ? "bg-ink text-white" : "bg-soft text-faint"
           }`}
         >
-          {move.label}
+          {current?.label || value || "未定"}
+        </span>
+        {current && <span className="min-w-0 text-[11px] text-faint">{current.use}</span>}
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="shrink-0 rounded-lg px-1.5 py-0.5 text-[11px] font-bold text-brand-600 hover:bg-brand-50"
+        >
+          换一个
         </button>
-      ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full rounded-2xl border border-line bg-surface p-1.5">
+      {CAMERA_MOVES.map((move) => {
+        const active = value === move.label;
+        return (
+          <button
+            key={move.id}
+            type="button"
+            onClick={() => {
+              onPick(move);
+              setOpen(false);
+            }}
+            aria-pressed={active}
+            className={`flex w-full items-baseline gap-2 rounded-xl px-2.5 py-1.5 text-left transition-colors ${
+              active ? "bg-brand-50" : "hover:bg-soft"
+            }`}
+          >
+            <span className={`shrink-0 text-[11px] font-bold ${active ? "text-brand-700" : "text-ink"}`}>
+              {move.label}
+            </span>
+            <span className="min-w-0 text-[11px] leading-4 text-faint">{move.use}</span>
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        className="mt-0.5 w-full rounded-xl px-2.5 py-1 text-[11px] font-bold text-faint hover:bg-soft"
+      >
+        收起
+      </button>
     </div>
   );
 }
