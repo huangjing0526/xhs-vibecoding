@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/Field";
 import ModalOverlay from "@/components/ui/ModalOverlay";
 import { listLibraryAssets } from "@/lib/workflowClient";
 import { CAST_SLOTS, type CastSlot, type ProjectCast } from "@/lib/videoFactory";
-import { LIBRARY_COPY, groupAssetProfiles, type LibraryAssetEntry } from "@/lib/imageFactory";
+import { LIBRARY_COPY, groupAssetProfiles, type LibraryAssetEntry, type LibraryKind } from "@/lib/imageFactory";
 
 /** 超过这个数才显出搜索框：只存了三五个主体时，一个空搜索框只是噪音。 */
 const SEARCH_THRESHOLD = 6;
@@ -40,15 +40,19 @@ interface CastBoardProps {
  * 平铺出来就是同一个人占满整屏，人得先在一堆重复里找出这是谁。
  * groupAssetProfiles 归档后一个主体只占一格，封面也由它按视角优先级挑（脸 > 全身）。
  */
-function LibraryPicker({
-  slot,
+export function LibraryPicker({
+  library,
+  title,
   onPick,
   onClose,
 }: {
-  slot: (typeof CAST_SLOTS)[number];
+  library: LibraryKind;
+  /** 弹窗标题里的那个词，如「角色」「第 3 镜的素材」 */
+  title: string;
   onPick: (asset: LibraryAssetEntry) => void;
   onClose: () => void;
 }) {
+  const slot = { library, label: title };
   const [assets, setAssets] = useState<LibraryAssetEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
@@ -247,7 +251,8 @@ export default function CastBoard({ projectId, cast, busySlot, onPickAsset, onUp
 
       {picking && (
         <LibraryPicker
-          slot={picking}
+          library={picking.library}
+          title={picking.label}
           onClose={() => setPicking(null)}
           onPick={(asset) => {
             onPickAsset(picking.id, asset);

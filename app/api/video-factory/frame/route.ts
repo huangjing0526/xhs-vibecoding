@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import { MIME_BY_EXTENSION, mimeByExtension } from "@/app/api/image-factory/_shared";
 import { framePath, isSafeSegment, projectDir, runCommand } from "@/app/api/video-factory/_shared";
-import { CAST_SLOTS, type ProjectCast } from "@/lib/videoFactory";
+import { CAST_SLOTS, type CastRef, type ProjectCast } from "@/lib/videoFactory";
 
 // 调本机生图 CLI，必须 nodejs runtime。
 export const runtime = "nodejs";
@@ -96,16 +96,39 @@ export async function POST(request: NextRequest) {
     const dir = projectDir(projectId);
     await mkdir(dir, { recursive: true });
 
-    // 角色/产品的绑定图由前端连同请求一起带过来，路径必须落在本项目目录里
+    // 参考图的路径都必须落在本项目目录里：这个接口会把路径原样交给 CLI，
+    // 不挡住就等于给了任意文件读取。
+    const inProject = async (candidate: string): Promise<string | null> => {
+      const resolved = path.resolve(candidate);
+      if (!resolved.startsWith(`${dir}${path.sep}`)) return null;
+      return (await access(resolved).then(() => true, () => false)) ? resolved : null;
+    };
+
     const references: ReferenceImage[] = [];
+
+    // 这一镜单独绑的素材优先：换装、多产品这类片子每镜要看的东西本来就不同。
+    // 绑了就以它为准，项目级槽位退到后面当一致性兜底。
+    const rawMaterial = String(formData.get("material") || "").trim();
+    if (rawMaterial) {
+      const material = JSON.parse(rawMaterial) as CastRef;
+      const resolved = material?.path ? await inProject(material.path) : null;
+      if (resolved) {
+        references.push({
+          label: `本镜素材（${material.label}）`,
+          path: resolved,
+          usage: "这一镜要展示的就是它，款式、颜色、材质、细节都要照它来；场景和光线以上面的画面描述为准",
+        });
+      }
+    }
+
+    // 角色/产品/场景的绑定图由前端连同请求一起带过来
     if (rawCast) {
       const cast = JSON.parse(rawCast) as ProjectCast;
       for (const slot of CAST_SLOTS) {
         const ref = cast[slot.id];
         if (!ref?.path) continue;
-        const resolved = path.resolve(ref.path);
-        if (!resolved.startsWith(`${dir}${path.sep}`)) continue;
-        if (await access(resolved).then(() => true, () => false)) {
+        const resolved = await inProject(ref.path);
+        if (resolved) {
           references.push({ label: `${slot.label}（${ref.label}）`, path: resolved, usage: slot.usage });
         }
       }

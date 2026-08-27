@@ -100,6 +100,11 @@ export function castPath(projectId: string, slot: string, extension: string): st
   return path.join(projectDir(projectId), `cast-${slot}${extension}`);
 }
 
+/** 某一镜单独指定的素材落点。和项目级 cast 并存，互不覆盖。 */
+export function shotMaterialPath(projectId: string, shotOrder: number, extension: string): string {
+  return path.join(projectDir(projectId), `shot-${String(shotOrder).padStart(2, "0")}-material${extension}`);
+}
+
 /** 某一镜配音的落点。重配覆盖同名文件，不留旧的。 */
 export function voiceoverPath(projectId: string, shotOrder: number): string {
   return path.join(projectDir(projectId), `vo-${String(shotOrder).padStart(2, "0")}.mp3`);

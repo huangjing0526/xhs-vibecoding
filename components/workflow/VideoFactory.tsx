@@ -24,6 +24,8 @@ import ModalOverlay from "@/components/ui/ModalOverlay";
 import PipelineRail from "@/components/ui/PipelineRail";
 import CastBoard from "@/components/workflow/CastBoard";
 import RhythmBoard from "@/components/workflow/RhythmBoard";
+import ShotMaterialSlot from "@/components/workflow/ShotMaterialSlot";
+import type { LibraryKind } from "@/lib/imageFactory";
 import SegmentedControl from "@/components/workflow/SegmentedControl";
 import ProviderButton from "@/components/ui/ProviderButton";
 import { cachedProbe, pickUsableProvider } from "@/lib/enginePreference";
@@ -31,7 +33,9 @@ import {
   analyzeStoryboard,
   attachShotClip,
   bindProjectCast,
+  bindShotMaterial,
   clearProjectCast,
+  clearShotMaterial,
   composeFinalCut,
   deleteBenchmarkRhythm,
   deleteVideoProject,
@@ -460,6 +464,8 @@ export default function VideoFactory({
   const [pendingFrames, setPendingFrames] = useState<Record<number, { path?: string; file?: File; label: string }>>({});
   const [generatingShot, setGeneratingShot] = useState<number | null>(null);
   const [castBusySlot, setCastBusySlot] = useState<CastSlot | null>(null);
+  /** 正在绑素材的镜号。每镜一个槽，同时只会有一个在转 */
+  const [materialBusyShot, setMaterialBusyShot] = useState<number | null>(null);
   /** 合成参数。字幕和配音默认都开——不带这两样的成片基本不能直接发 */
   const [withSubtitles, setWithSubtitles] = useState(true);
   const [withVoiceover, setWithVoiceover] = useState(true);
@@ -729,6 +735,61 @@ export default function VideoFactory({
     }
   };
 
+  /**
+   * 给某一镜单独绑素材。绑了这一镜就以它为准，没绑的镜头继续吃项目级参考图。
+   * 和角色/产品是覆盖关系不是取代关系——项目级槽位仍然是跨镜不换脸的抓手。
+   */
+  const handleBindShotMaterial = async (
+    shotOrder: number,
+    source: { assetId?: string; library?: LibraryKind; label: string; file?: File },
+  ) => {
+    setMaterialBusyShot(shotOrder);
+    try {
+      const saved = project.id ? project : await persist(project);
+      const formData = new FormData();
+      formData.append("projectId", saved.id);
+      formData.append("shotOrder", String(shotOrder));
+      formData.append("label", source.label);
+      if (source.file) formData.append("file", source.file);
+      else if (source.assetId) {
+        formData.append("assetId", source.assetId);
+        formData.append("library", source.library || "products");
+      }
+
+      const data = await bindShotMaterial(formData);
+      setProject((current) => ({ ...current, id: saved.id }));
+      patchShot(shotOrder, { material: data.material });
+      onNotice({ type: "success", message: `第 ${shotOrder} 镜已绑定素材` });
+    } catch (error) {
+      console.error("[VideoFactory] 绑定分镜素材失败", {
+        action: "videoFactory.shotMaterial.bind",
+        shotOrder,
+        error,
+      });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "绑定分镜素材失败" });
+    } finally {
+      setMaterialBusyShot(null);
+    }
+  };
+
+  const handleClearShotMaterial = async (shotOrder: number) => {
+    if (!project.id) return;
+    setMaterialBusyShot(shotOrder);
+    try {
+      await clearShotMaterial(project.id, shotOrder);
+      patchShot(shotOrder, { material: undefined });
+    } catch (error) {
+      console.error("[VideoFactory] 取消分镜素材失败", {
+        action: "videoFactory.shotMaterial.clear",
+        shotOrder,
+        error,
+      });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "取消绑定失败" });
+    } finally {
+      setMaterialBusyShot(null);
+    }
+  };
+
   const handleClearCast = async (slot: CastSlot) => {
     if (!project.id) return;
     setCastBusySlot(slot);
@@ -759,6 +820,8 @@ export default function VideoFactory({
       formData.append("continuityNote", storyboard?.continuityNote || "");
       formData.append("provider", frameProvider);
       formData.append("cast", JSON.stringify(project.cast));
+      // 这一镜单独绑了素材就带上，服务端会把它排在项目级参考图前面
+      if (shot.material) formData.append("material", JSON.stringify(shot.material));
 
       await generateShotFrame(formData);
       setProject((current) => ({ ...current, id: saved.id }));
@@ -1535,6 +1598,20 @@ export default function VideoFactory({
                     />
                   </div>
                 </div>
+
+                <ShotMaterialSlot
+                  projectId={project.id}
+                  shotOrder={shot.order}
+                  material={shot.material}
+                  busy={materialBusyShot === shot.order}
+                  onPickAsset={(library, asset) =>
+                    handleBindShotMaterial(shot.order, { assetId: asset.id, library, label: asset.name })
+                  }
+                  onUpload={(file) =>
+                    handleBindShotMaterial(shot.order, { label: file.name.replace(/\.[^.]+$/, ""), file })
+                  }
+                  onClear={() => handleClearShotMaterial(shot.order)}
+                />
               </Card>
             ))}
 

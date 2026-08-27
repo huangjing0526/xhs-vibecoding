@@ -693,6 +693,24 @@ export async function clearProjectCast(projectId: string, slot: CastSlot): Promi
   );
 }
 
+/**
+ * 视频工厂：给某一镜单独绑一张素材。
+ * 同样走 multipart 以支持现场上传。
+ */
+export async function bindShotMaterial(formData: FormData): Promise<{ shotOrder: number; material: CastRef }> {
+  const response = await fetch("/api/video-factory/shot-material", { method: "POST", body: formData });
+  return parseApiResponse<{ shotOrder: number; material: CastRef }>(response, "绑定分镜素材失败");
+}
+
+/** 视频工厂：解绑某一镜的素材，这一镜改回用项目级参考图。 */
+export async function clearShotMaterial(projectId: string, shotOrder: number): Promise<{ shotOrder: number }> {
+  return workflowRequest<{ shotOrder: number }>(
+    `/api/video-factory/shot-material?projectId=${encodeURIComponent(projectId)}&shotOrder=${shotOrder}`,
+    { method: "DELETE" },
+    "取消绑定失败"
+  );
+}
+
 /** 视频工厂：按分镜提示词生成一镜的首帧图，自动带上绑定的角色与产品。 */
 export async function generateShotFrame(
   formData: FormData,
