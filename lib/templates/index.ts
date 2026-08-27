@@ -69,7 +69,7 @@ export const RHYTHM_CATEGORY = "视频结构";
  */
 const MAX_BARS = 32;
 
-/** 复刻一条视频结构要补的东西：选题，加上角色/产品两个参考位。由 CAST_SLOTS 派生，不手写。 */
+/** 复刻一条视频结构要补的东西：选题，加上角色/产品/场景那几个参考位。由 CAST_SLOTS 派生，不手写。 */
 const RHYTHM_SLOTS = ["选题", ...CAST_SLOTS.map((slot) => slot.label)];
 
 export function toImageTemplateCard(template: ImageFactoryTemplate): ImageTemplateCard {

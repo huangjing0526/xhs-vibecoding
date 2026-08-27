@@ -59,6 +59,13 @@ export function runCommand(
   });
 }
 
+/**
+ * 本机拆片/渲染服务。拆片、配音都挂在它下面，
+ * 几个路由各写一份 fallback 链必然漂移，收在这里。
+ */
+export const RENDERER_URL =
+  process.env.VIDEO_EXTRACTOR_URL || process.env.VIDEO_RENDERER_URL || "http://localhost:8787";
+
 /** 拆过的对标节奏：是跨项目复用的模板，所以不挂在某个项目下面。 */
 export const BENCHMARK_ROOT = path.join(FACTORY_ROOT, "benchmarks");
 
@@ -84,6 +91,16 @@ export function castPath(projectId: string, slot: string, extension: string): st
   return path.join(projectDir(projectId), `cast-${slot}${extension}`);
 }
 
+/** 某一镜配音的落点。重配覆盖同名文件，不留旧的。 */
+export function voiceoverPath(projectId: string, shotOrder: number): string {
+  return path.join(projectDir(projectId), `vo-${String(shotOrder).padStart(2, "0")}.mp3`);
+}
+
+/** 合成出来的成片。重跑覆盖，永远只有一份「最新的成片」。 */
+export function finalCutPath(projectId: string): string {
+  return path.join(projectDir(projectId), "final.mp4");
+}
+
 /** 某一镜的首帧图落点，扩展名跟上传的走。 */
 export function framePath(projectId: string, shotOrder: number, extension: string): string {
   return path.join(projectDir(projectId), `frame-${String(shotOrder).padStart(2, "0")}${extension}`);
@@ -96,8 +113,14 @@ export async function readProject(projectId: string): Promise<VideoProject | nul
     // 加 genProvider 之前存的项目没有这个字段，读出来就地补上：
     // 界面拿它去查引擎能力表（时长档位、分辨率），拿到 undefined 会直接崩在渲染里
     const project = { genProvider: "grok-cli", ...parsed } as VideoProject;
-    // 同理，加场景槽位之前存的项目 cast 里只有角色和产品，缺的槽位补成未绑定
-    return { ...project, cast: { ...EMPTY_CAST, ...project.cast } };
+    // 同理，加场景槽位之前存的项目 cast 里只有角色和产品，缺的槽位补成未绑定；
+    // 加合成步骤之前存的项目没有 voiceovers / finalCut，界面会直接读它们的长度
+    return {
+      ...project,
+      cast: { ...EMPTY_CAST, ...project.cast },
+      voiceovers: project.voiceovers ?? [],
+      finalCut: project.finalCut ?? null,
+    };
   } catch (error) {
     // 首次保存前文件不存在是正常的，其余情况要留痕再按空项目继续
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {

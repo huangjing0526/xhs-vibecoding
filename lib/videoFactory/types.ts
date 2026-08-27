@@ -284,6 +284,10 @@ export interface VideoProject {
   script: ScriptDraft | null;
   storyboard: Storyboard | null;
   clips: ShotClip[];
+  /** 各镜配音，和 clips 一样归服务端所有，前端存盘不上送 */
+  voiceovers: ShotVoiceover[];
+  /** 最近一次合成的成片；没合成过是 null */
+  finalCut: FinalCut | null;
 }
 
 /** 一条项目做到哪一步了。项目页与工厂里「最近的项目」共用同一套说法，不各写一遍三元。 */
@@ -313,6 +317,51 @@ export interface VideoGenProviderStatus {
   defaultModel?: string;
 }
 
+/**
+ * 一镜的配音。
+ * text 是合成时用的那句原文——与分镜里的 voiceover 对不上就说明口播改过了，
+ * 该重配而不是拿旧音频硬拼。没有它就只能每次全量重配，慢且白花钱。
+ */
+export interface ShotVoiceover {
+  shotOrder: number;
+  text: string;
+  /** 落在项目目录里的绝对路径 */
+  path: string;
+  durationSec: number;
+  voice: string;
+  rate: string;
+  createdAt: string;
+}
+
+/** 配音音色与语速的默认值。干货口播语速偏快，默认就调上去，免得每条都要手改。 */
+export const DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural";
+export const DEFAULT_VOICE_RATE = "+30%";
+
+/** 可选音色。数量刻意少——微软中文女声实际只有这两个能用于口播。 */
+export const VOICE_OPTIONS: Array<{ id: string; label: string }> = [
+  { id: "zh-CN-XiaoxiaoNeural", label: "晓晓（温暖·通用）" },
+  { id: "zh-CN-XiaoyiNeural", label: "晓伊（活泼·偏年轻）" },
+  { id: "zh-CN-YunxiNeural", label: "云希（男声·阳光）" },
+  { id: "zh-CN-YunyangNeural", label: "云扬（男声·专业）" },
+];
+
+/** 口播说完之后多留一点点画面，镜头不要在字音落下的同一帧就切走。 */
+export const VOICEOVER_TAIL_SEC = 0.35;
+
+/**
+ * 合成产出。
+ * 重跑覆盖同一个文件，所以只留一份；extendedShots 是给人看的账：
+ * 哪几镜为了放下口播而突破了对标节奏，超了多少。
+ */
+export interface FinalCut {
+  path: string;
+  durationSec: number;
+  withSubtitles: boolean;
+  withVoiceover: boolean;
+  createdAt: string;
+  extendedShots: Array<{ shotOrder: number; plannedSec: number; actualSec: number }>;
+}
+
 /** 一次图生视频的产出。 */
 export interface ShotGenerationResult {
   projectId: string;
@@ -325,6 +374,7 @@ export const VIDEO_FACTORY_STEPS = [
   { id: "script", label: "脚本改写", hint: "借结构，换素材" },
   { id: "storyboard", label: "分镜表", hint: "切镜 + 两套提示词" },
   { id: "generate", label: "视频生成", hint: "首帧图 → 图生视频" },
+  { id: "compose", label: "字幕与成片", hint: "配音 + 字幕 + 拼接" },
 ] as const;
 
 export type VideoFactoryStepId = (typeof VIDEO_FACTORY_STEPS)[number]["id"];

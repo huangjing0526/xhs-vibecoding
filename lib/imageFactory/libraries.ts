@@ -43,7 +43,7 @@ export const LIBRARY_COPY: Record<LibraryKind, LibraryCopy> = {
     subject: "场景",
     traitsPlaceholder: "环境描述，例如：暖色木质门店，浅色墙面，射灯从上方打下，背景有虚化的衣架",
     traitsHint: "描述会连同图一起喂给后续生成——光线、材质、纵深写清楚，换主体时场景才不会走样。",
-    emptyHint: "上传自己拍的门店、街景、桌面参考图，或者在图片工厂跑一张场景图后存入。",
+    emptyHint: "上传自己拍的门店、街景、桌面参考图，或者在图片工厂跑一张「空场景图」存入。",
   },
 };
 

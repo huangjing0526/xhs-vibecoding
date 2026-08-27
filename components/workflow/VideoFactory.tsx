@@ -32,6 +32,7 @@ import {
   attachShotClip,
   bindProjectCast,
   clearProjectCast,
+  composeFinalCut,
   deleteBenchmarkRhythm,
   deleteVideoProject,
   detectBenchmarkRhythm,
@@ -48,6 +49,9 @@ import {
 import {
   CAMERA_MOVES,
   CAST_SLOTS,
+  DEFAULT_VOICE,
+  DEFAULT_VOICE_RATE,
+  VOICE_OPTIONS,
   clipUrl,
   describeProjectProgress,
   DEFAULT_TARGET_DURATION_SEC,
@@ -119,6 +123,8 @@ const EMPTY_PROJECT: VideoProject = {
   script: null,
   storyboard: null,
   clips: [],
+  voiceovers: [],
+  finalCut: null,
 };
 
 const DURATION_OPTIONS = [
@@ -405,6 +411,14 @@ export default function VideoFactory({
   const [pendingFrames, setPendingFrames] = useState<Record<number, { path?: string; file?: File; label: string }>>({});
   const [generatingShot, setGeneratingShot] = useState<number | null>(null);
   const [castBusySlot, setCastBusySlot] = useState<CastSlot | null>(null);
+  /** 合成参数。字幕和配音默认都开——不带这两样的成片基本不能直接发 */
+  const [withSubtitles, setWithSubtitles] = useState(true);
+  const [withVoiceover, setWithVoiceover] = useState(true);
+  const [voice, setVoice] = useState(DEFAULT_VOICE);
+  const [voiceRate, setVoiceRate] = useState(DEFAULT_VOICE_RATE);
+  const [isComposing, setIsComposing] = useState(false);
+  /** 重新合成会覆盖同一个 final.mp4，预览要绕开缓存 */
+  const [finalVersion, setFinalVersion] = useState(0);
   /** 生成首帧用的生图 CLI，和出片引擎是两码事，各选各的 */
   const [frameProvider, setFrameProvider] = useState<"codex" | "grok">("codex");
   const [framingShot, setFramingShot] = useState<number | null>(null);
@@ -721,6 +735,35 @@ export default function VideoFactory({
   };
 
   /** 批量出首帧：一张一分多钟，跑到哪算哪，中途失败就停下，别让人干等一串错。 */
+  const handleCompose = async () => {
+    if (!project.id) return;
+    setIsComposing(true);
+    try {
+      const data = await composeFinalCut({
+        projectId: project.id,
+        withSubtitles,
+        withVoiceover,
+        voice,
+        rate: voiceRate,
+      });
+      // voiceovers / finalCut 归服务端所有，直接用返回那份覆盖，别自己拼
+      setProject((current) => ({ ...current, voiceovers: data.project.voiceovers, finalCut: data.project.finalCut }));
+      setFinalVersion((current) => current + 1);
+      const extended = data.finalCut.extendedShots;
+      onNotice({
+        type: "success",
+        message: extended.length
+          ? `已合成 ${data.finalCut.durationSec.toFixed(1)} 秒；第 ${extended.map((item) => item.shotOrder).join("、")} 镜为放下口播延长了画面`
+          : `已合成 ${data.finalCut.durationSec.toFixed(1)} 秒成片`,
+      });
+    } catch (error) {
+      console.error("[VideoFactory] 合成失败", { action: "videoFactory.compose", projectId: project.id, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "合成失败" });
+    } finally {
+      setIsComposing(false);
+    }
+  };
+
   const handleGenerateAllFrames = async () => {
     if (!storyboard) return;
     const pending = storyboard.shots.filter((shot) => shot.framePrompt.trim());
@@ -1641,6 +1684,136 @@ export default function VideoFactory({
             icon={<Film size={22} />}
             title="还没有分镜表"
             description="生成是按镜头来的，先把分镜拆出来。"
+            action={<Button variant="primary" onClick={() => setStep("script")}>回去拆分镜</Button>}
+          />
+        )
+      )}
+
+      {step === "compose" && (
+        storyboard ? (
+          <>
+            <Card>
+              <CardHeader
+                title="字幕与成片"
+                description="按口播长度剪每一镜、压上字幕条、拼成一条可以直接发的片子"
+                action={
+                  <Button
+                    variant="ai"
+                    onClick={handleCompose}
+                    loading={isComposing}
+                    disabled={isComposing || project.clips.length === 0}
+                    icon={<Film size={14} />}
+                  >
+                    {project.finalCut ? "重新合成" : "合成成片"}
+                  </Button>
+                }
+              />
+
+              {project.clips.length < storyboard.shots.length && (
+                <Callout tone="warn" className="mb-3">
+                  还差 {storyboard.shots.length - project.clips.length} 镜没生成，合成前先把它们出完。
+                </Callout>
+              )}
+
+              <div className="flex flex-wrap items-end gap-3">
+                <Field label="字幕条">
+                  <SegmentedControl
+                    ariaLabel="字幕条"
+                    compact
+                    value={withSubtitles ? "on" : "off"}
+                    options={[{ value: "on", label: "压上" }, { value: "off", label: "不要" }]}
+                    onChange={(value) => setWithSubtitles(value === "on")}
+                  />
+                </Field>
+                <Field label="配音">
+                  <SegmentedControl
+                    ariaLabel="配音"
+                    compact
+                    value={withVoiceover ? "on" : "off"}
+                    options={[{ value: "on", label: "合成" }, { value: "off", label: "不要" }]}
+                    onChange={(value) => setWithVoiceover(value === "on")}
+                  />
+                </Field>
+                {withVoiceover && (
+                  <>
+                    <Field label="音色">
+                      <select
+                        aria-label="配音音色"
+                        value={voice}
+                        onChange={(event) => setVoice(event.target.value)}
+                        className="h-8 rounded-xl border border-line bg-surface px-3 text-xs font-bold text-ink outline-none transition focus:border-brand-300"
+                      >
+                        {VOICE_OPTIONS.map((item) => (
+                          <option key={item.id} value={item.id}>{item.label}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="语速">
+                      <SegmentedControl
+                        ariaLabel="语速"
+                        compact
+                        value={voiceRate}
+                        options={[
+                          { value: "+0%", label: "正常" },
+                          { value: "+15%", label: "偏快" },
+                          { value: "+30%", label: "快" },
+                        ]}
+                        onChange={setVoiceRate}
+                      />
+                    </Field>
+                  </>
+                )}
+              </div>
+
+              {withVoiceover && (
+                <p className="mt-3 text-[11px] leading-4 text-faint">
+                  每一镜的画面长度由它的口播长度定：说不完的镜头会自动延长，超过生成时长的会告诉你哪几镜要重出。
+                </p>
+              )}
+            </Card>
+
+            {project.finalCut && (
+              <Card>
+                <CardHeader
+                  title={`成片 · ${project.finalCut.durationSec.toFixed(1)} 秒`}
+                  description={[
+                    project.finalCut.withSubtitles ? "带字幕" : "无字幕",
+                    project.finalCut.withVoiceover ? "带配音" : "无配音",
+                    `${storyboard.shots.length} 镜`,
+                  ].join(" · ")}
+                  action={
+                    <a
+                      href={`/api/video-factory/compose?projectId=${encodeURIComponent(project.id)}&v=${finalVersion}`}
+                      download={`${project.title || "成片"}.mp4`}
+                      className="rounded-2xl border border-line px-4 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-line-strong"
+                    >
+                      下载成片
+                    </a>
+                  }
+                />
+                {project.finalCut.extendedShots.length > 0 && (
+                  <Callout tone="info" className="mb-3">
+                    这几镜为放下口播突破了对标节奏：
+                    {project.finalCut.extendedShots
+                      .map((item) => `第 ${item.shotOrder} 镜 ${item.plannedSec}s → ${item.actualSec}s`)
+                      .join("；")}
+                  </Callout>
+                )}
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                <video
+                  key={finalVersion}
+                  src={`/api/video-factory/compose?projectId=${encodeURIComponent(project.id)}&v=${finalVersion}`}
+                  controls
+                  className="mx-auto max-h-[70vh] rounded-2xl bg-black"
+                />
+              </Card>
+            )}
+          </>
+        ) : (
+          <EmptyState
+            icon={<Film size={22} />}
+            title="还没有分镜表"
+            description="合成是按分镜来的，先把分镜拆出来。"
             action={<Button variant="primary" onClick={() => setStep("script")}>回去拆分镜</Button>}
           />
         )

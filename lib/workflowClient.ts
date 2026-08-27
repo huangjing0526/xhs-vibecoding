@@ -32,6 +32,7 @@ import type {
   BenchmarkSkeleton,
   CastRef,
   CastSlot,
+  FinalCut,
   ScriptDraft,
   ShotGenerationResult,
   Storyboard,
@@ -718,6 +719,25 @@ export async function deleteBenchmarkRhythm(rhythmId: string): Promise<{ id: str
     `/api/video-factory/benchmark?id=${encodeURIComponent(rhythmId)}`,
     { method: "DELETE" },
     "节奏模板删除失败"
+  );
+}
+
+/**
+ * 视频工厂：把各镜成片合成一条。
+ * 配音、字幕、拼接都在服务端做完，返回整份项目——voiceovers 和 finalCut
+ * 归服务端所有，前端拿返回的那份覆盖自己手里的，别再自己拼一遍。
+ */
+export async function composeFinalCut(options: {
+  projectId: string;
+  withSubtitles: boolean;
+  withVoiceover: boolean;
+  voice?: string;
+  rate?: string;
+}): Promise<{ project: VideoProject; finalCut: FinalCut }> {
+  return workflowRequest(
+    "/api/video-factory/compose",
+    { method: "POST", body: JSON.stringify(options) },
+    "合成失败"
   );
 }
 

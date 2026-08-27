@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
-import { BENCHMARK_ROOT, benchmarkDir, isSafeSegment, newProjectId, runCommand } from "@/app/api/video-factory/_shared";
+import { BENCHMARK_ROOT, RENDERER_URL, benchmarkDir, isSafeSegment, newProjectId, runCommand } from "@/app/api/video-factory/_shared";
 import { PROVIDER_CAPS, RHYTHM_THRESHOLDS, cutsToShots, type BenchmarkRhythm } from "@/lib/videoFactory";
 
 // 跑本机 ffmpeg / ffprobe，必须 nodejs runtime。
@@ -13,8 +13,7 @@ export const maxDuration = 300;
 const COMMAND_TIMEOUT_MS = 4 * 60 * 1000;
 /** 超过这个镜头数就不逐镜抽帧了：再多也看不过来，还白等 */
 const MAX_THUMBNAILS = 60;
-const EXTRACTOR_URL =
-  process.env.VIDEO_EXTRACTOR_URL || process.env.VIDEO_RENDERER_URL || "http://localhost:8787";
+const EXTRACTOR_URL = RENDERER_URL;
 
 const run = (command: string, args: string[]) =>
   runCommand(command, args, {

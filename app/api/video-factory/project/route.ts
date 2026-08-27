@@ -64,8 +64,11 @@ export async function POST(request: NextRequest) {
       genProvider: incoming.genProvider ?? existing?.genProvider ?? "grok-cli",
       script: incoming.script ?? existing?.script ?? null,
       storyboard: incoming.storyboard ?? existing?.storyboard ?? null,
-      // 注意这里不看 incoming.clips，理由见上面的注释
+      // 注意这里不看 incoming.clips，理由见上面的注释；voiceovers 和 finalCut 同理，
+      // 都由合成路由在服务端写，前端手里那份随时可能是旧的
       clips: body.resetClips ? [] : existing?.clips ?? [],
+      voiceovers: body.resetClips ? [] : existing?.voiceovers ?? [],
+      finalCut: body.resetClips ? null : existing?.finalCut ?? null,
     };
 
     return apiOk({ project: await writeProject(project) }, "已保存");

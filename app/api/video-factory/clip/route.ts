@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import { NextRequest, NextResponse } from "next/server";
+import { serveVideoFile } from "@/app/api/video-factory/_serveVideo";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import { clipPath, framePath, isSafeSegment, projectDir, readProject, writeProject } from "@/app/api/video-factory/_shared";
 import { isUploadProvider, snapShotDuration, type ShotClip, type VideoProject } from "@/lib/videoFactory";
@@ -47,26 +48,6 @@ function hasShot(project: VideoProject | null, shotOrder: number): boolean {
 }
 
 /**
- * 解析单段 Range 头。没有 Range 回 null（整条 200）；格式或范围站不住回 "invalid"（416）。
- * 只支持单段——<video> 只发单段，多段 multipart 没有消费者。
- */
-function parseRange(header: string | null, size: number): [number, number] | null | "invalid" {
-  if (!header) return null;
-  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
-  if (!match || (!match[1] && !match[2])) return "invalid";
-  if (!match[1]) {
-    // 后缀式 bytes=-N：最后 N 字节
-    const suffix = Number(match[2]);
-    if (suffix === 0) return "invalid";
-    return [Math.max(0, size - suffix), size - 1];
-  }
-  const start = Number(match[1]);
-  const end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
-  if (start >= size || start > end) return "invalid";
-  return [start, end];
-}
-
-/**
  * 取某一镜的成片。
  * 视频走独立端点而不是内联进项目 JSON：片子几十兆，塞进 JSON 会把整页拖垮。
  * 这里直接回视频字节，因此不套 { code, data, message } 信封。
@@ -86,34 +67,7 @@ export async function GET(request: NextRequest) {
     }
 
     const file = clipPath(projectId, shotOrder);
-    const info = await stat(file).catch(() => null);
-    if (!info?.isFile() || info.size === 0) return new NextResponse("这一镜还没有成片", { status: 404 });
-
-    const etag = `"${info.size.toString(16)}-${Math.trunc(info.mtimeMs).toString(16)}"`;
-    const baseHeaders = { ETag: etag, "Cache-Control": "no-cache", "Accept-Ranges": "bytes" };
-    if (request.headers.get("if-none-match") === etag) {
-      return new NextResponse(null, { status: 304, headers: baseHeaders });
-    }
-
-    const range = parseRange(request.headers.get("range"), info.size);
-    if (range === "invalid") {
-      return new NextResponse("请求的范围不合法", {
-        status: 416,
-        headers: { ...baseHeaders, "Content-Range": `bytes */${info.size}` },
-      });
-    }
-
-    const [start, end] = range ?? [0, info.size - 1];
-    const stream = Readable.toWeb(createReadStream(file, { start, end })) as unknown as ReadableStream;
-    return new NextResponse(stream, {
-      status: range ? 206 : 200,
-      headers: {
-        ...baseHeaders,
-        "Content-Type": "video/mp4",
-        "Content-Length": String(end - start + 1),
-        ...(range ? { "Content-Range": `bytes ${start}-${end}/${info.size}` } : {}),
-      },
-    });
+    return await serveVideoFile(request, file, "这一镜还没有成片");
   } catch (error) {
     console.error("[VideoFactory] 成片读取失败", {
       userId: "local",
