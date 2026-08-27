@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
       fallback,
       maxTokens: 4000,
     });
-    const storyboard = normalizeStoryboard(ai.result, fallback, genProvider);
+    const storyboard = normalizeStoryboard(ai.result, fallback, genProvider, rhythm);
 
     return apiOk(
       { storyboard, usedFallback: ai.usedFallback, provider: ai.provider },

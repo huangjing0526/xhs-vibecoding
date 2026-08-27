@@ -5,7 +5,13 @@
  * 不是想切几个就几个。一条 45 秒的片子 ≈ 5~7 镜。
  */
 
-import { rhythmShotCount, rhythmToPlanLines, type BenchmarkRhythm } from "./benchmark";
+import {
+  rhythmShotCount,
+  rhythmToPlanLines,
+  shotMetricsToPrompt,
+  type BenchmarkRhythm,
+  type BenchmarkShotMetrics,
+} from "./benchmark";
 import {
   PROVIDER_CAPS,
   SHOT_DURATIONS,
@@ -34,6 +40,21 @@ export const CAMERA_MOVES = [
 ] as const;
 
 export type CameraMove = (typeof CAMERA_MOVES)[number];
+
+/**
+ * 把量出来的机位翻成运镜标签。
+ *
+ * 只在测得准的时候给：机位固定就是固定，机位移动配跟随。
+ * 「主体走近」不算运镜——那是人在动，机位没动，写成推近会让模型真的去推镜头，
+ * 味道就完全变了。这个区别缩略图上看不出来，只能靠量。
+ */
+export function metricsToCameraMove(metrics: BenchmarkShotMetrics | undefined): string {
+  if (!metrics) return "";
+  if (metrics.unavailable?.cameraMotion) return "";
+  if (metrics.cameraMotion === "fixed") return "固定";
+  if (metrics.cameraMotion === "moving") return "跟随";
+  return "";
+}
 
 /** 运动提示词开头那句运镜，认得出就整句换掉，认不出就插到最前面。 */
 export function applyCameraMove(videoPrompt: string, move: CameraMove): string {
@@ -116,6 +137,25 @@ ${rhythmToPlanLines(rhythm)}
 - 不要增减镜头数。\n`
     : "";
 
+  // 逐镜量出来的机位与运动。有几镜量到就写几镜，没量到的一个字都不提——
+  // 写占位符会让模型拿它当真去编。
+  const measuredLines = (rhythm?.shots || [])
+    .map((shot) => {
+      const line = shotMetricsToPrompt(shot);
+      return line ? `第 ${shot.order} 镜：${line}` : "";
+    })
+    .filter(Boolean);
+  const hasMeasured = measuredLines.length > 0;
+  const measuredSection = hasMeasured
+    ? `\n【这几镜的机位和运动是从对标片里量出来的，不是猜的，必须照做】
+${measuredLines.join("\n")}
+
+- 「机位固定」就填运镜「固定」，一个字的镜头运动都不要加。
+- 「主体走近/后退」是人在动，不是镜头在动：仍然填「固定」，把走近或后退写进 videoPrompt 的动作部分。
+  把它写成推近或拉远，模型就会真的去推镜头，出来的味道完全不是对标那条。
+- 上面没提到的镜头，按下面的通用运镜要求处理。\n`
+    : "";
+
   return `你在把一份口播脚本拆成 AI 视频的分镜表。
 
 【口播脚本】
@@ -130,16 +170,24 @@ ${options?.visualStyle?.trim() || "未指定，按脚本内容自己定一个统
 - 每镜的做法是：先出一张静态的第一帧图，再让模型把这张图动起来。
   所以 framePrompt 描述「画面长什么样」，videoPrompt 只描述「怎么动」，两者不要重复。
 - 镜头总数建议 ${shotCount} 个左右，所有镜头时长加起来应接近 ${script.estimatedDurationSec} 秒。
-${rhythmSection}
-【运镜必须挑，不要一律静止】
+${rhythmSection}${measuredSection}
+【运镜怎么挑】
 可选的运镜只有这几种，cameraMove 只能填其中一个标签：
 ${CAMERA_MOVE_TABLE}
-
+${
+  hasMeasured
+    ? `
+硬要求：
+- 上面量出来的那几镜，机位以实测为准，不要为了"有变化"去改它。
+  对标要是全片固定机位，那就全片固定——同一个人同一个场景，一致性本身就是卖点。
+- 只有没量到的镜头才需要自己挑运镜，挑的时候避免和相邻镜头重复。`
+    : `
 硬要求：
 - 相邻两个镜头不能用同一种运镜。
 - 整条片子至少用到 3 种不同运镜。
 - 只有「确实该让观众盯住画面看清楚」的镜头才写固定，其余都该有镜头运动。
-- 开头第一镜不要用固定——静止开场最容易被划走。
+- 开头第一镜不要用固定——静止开场最容易被划走。`
+}
 
 【写提示词的要求】
 - 两个提示词都用中文写，不要中英混写。
@@ -197,11 +245,18 @@ export function createFallbackStoryboard(script: ScriptDraft, provider: VideoGen
   };
 }
 
-/** 收敛模型返回：镜号重排、时长吸附，坏镜头直接丢掉而不是让整表报废。 */
+/**
+ * 收敛模型返回：镜号重排、时长吸附，坏镜头直接丢掉而不是让整表报废。
+ *
+ * 传了 rhythm 的话，实测机位在这里钉死。提示词只是软约束——
+ * 模型很爱为了「有变化」把固定机位改成推近，而那是人在动还是镜头在动的区别，
+ * 改错了整条片子的味道就不对了。所以服务端再压一次。
+ */
 export function normalizeStoryboard(
   raw: Storyboard | undefined,
   fallback: Storyboard,
   provider: VideoGenProviderId,
+  rhythm?: BenchmarkRhythm | null,
 ): Storyboard {
   if (!raw) return fallback;
   const shots = Array.isArray(raw.shots) ? raw.shots : [];
@@ -212,17 +267,21 @@ export function normalizeStoryboard(
       const rawTrim = typeof shot.trimToSec === "number" ? shot.trimToSec : Number(shot.trimToSec);
       // 成片时长不能超过生成时长，也不接受 0 和负数——超了就等于没剪
       const trimToSec = Number.isFinite(rawTrim) && rawTrim > 0 ? Math.min(rawTrim, durationSec) : undefined;
+      // 镜号按顺序对上对标那一镜。模型偶尔会漏镜，所以按位置对而不是按它自报的 order
+      const source = rhythm?.shots[index];
+      const measured = metricsToCameraMove(source?.metrics);
       return {
-      order: index + 1,
-      durationSec,
-      shotSize: str(shot.shotSize),
-      cameraMove: str(shot.cameraMove),
-      visual: str(shot.visual),
-      voiceover: str(shot.voiceover),
-      subtitle: str(shot.subtitle),
-      framePrompt: str(shot.framePrompt),
-      videoPrompt: str(shot.videoPrompt),
-      ...(trimToSec === undefined ? {} : { trimToSec }),
+        order: index + 1,
+        durationSec,
+        shotSize: str(shot.shotSize),
+        cameraMove: measured || str(shot.cameraMove),
+        visual: str(shot.visual),
+        voiceover: str(shot.voiceover),
+        subtitle: str(shot.subtitle),
+        framePrompt: str(shot.framePrompt),
+        videoPrompt: str(shot.videoPrompt),
+        ...(trimToSec === undefined ? {} : { trimToSec }),
+        ...(source ? { sourceShotOrder: source.order } : {}),
       };
     });
   if (!normalized.length) return fallback;

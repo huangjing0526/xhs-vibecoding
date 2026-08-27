@@ -125,6 +125,11 @@ export interface Shot {
   framePrompt: string;
   /** 喂给图生视频模型的运动提示词，只描述「怎么动」，画面内容由首帧承载 */
   videoPrompt: string;
+  /**
+   * 这一镜对应对标片的第几镜。套了节奏模板才有。
+   * 留着是为了能回去看这一镜的实测结构，也为了生成完能拿实测值验收。
+   */
+  sourceShotOrder?: number;
 }
 
 /** 分镜表。比例固定 9:16——六个发布目标里五个是竖视频。 */
