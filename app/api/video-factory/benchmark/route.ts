@@ -2,8 +2,15 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
-import { BENCHMARK_ROOT, RENDERER_URL, benchmarkDir, isSafeSegment, newProjectId, runCommand } from "@/app/api/video-factory/_shared";
-import { PROVIDER_CAPS, RHYTHM_THRESHOLDS, cutsToShots, type BenchmarkRhythm } from "@/lib/videoFactory";
+import { BENCHMARK_ROOT, FACE_MODELS_DIR, RENDERER_URL, benchmarkDir, isSafeSegment, newProjectId, runCommand } from "@/app/api/video-factory/_shared";
+import {
+  PROVIDER_CAPS,
+  RHYTHM_THRESHOLDS,
+  cutsToShots,
+  type BenchmarkRhythm,
+  type BenchmarkShot,
+  type BenchmarkShotMetrics,
+} from "@/lib/videoFactory";
 
 // 跑本机 ffmpeg / ffprobe，必须 nodejs runtime。
 export const runtime = "nodejs";
@@ -66,6 +73,40 @@ async function grabThumbnail(file: string, atSec: number, target: string) {
   ]);
 }
 
+/**
+ * 逐镜量结构：机位动没动、主体走近还是后退、节奏怎么分段。
+ *
+ * 跑本机 python 脚本（OpenCV），失败一律吞掉：结构指标是锦上添花，
+ * 缺了照样能拆节奏、能往下走。宁可没有，也不能因为它把整条拆解搞崩。
+ */
+async function measureShots(source: string, shots: BenchmarkShot[]): Promise<Map<number, BenchmarkShotMetrics>> {
+  const out = new Map<number, BenchmarkShotMetrics>();
+  try {
+    const script = path.join(process.cwd(), "scripts", "video-factory", "shot-metrics.py");
+    const payload = JSON.stringify(
+      shots.map((shot) => ({ order: shot.order, startSec: shot.startSec, endSec: shot.endSec })),
+    );
+    const raw = await run("python3", [script, source, payload, "--models", FACE_MODELS_DIR]);
+    // 脚本可能往 stdout 前面吐 OpenCV 的 backend 警告，只取最后一行 JSON
+    const line = raw.trim().split("\n").filter(Boolean).pop() || "";
+    const parsed = JSON.parse(line) as { shots?: Array<BenchmarkShotMetrics & { order: number }>; error?: string };
+    if (parsed.error) {
+      console.warn("[VideoFactory] 结构量化跳过", { action: "videoFactory.benchmark.metrics", reason: parsed.error });
+      return out;
+    }
+    for (const item of parsed.shots || []) {
+      const { order, ...metrics } = item;
+      out.set(order, metrics);
+    }
+  } catch (error) {
+    console.warn("[VideoFactory] 结构量化失败，只留节奏", {
+      action: "videoFactory.benchmark.metrics",
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return out;
+}
+
 /** 只放行本机拆片服务的产物地址，避免这个接口变成任意 URL 下载器。 */
 function isAllowedSource(url: string): boolean {
   try {
@@ -109,13 +150,21 @@ export async function POST(request: NextRequest) {
     const cuts = await detectCuts(source, threshold);
     // 节奏模板是跨项目复用的，这里存的 plan 只是按默认引擎算的一种落法；
     // 真正套进某个项目时会按那个项目的引擎 replanRhythm 一次，所以这里不必纠结选谁。
-    const shots = cutsToShots(cuts, info.durationSec, PROVIDER_CAPS["grok-cli"].durations);
+    const bareShots = cutsToShots(cuts, info.durationSec, PROVIDER_CAPS["grok-cli"].durations);
 
     // 缩略图逐镜抽，多的就不抽了——纯粹是白等
-    for (const shot of shots.slice(0, MAX_THUMBNAILS)) {
+    for (const shot of bareShots.slice(0, MAX_THUMBNAILS)) {
       const middle = shot.startSec + shot.durationSec / 2;
       await grabThumbnail(source, middle, path.join(dir, `frame-${String(shot.order).padStart(2, "0")}.jpg`));
     }
+
+    // 量出每一镜的结构。缩略图看不出「机位固定但人在后退」和「人不动但机位在推」的区别，
+    // 而这两件事对复刻的指导完全相反。
+    const metrics = await measureShots(source, bareShots);
+    const shots: BenchmarkShot[] = bareShots.map((shot) => {
+      const measured = metrics.get(shot.order);
+      return measured ? { ...shot, metrics: measured } : shot;
+    });
 
     const rhythm: BenchmarkRhythm = {
       id,

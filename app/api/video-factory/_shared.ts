@@ -69,6 +69,15 @@ export const RENDERER_URL =
 /** 拆过的对标节奏：是跨项目复用的模板，所以不挂在某个项目下面。 */
 export const BENCHMARK_ROOT = path.join(FACTORY_ROOT, "benchmarks");
 
+/**
+ * 人脸模型（YuNet）放这儿，逐镜量结构时用。
+ *
+ * 不进 git：二进制几十兆，且只有本机拆片这条线用得上。
+ * 没装就没装，量化脚本会把相关指标标成 no-model 而不是崩掉。
+ * 装法见 scripts/video-factory/fetch-models.sh。
+ */
+export const FACE_MODELS_DIR = path.join(FACTORY_ROOT, "models");
+
 export function benchmarkDir(benchmarkId: string): string {
   return path.join(BENCHMARK_ROOT, benchmarkId);
 }

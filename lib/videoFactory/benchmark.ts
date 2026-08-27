@@ -21,12 +21,57 @@ export interface BenchmarkShotPlan {
   trimToSec: number;
 }
 
+/**
+ * 一项结构指标测不出来时，说清楚是为什么。
+ *
+ * 这是这套量化的硬规矩：宁可标「测不了」，也不给一个错的数。
+ * 拿一个错的绿灯去指导生成，比没有数危险得多——实测里
+ * 「服装色块面积」当尺度代理会因为腿部入画而给出方向完全相反的结论。
+ */
+export type MetricUnavailable =
+  | "no-face"        // 整镜没检出人脸：无人镜、背影、侧脸、特写超出画面
+  | "face-too-small" // 检出了但像素太少，特征不可信
+  | "subject-edge"   // 主体占住画面边缘，背景判据失效
+  | "no-model"       // 人脸模型没装
+  | "too-short"      // 镜头太短，采不到足够的帧
+  | "low-snr";       // 位移量和检测抖动同量级，分段只会是在给噪声编故事
+
+/** 机位在这一镜里动没动。背景不在画面边缘时判不了，那时给 unknown。 */
+export type CameraMotion = "fixed" | "slight" | "moving" | "unknown";
+
+/**
+ * 一镜量出来的结构。全部可选——测不出来就没有，而不是填 0。
+ *
+ * 为什么是人脸宽度而不是别的：跨片段唯一稳的尺度代理。
+ * 门框宽度只在同场景内可用（门会移出画面、会被头发填进测量行），
+ * 发团面积遇到棕发模特直接失灵，服装色块会被腿部入画反向污染——
+ * 这三种都实测翻过车。
+ */
+export interface BenchmarkShotMetrics {
+  /** 机位：背景带的帧间变化率。只看前半程，避开主体走近后遮挡边缘 */
+  cameraMotion: CameraMotion;
+  /** 背景带帧间变化的原始值，给人判断用 */
+  backgroundDrift?: number;
+  /** 人物尺度：末帧人脸宽 / 首帧人脸宽。>1 越走越近，<1 越退越远 */
+  subjectScaleRatio?: number;
+  /** 末帧人脸宽占画宽的比例，等于「这一镜收在什么景别」 */
+  endFaceWidth?: number;
+  /** 节奏三段的时间占比，加起来是 1。静止→运动→定格 */
+  tempo?: { holdPct: number; movePct: number; settlePct: number };
+  /** 尾段还在动多少：越接近 0 越是干净的定格，硬切接得上 */
+  settleJitter?: number;
+  /** 逐项说明为什么没测出来，键是上面那些可选字段名 */
+  unavailable?: Partial<Record<"subjectScaleRatio" | "endFaceWidth" | "tempo" | "cameraMotion", MetricUnavailable>>;
+}
+
 export interface BenchmarkShot {
   order: number;
   startSec: number;
   endSec: number;
   durationSec: number;
   plan: BenchmarkShotPlan;
+  /** 量出来的结构。老的节奏模板没有这一项，读的地方都要当它可能不在 */
+  metrics?: BenchmarkShotMetrics;
 }
 
 export interface BenchmarkRhythm {
@@ -224,4 +269,65 @@ export function rhythmToPlanLines(rhythm: BenchmarkRhythm): string {
 /** 套用节奏后总共要切多少镜——长镜头拆过段，和对标镜头数不是一回事。 */
 export function rhythmShotCount(rhythm: BenchmarkRhythm): number {
   return rhythm.shots.reduce((sum, shot) => sum + shot.plan.segments, 0);
+}
+
+export const CAMERA_MOTION_LABEL: Record<CameraMotion, string> = {
+  fixed: "固定机位",
+  slight: "轻微移动",
+  moving: "机位移动",
+  unknown: "机位未知",
+};
+
+export const METRIC_UNAVAILABLE_LABEL: Record<MetricUnavailable, string> = {
+  "no-face": "这一镜没检出人脸",
+  "face-too-small": "人脸太小，测不准",
+  "subject-edge": "主体占住画面边缘",
+  "no-model": "人脸模型未安装",
+  "too-short": "镜头太短，采样不足",
+  "low-snr": "位移太小，分不出段",
+};
+
+/** 人物尺度倍率读成人话。走近/后退比一个裸数字好懂。 */
+export function describeSubjectScale(ratio: number): string {
+  if (ratio >= 1.25) return `走近 ${ratio.toFixed(2)}×`;
+  if (ratio <= 0.8) return `后退 ${(1 / ratio).toFixed(2)}×`;
+  return "景别基本不变";
+}
+
+/**
+ * 一镜的结构写成一行。测不出来的部分不出现，而不是显示占位符——
+ * 面板上少一项，比多一项看不懂的「--」有用。
+ */
+export function describeShotMetrics(metrics: BenchmarkShotMetrics | undefined): string {
+  if (!metrics) return "";
+  const parts: string[] = [];
+  if (metrics.cameraMotion !== "unknown") parts.push(CAMERA_MOTION_LABEL[metrics.cameraMotion]);
+  if (metrics.subjectScaleRatio) parts.push(describeSubjectScale(metrics.subjectScaleRatio));
+  if (metrics.tempo) {
+    const { holdPct, movePct, settlePct } = metrics.tempo;
+    parts.push(`静${Math.round(holdPct * 100)}/动${Math.round(movePct * 100)}/定${Math.round(settlePct * 100)}`);
+  }
+  return parts.join(" · ");
+}
+
+/**
+ * 把量出来的结构写成喂给模型的约束行，B 阶段拆分镜时用。
+ *
+ * 只写测出来的：没测到的项一个字都不提，免得模型拿占位符当真去编。
+ */
+export function shotMetricsToPrompt(shot: BenchmarkShot): string {
+  const m = shot.metrics;
+  if (!m) return "";
+  const lines: string[] = [];
+  if (m.cameraMotion === "fixed") lines.push("机位固定，全程不推不拉不摇");
+  if (m.cameraMotion === "moving") lines.push("机位移动，跟随主体");
+  if (m.subjectScaleRatio) lines.push(`主体${describeSubjectScale(m.subjectScaleRatio)}`);
+  if (m.tempo) {
+    lines.push(
+      `节奏：前 ${Math.round(m.tempo.holdPct * 100)}% 静止、` +
+        `中 ${Math.round(m.tempo.movePct * 100)}% 运动、` +
+        `末 ${Math.round(m.tempo.settlePct * 100)}% 定格`,
+    );
+  }
+  return lines.join("；");
 }

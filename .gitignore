@@ -42,3 +42,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 人脸模型：二进制几十兆，只有本机量结构这条线用，装法见 scripts/video-factory/fetch-models.sh
+.local/video-factory/models/
