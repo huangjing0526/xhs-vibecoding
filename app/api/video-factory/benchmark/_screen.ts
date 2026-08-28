@@ -8,11 +8,13 @@
  * 节奏是 ffmpeg 算出来的硬数据，看片是锦上添花，不能因为它把整条拆解搞崩。
  */
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { benchmarkDir, runCommand } from "@/app/api/video-factory/_shared";
+import { benchmarkDir, benchmarkSourcePath, runCommand } from "@/app/api/video-factory/_shared";
+import { writeRhythm } from "@/app/api/video-factory/benchmark/_rhythm";
 import { generateWorkflowJson, type WorkflowImage } from "@/lib/workflowAi";
 import {
+  clippedShots,
   createFallbackReport,
   buildReplicabilityPrompt,
   normalizeScreening,
@@ -39,12 +41,12 @@ const screenFrameFile = (dir: string, order: number) =>
  * 取一镜的大帧：已经抽过就直接读，没有就从源视频抽一张。
  * 源视频没了或 ffmpeg 抽失败，回落到那张 200 宽的缩略图——小图也比没图强。
  */
-async function readScreenFrame(dir: string, shot: BenchmarkShot): Promise<Buffer | null> {
+async function readScreenFrame(benchmarkId: string, dir: string, shot: BenchmarkShot): Promise<Buffer | null> {
   const target = screenFrameFile(dir, shot.order);
   const cached = await readFile(target).catch(() => null);
   if (cached) return cached;
 
-  const source = path.join(dir, "source.mp4");
+  const source = benchmarkSourcePath(benchmarkId);
   const middle = shot.startSec + shot.durationSec / 2;
   try {
     await runCommand(
@@ -94,7 +96,7 @@ export async function runScreening(id: string, rhythm: BenchmarkRhythm): Promise
   const images: WorkflowImage[] = [];
   const screened: BenchmarkShot[] = [];
   for (const shot of picked) {
-    const bytes = await readScreenFrame(dir, shot);
+    const bytes = await readScreenFrame(id, dir, shot);
     if (!bytes) continue;
     images.push({ mimeType: "image/jpeg", base64: bytes.toString("base64") });
     // 送去的帧和 prompt 里的编号必须一一对应，所以按真正读到的那些帧建清单，
@@ -126,7 +128,8 @@ export async function runScreening(id: string, rhythm: BenchmarkRhythm): Promise
       return content ? { ...rest, content } : rest;
     }),
   };
-  await writeFile(path.join(dir, "rhythm.json"), JSON.stringify(next, null, 2), "utf8");
+  // 路线是这一步刚判出来的，磁盘上的片段得跟着换一批——writeRhythm 会先把它们对齐
+  const synced = await writeRhythm(id, next);
 
   console.info("[VideoFactory] 看片完成", {
     action: "videoFactory.replicability",
@@ -135,6 +138,7 @@ export async function runScreening(id: string, rhythm: BenchmarkRhythm): Promise
     verdict: report.verdict,
     castCount: cast.length,
     described: contentByOrder.size,
+    clipped: clippedShots(synced).length,
   });
-  return { rhythm: next, frames: images.length, usedFallback: ai.usedFallback, provider: ai.provider };
+  return { rhythm: synced, frames: images.length, usedFallback: ai.usedFallback, provider: ai.provider };
 }

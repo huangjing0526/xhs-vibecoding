@@ -1,10 +1,8 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk, readJsonBody } from "@/app/api/feishu/_utils";
-import { benchmarkDir, isSafeSegment } from "@/app/api/video-factory/_shared";
+import { isSafeSegment } from "@/app/api/video-factory/_shared";
+import { readRhythm } from "@/app/api/video-factory/benchmark/_rhythm";
 import { runScreening } from "@/app/api/video-factory/benchmark/_screen";
-import type { BenchmarkRhythm } from "@/lib/videoFactory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,11 +23,10 @@ export async function POST(request: NextRequest) {
     id = (body.id || "").trim();
     if (!isSafeSegment(id)) return apiBadRequest("节奏 id 不合法");
 
-    const rhythmFile = path.join(benchmarkDir(id), "rhythm.json");
-    const raw = await readFile(rhythmFile, "utf8").catch(() => null);
-    if (!raw) return apiBadRequest("这份节奏模板不在了，重新拆一次");
+    const rhythm = await readRhythm(id);
+    if (!rhythm) return apiBadRequest("这份节奏模板不在了，重新拆一次");
 
-    const outcome = await runScreening(id, JSON.parse(raw) as BenchmarkRhythm);
+    const outcome = await runScreening(id, rhythm);
     if (!outcome.frames) return apiBadRequest("这份节奏没有关键帧，重新拆一次再看片");
 
     const described = outcome.rhythm.shots.filter((shot) => shot.content).length;

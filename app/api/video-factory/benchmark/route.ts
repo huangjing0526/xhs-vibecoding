@@ -2,15 +2,20 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
-import { BENCHMARK_ROOT, FACE_MODELS_DIR, RENDERER_URL, benchmarkDir, isSafeSegment, newProjectId, runCommand } from "@/app/api/video-factory/_shared";
+import { BENCHMARK_ROOT, FACE_MODELS_DIR, RENDERER_URL, benchmarkDir, isSafeSegment, mapLimited, newProjectId, runCommand } from "@/app/api/video-factory/_shared";
+import { beatsFrom, readLoudnessSafe } from "@/app/api/video-factory/benchmark/_audio";
+import { readRhythm, writeRhythm } from "@/app/api/video-factory/benchmark/_rhythm";
 import { runScreening } from "@/app/api/video-factory/benchmark/_screen";
+import { assignVoiceovers, transcribe } from "@/app/api/video-factory/benchmark/_transcript";
 import {
   PROVIDER_CAPS,
   RHYTHM_THRESHOLDS,
+  clippedShots,
   cutsToShots,
   type BenchmarkRhythm,
   type BenchmarkShot,
   type BenchmarkShotMetrics,
+  type BenchmarkSource,
 } from "@/lib/videoFactory";
 
 // 跑本机 ffmpeg / ffprobe，必须 nodejs runtime。
@@ -21,6 +26,8 @@ export const maxDuration = 300;
 const COMMAND_TIMEOUT_MS = 4 * 60 * 1000;
 /** 超过这个镜头数就不逐镜抽帧了：再多也看不过来，还白等 */
 const MAX_THUMBNAILS = 60;
+/** 抽帧的并发。实测 6 路是拐点，再往上被同一个源文件的读竞争吃掉 */
+const THUMBNAIL_CONCURRENCY = 6;
 const EXTRACTOR_URL = RENDERER_URL;
 
 const run = (command: string, args: string[]) =>
@@ -138,16 +145,26 @@ export async function POST(request: NextRequest) {
     await mkdir(dir, { recursive: true });
     const source = path.join(dir, "source.mp4");
 
+    // 来路决定这条片子的片段能不能进编辑通道，所以在写文件的同一处定下来，
+    // 之后任何一步都不再改它——分开写迟早会出现「文件是传的、来路记成抓的」
+    let origin: BenchmarkSource["origin"] | null = null;
     if (videoFile instanceof File && videoFile.size > 0) {
       await writeFile(source, Buffer.from(await videoFile.arrayBuffer()));
+      origin = "upload";
     } else if (videoUrl) {
       if (!isAllowedSource(videoUrl)) return apiBadRequest("只能拆本机拆片服务抓下来的视频，或者直接上传 mp4");
       const response = await fetch(videoUrl);
       if (!response.ok) return apiBadRequest(`取视频失败（${response.status}），先确认拆片服务还在跑`);
       await writeFile(source, Buffer.from(await response.arrayBuffer()));
+      origin = "extractor";
     } else if (!reuseId) {
       return apiBadRequest("给个视频：从拆片结果送过来，或者直接上传 mp4");
     }
+
+    // 转写和读音轨都只吃源文件，不等切镜结果。在这儿就发起，让它们和下面的
+    // 切镜、抽帧、量结构并排跑——whisper 是这条链上最长的一根，排在后面纯属白等。
+    const asr = transcribe(source, dir);
+    const loudness = readLoudnessSafe(source);
 
     const info = await probe(source);
     if (!info.durationSec) return apiBadRequest("读不出视频时长，换个文件试试");
@@ -157,19 +174,35 @@ export async function POST(request: NextRequest) {
     // 真正套进某个项目时会按那个项目的引擎 replanRhythm 一次，所以这里不必纠结选谁。
     const bareShots = cutsToShots(cuts, info.durationSec, PROVIDER_CAPS["grok-cli"].durations);
 
-    // 缩略图逐镜抽，多的就不抽了——纯粹是白等
-    for (const shot of bareShots.slice(0, MAX_THUMBNAILS)) {
-      const middle = shot.startSec + shot.durationSec / 2;
-      await grabThumbnail(source, middle, path.join(dir, `frame-${String(shot.order).padStart(2, "0")}.jpg`));
-    }
+    // 缩略图逐镜抽，多的就不抽了——纯粹是白等。
+    // 限并发跑：每次抽帧都是一次进程启动加一次定位，串着跑 30 张要三秒多，
+    // 六路并行一秒出头；再往上加收益就被同一个源文件的读竞争吃掉了
+    await mapLimited(bareShots.slice(0, MAX_THUMBNAILS), THUMBNAIL_CONCURRENCY, (shot) =>
+      grabThumbnail(
+        source,
+        shot.startSec + shot.durationSec / 2,
+        path.join(dir, `frame-${String(shot.order).padStart(2, "0")}.jpg`),
+      ),
+    );
 
     // 量出每一镜的结构。缩略图看不出「机位固定但人在后退」和「人不动但机位在推」的区别，
     // 而这两件事对复刻的指导完全相反。
     const metrics = await measureShots(source, bareShots);
+    // 口播按镜切开：走编辑通道换掉主体之后，口型还是原片的，要补对口型就得知道这一镜说了什么
+    const voiceovers = assignVoiceovers(bareShots, await asr);
     const shots: BenchmarkShot[] = bareShots.map((shot) => {
       const measured = metrics.get(shot.order);
-      return measured ? { ...shot, metrics: measured } : shot;
+      const voiceover = voiceovers.get(shot.order);
+      return { ...shot, ...(measured ? { metrics: measured } : {}), ...(voiceover ? { voiceover } : {}) };
     });
+
+    // 切点踩没踩鼓点，决定这套节奏换 BGM 之后还成不成立
+    const beatSync = beatsFrom(await loudness, cuts, info.durationSec);
+
+    // 纯重测灵敏度时没有新文件也没有新链接，来路沿用上一次的——
+    // 重设成 upload 会把人工确认过的水印状态白白清掉，逼人再确认一遍同一条片子
+    const previous = reuseId ? (await readRhythm(id))?.source : undefined;
+    const sourceInfo: BenchmarkSource = origin ? { origin } : previous || { origin: "upload" };
 
     const rhythm: BenchmarkRhythm = {
       id,
@@ -180,8 +213,12 @@ export async function POST(request: NextRequest) {
       threshold,
       shots,
       createdAt: new Date().toISOString(),
+      source: sourceInfo,
+      ...(beatSync ? { beatSync } : {}),
     };
-    await writeFile(path.join(dir, "rhythm.json"), JSON.stringify(rhythm, null, 2), "utf8");
+    // 走 writeRhythm 而不是直接写：重拆之后镜头边界全变了，
+    // 上一版切下来的原片段必须在这一步就被清掉，不能等到看完片
+    await writeRhythm(id, rhythm);
 
     // 顺手看一遍片，拿到可替换的实体和每镜画面内容。
     // 不做成手动一步：忘了点的话，分镜表的画面就是模型照脚本现编的，和对标片实际拍了什么无关。
@@ -199,12 +236,15 @@ export async function POST(request: NextRequest) {
     }
 
     const described = finalRhythm.shots.filter((shot) => shot.content).length;
+    const clipped = clippedShots(finalRhythm).length;
     console.info("[VideoFactory] 节奏拆解完成", {
       action: "videoFactory.benchmark",
       id,
       threshold,
       shotCount: shots.length,
       described,
+      clipped,
+      origin: sourceInfo.origin,
       castCount: finalRhythm.cast?.length || 0,
     });
     return apiOk(

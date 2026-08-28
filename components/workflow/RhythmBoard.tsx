@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Activity, AlertTriangle, ChevronDown, ChevronRight, Film, Link2, Loader2, Ruler, Scan, Scissors, Trash2, Upload, Users, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, Film, Link2, Loader2, Mic, Music, Ruler, Scan, Scissors, ShieldCheck, Trash2, Upload, Users, Zap } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
@@ -14,32 +14,63 @@ import {
   METRIC_UNAVAILABLE_LABEL,
   RHYTHM_THRESHOLDS,
   RISK_LABEL,
-  RISK_SEVERITY,
+  RISK_STEPS,
   RISK_WHY,
+  ROUTE_LABEL,
+  ROUTE_WHY,
+  STEP_LABEL,
+  STEP_WHY,
   SHOT_TONE_BAR,
   VERDICT_LABEL,
+  beatLocked,
   castToken,
+  clippedShots,
+  clipsAllowed,
+  describeBeatSync,
   describeCast,
   describeRhythm,
   describeShotMetrics,
   formatTimecode,
   rhythmShotCount,
   riskyShots,
-  shotSeverity,
+  routeByShot,
+  shotRoute,
+  shotSteps,
   shotTone,
   summarizeRhythm,
-  tallyRisks,
+  tallySteps,
   type BenchmarkCastEntity,
   type BenchmarkRhythm,
   type BenchmarkShot,
   type BenchmarkShotContent,
   type BenchmarkShotMetrics,
   type MetricUnavailable,
-  type ReplicabilityReport,
+  type ReplicabilityRisk,
   type ReplicabilityVerdict,
   type ShotRisk,
+  type ShotRoute,
   type ShotTone,
 } from "@/lib/videoFactory";
+
+/**
+ * 三条通道的配色。
+ *
+ * 「切片去编辑」用品牌色而不是红色，是这次改版的关键一笔：
+ * 它以前是「做不出来」的红色警告，现在是一条正经通道，标成红的会让人以为这镜有问题。
+ *
+ * dot/mark 只有非 generate 的两条有——干净的镜头不打角标。
+ */
+const ROUTE_STYLE: Record<ShotRoute, { border: string; chip: string; dot?: string; mark?: string }> = {
+  generate: { border: "border-line-strong", chip: "bg-soft text-muted" },
+  edit: { border: "border-brand-500", chip: "bg-brand-50 text-brand-600", dot: "bg-brand-500", mark: "编" },
+  postfix: { border: "border-warn", chip: "bg-warn/10 text-warn", dot: "bg-warn", mark: "字" },
+};
+
+/** 一条风险按它引出的第一道工序着色；identity 不引出工序，跟着「直接生成」走。 */
+function riskRoute(risk: ReplicabilityRisk): ShotRoute {
+  const [step] = RISK_STEPS[risk];
+  return step === "edit" || step === "postfix" ? step : "generate";
+}
 
 interface RhythmBoardProps {
   rhythm: BenchmarkRhythm | null;
@@ -61,9 +92,12 @@ interface RhythmBoardProps {
   applied: boolean;
   onApply: () => void;
   onClear: () => void;
-  /** 让模型看关键帧判断能不能复刻 */
+  /** 让模型看关键帧，逐镜判出走哪条通道 */
   onScreen: () => void;
   screening: boolean;
+  /** 人工确认这条原片没水印。确认了才切原片段，撤销则连已切的一起删 */
+  onConfirmSource: (watermarkFree: boolean) => void;
+  confirmingSource: boolean;
 }
 
 const TONE_LABEL: Record<ShotTone, string> = {
@@ -161,17 +195,18 @@ function Filmstrip({
   rhythm,
   selected,
   onSelect,
-  riskByShot,
+  routes,
 }: {
   rhythm: BenchmarkRhythm;
   selected: number | null;
   onSelect: (order: number) => void;
-  riskByShot: Map<number, ShotRisk>;
+  routes: Map<number, ShotRoute>;
 }) {
   return (
     <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
       {rhythm.shots.map((shot) => {
-        const severity = shotSeverity(riskByShot.get(shot.order) || { order: shot.order, risks: [], what: "", workaround: "" });
+        const route = routes.get(shot.order) || "generate";
+        const style = ROUTE_STYLE[route];
         return (
         <button
           key={shot.order}
@@ -182,14 +217,20 @@ function Filmstrip({
             selected === shot.order ? "border-brand-400 ring-2 ring-brand-100" : "border-line hover:border-brand-300"
           }`}
         >
-          {severity && (
+          {style.dot && (
             <span
-              title={severity === "block" ? "生成阶段就做不出来" : "后期能补"}
-              className={`absolute right-1 top-1 z-10 flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold text-white ${
-                severity === "block" ? "bg-danger" : "bg-warn"
-              }`}
+              title={`${ROUTE_LABEL[route]}：${ROUTE_WHY[route]}`}
+              className={`absolute right-1 top-1 z-10 flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold text-white ${style.dot}`}
             >
-              !
+              {style.mark}
+            </span>
+          )}
+          {shot.clip && (
+            <span
+              title="这一镜的原片段已经切出来了，可以拿去编辑模型换主体"
+              className="absolute left-1 top-1 z-10 rounded-full bg-ink/70 px-1 text-[8px] font-bold text-white"
+            >
+              片
             </span>
           )}
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -310,45 +351,59 @@ const VERDICT_TONE: Record<ReplicabilityVerdict, "ok" | "warn" | "danger"> = {
 };
 
 /**
- * 可复刻性报告。
- * 只列有风险的镜头、硬卡点排前面——一条片子每镜都能挑出毛病，全列出来等于没说。
+ * 复刻路线报告。
+ *
+ * 只列有风险的镜头、要切片的排前面——一条片子每镜都能挑出毛病，全列出来等于没说。
+ * 这块以前叫「可复刻性」，答的是能不能做；现在答的是每一镜走哪条路做，
+ * 因为接上编辑通道之后，「做不出来」这个二分已经不成立了。
  */
 function ReplicabilityPanel({
-  rhythmId,
-  report,
-  totalShots,
+  rhythm,
   screening,
   onScreen,
+  confirming,
+  onConfirmSource,
 }: {
-  rhythmId: string;
-  report?: ReplicabilityReport;
-  totalShots: number;
+  rhythm: BenchmarkRhythm;
   screening: boolean;
   onScreen: () => void;
+  confirming: boolean;
+  onConfirmSource: (watermarkFree: boolean) => void;
 }) {
+  const report = rhythm.report;
   if (!report) {
     return (
       <div className="mt-4 rounded-2xl border border-dashed border-line-strong bg-surface/60 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-sm font-bold text-ink">这条能不能用 AI 复刻？</div>
+            <div className="text-sm font-bold text-ink">这条每一镜该怎么做？</div>
             <p className="mt-1 text-[11px] leading-5 text-faint">
-              让模型看一遍关键帧，逐镜标出真人说话、精细动作、跨镜主体、画面文字这些卡点，并给绕法。
-              动手之前先问清楚，省得拆完节奏才发现做不了。
+              让模型看一遍关键帧，逐镜判出走哪条通道：直接生成、切原片去编辑、还是生成完后期贴字。
+              动手之前先分好路，省得拆完节奏才发现有一半镜头这条路走不通。
             </p>
           </div>
           <Button variant="ai" size="sm" onClick={onScreen} loading={screening} icon={<Scan size={13} />}>
-            {screening ? "看片中" : "查可复刻性"}
+            {screening ? "看片中" : "分路线"}
           </Button>
         </div>
       </div>
     );
   }
 
-  const tally = tallyRisks(report);
+  const tally = tallySteps(report);
   const risky = riskyShots(report);
-  // 镜头多于抽样上限时只看了一部分，没看的不能算进「干净」
-  const unscreened = Math.max(0, totalShots - report.shots.length);
+  // 镜头多于抽样上限时只看了一部分，没看的不能算进「直接生成」
+  const unscreened = Math.max(0, rhythm.shots.length - report.shots.length);
+  const clippedSet = new Set(clippedShots(rhythm));
+  const allowed = clipsAllowed(rhythm);
+  // 各项不互斥：一镜既要切片又要贴字，两边都会数上，所以逐项说而不是拼成一句分配式
+  const counts = [
+    tally.generate && `${tally.generate} 镜直接生成`,
+    tally.edit && `${tally.edit} 镜要切片`,
+    tally.postfix && `${tally.postfix} 镜要贴字`,
+    tally.lipsync && `${tally.lipsync} 镜要对口型`,
+  ].filter(Boolean) as string[];
+  const uploaded = rhythm.source?.origin === "upload";
 
   return (
     <div className="mt-4 rounded-2xl border border-line bg-surface p-4">
@@ -356,42 +411,90 @@ function ReplicabilityPanel({
         <div className="flex items-center gap-2">
           <Badge tone={VERDICT_TONE[report.verdict]}>{VERDICT_LABEL[report.verdict]}</Badge>
           <span className="text-[11px] font-bold text-faint">
-            硬卡点 {tally.blocked} 镜 · 后期能补 {tally.workable} 镜 · 干净 {tally.clean} 镜
+            {counts.join(" · ")}
             {unscreened > 0 && ` · 另 ${unscreened} 镜没抽到`}
           </span>
         </div>
         <Button size="sm" variant="ghost" onClick={onScreen} loading={screening}>
-          重查
+          重看
         </Button>
       </div>
 
       <p className="mt-2 text-sm leading-6 text-ink">{report.summary}</p>
       {report.recurringSubject && (
         <p className="mt-1.5 text-[11px] leading-5 text-faint">
-          跨镜反复出现：{report.recurringSubject}——这些的外观要在每一镜的首帧提示词里用同样的措辞描述，否则会变样。
+          跨镜反复出现：{report.recurringSubject}——走生成通道的镜头要在每一镜的首帧提示词里用同样的措辞描述它，否则会变样。
+        </p>
+      )}
+
+      {/* 水印闸门。只有真有镜头要切片时才值得占地方 */}
+      {tally.edit > 0 && (
+        allowed ? (
+          <p className="mt-2 flex items-center gap-1.5 text-[11px] leading-5 text-faint">
+            <ShieldCheck size={12} className="shrink-0 text-ok" />
+            {rhythm.source?.origin === "extractor"
+              ? "无水印源（拆片服务抓的）"
+              : "已人工确认无水印"}
+            ，已切出 {clippedSet.size} 段原片
+          </p>
+        ) : (
+          <Callout tone="warn" className="mt-3">
+            <div className="font-bold">这 {tally.edit} 镜要用原片段，先确认画面里没有水印</div>
+            <p className="mt-1 leading-5">
+              {uploaded ? "这条是手动传进来的，来路不明。" : "这条来路没记下。"}
+              抖音/小红书的水印是飘移的半透明 logo 加账号 ID，带着进编辑模型会糊成一团洗不掉，
+              成片发出去就是搬运实锤。自己看一眼再点——不做自动检测，是因为漏判一次不可逆。
+            </p>
+            <Button
+              size="sm"
+              className="mt-2"
+              loading={confirming}
+              onClick={() => onConfirmSource(true)}
+              icon={<ShieldCheck size={13} />}
+            >
+              确认没有水印，切出这 {tally.edit} 段
+            </Button>
+          </Callout>
+        )
+      )}
+
+      {rhythm.beatSync && (
+        <p className="mt-1.5 flex items-center gap-1.5 text-[11px] leading-5 text-faint">
+          <Music size={12} className={`shrink-0 ${beatLocked(rhythm.beatSync) ? "text-warn" : "text-faint"}`} />
+          {describeBeatSync(rhythm.beatSync)}
         </p>
       )}
 
       {risky.length > 0 && (
         <div className="mt-3 space-y-2">
           {risky.map((shot) => {
-            const severity = shotSeverity(shot);
+            const steps = shotSteps(shot);
             return (
               <div
                 key={shot.order}
-                className={`rounded-xl border-l-[3px] bg-soft px-3 py-2.5 ${
-                  severity === "block" ? "border-danger" : "border-warn"
-                }`}
+                className={`rounded-xl border-l-[3px] bg-soft px-3 py-2.5 ${ROUTE_STYLE[shotRoute(shot)].border}`}
               >
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-xs font-bold text-ink">第 {shot.order} 镜</span>
+                  {steps.map((step) => (
+                    <span
+                      key={step}
+                      title={STEP_WHY[step]}
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                        step === "lipsync" ? "bg-danger/10 text-danger" : ROUTE_STYLE[step].chip
+                      }`}
+                    >
+                      {STEP_LABEL[step]}
+                    </span>
+                  ))}
+                  {clippedSet.has(shot.order) && (
+                    <span className="rounded-full bg-ok/10 px-2 py-0.5 text-[10px] font-bold text-ok">原片已切</span>
+                  )}
                   {shot.risks.map((risk) => (
                     <span
                       key={risk}
                       title={RISK_WHY[risk]}
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                        RISK_SEVERITY[risk] === "block" ? "bg-danger/10 text-danger" : "bg-warn/10 text-warn"
-                      }`}
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${ROUTE_STYLE[riskRoute(risk)].chip}`}
                     >
                       {RISK_LABEL[risk]}
                     </span>
@@ -410,16 +513,18 @@ function ReplicabilityPanel({
         </div>
       )}
 
-      {tally.blocked > 0 && (
+      {tally.edit > 0 && (
         <Callout tone="info" className="mt-3">
-          有 {tally.blocked} 镜是生成阶段就做不出来的。要么按上面的绕法改画面，要么只借这条的节奏、画面全部另想——
-          节奏本来就是这条片子里最值钱的部分。
+          有 {tally.edit} 镜从零生成做不出来，得拿对标的原片段进视频编辑模型换主体——
+          运动和构图照旧，只把人和货换成你自己的。
+          {tally.lipsync > 0 && ` 其中 ${tally.lipsync} 镜有人说话，换完主体口型还是原片的，要让他说你的词就还得再补一道对口型。`}
+          {" 编辑目前只能在外部平台上手动跑（VACE / 可灵 / Runway 这些），成片传回来走「手动回传」那条通道。"}
         </Callout>
       )}
 
       {/* 报告是跟着这份节奏存的，换项目也还在 */}
       <p className="mt-3 text-[10px] text-faint">
-        看了 {report.shots.length} 张关键帧（节奏 {rhythmId.slice(0, 8)}），结论已随模板存下。
+        看了 {report.shots.length} 张关键帧（节奏 {rhythm.id.slice(0, 8)}），结论已随模板存下。
       </p>
     </div>
   );
@@ -441,6 +546,8 @@ export default function RhythmBoard({
   onClear,
   onScreen,
   screening,
+  onConfirmSource,
+  confirmingSource,
 }: RhythmBoardProps) {
   const [selected, setSelected] = useState<number | null>(null);
   const [link, setLink] = useState("");
@@ -452,6 +559,8 @@ export default function RhythmBoard({
     () => new Map((rhythm?.report?.shots || []).map((shot) => [shot.order, shot])),
     [rhythm],
   );
+  // 路线算一次给所有消费者用，省得同一件事在胶片条、报告、切片清单里各推一遍
+  const routes = useMemo(() => routeByShot(rhythm?.report), [rhythm]);
   const selectedShot = rhythm?.shots.find((shot) => shot.order === selected) || null;
 
   if (!rhythm) {
@@ -633,7 +742,7 @@ export default function RhythmBoard({
 
       <div className="mt-4">
         <div className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-faint">关键帧</div>
-        <Filmstrip rhythm={rhythm} selected={selected} onSelect={setSelected} riskByShot={riskByShot} />
+        <Filmstrip rhythm={rhythm} selected={selected} onSelect={setSelected} routes={routes} />
       </div>
 
       {selectedShot ? (
@@ -661,6 +770,30 @@ export default function RhythmBoard({
             </p>
             <MeasuredStructure metrics={selectedShot.metrics} />
             <ShotContentBlock content={selectedShot.content} />
+            {selectedShot.voiceover?.text && (
+              <p className="mt-2 flex gap-1.5 text-xs leading-5 text-muted">
+                <Mic size={12} className="mt-1 shrink-0 text-faint" />
+                <span>
+                  原片这一镜说：「{selectedShot.voiceover.text}」
+                </span>
+              </p>
+            )}
+            {selectedShot.clip && (
+              <div className="mt-2">
+                {/* 拿去编辑之前先自己看一眼这段切得对不对——切点差半秒，换出来的主体就会在半空里出现 */}
+                <video
+                  key={`${rhythm.id}-${selectedShot.order}`}
+                  src={`/api/video-factory/benchmark/clip?id=${encodeURIComponent(rhythm.id)}&shot=${selectedShot.order}`}
+                  controls
+                  preload="metadata"
+                  className="w-full max-w-[220px] rounded-xl border border-line bg-black"
+                />
+                <p className="mt-1 text-[10px] text-faint">
+                  原片段 {selectedShot.clip.durationSec} 秒 · {(selectedShot.clip.bytes / 1024 / 1024).toFixed(1)}MB，
+                  拿它去编辑模型换主体
+                </p>
+              </div>
+            )}
             {(() => {
               const risk = riskByShot.get(selectedShot.order);
               if (!risk?.risks.length) return null;
@@ -671,9 +804,7 @@ export default function RhythmBoard({
                       <span
                         key={item}
                         title={RISK_WHY[item]}
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                          RISK_SEVERITY[item] === "block" ? "bg-danger/10 text-danger" : "bg-warn/10 text-warn"
-                        }`}
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${ROUTE_STYLE[riskRoute(item)].chip}`}
                       >
                         {RISK_LABEL[item]}
                       </span>
@@ -692,11 +823,11 @@ export default function RhythmBoard({
       <CastSummary cast={rhythm.cast} />
 
       <ReplicabilityPanel
-        rhythmId={rhythm.id}
-        report={rhythm.report}
-        totalShots={rhythm.shots.length}
+        rhythm={rhythm}
         screening={screening}
         onScreen={onScreen}
+        confirming={confirmingSource}
+        onConfirmSource={onConfirmSource}
       />
 
       {stats && stats.splitCount > 0 && (

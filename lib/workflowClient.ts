@@ -753,6 +753,21 @@ export async function screenReplicability(
   );
 }
 
+/**
+ * 视频工厂：确认（或撤销确认）这条原片没有水印。
+ * 确认之后要走编辑通道的镜头才会被切出来，撤销则连已切的一起删掉。
+ */
+export async function confirmBenchmarkSource(
+  rhythmId: string,
+  watermarkFree: boolean,
+): Promise<{ rhythm: BenchmarkRhythm }> {
+  return workflowRequest(
+    "/api/video-factory/benchmark/source",
+    { method: "POST", body: JSON.stringify({ id: rhythmId, watermarkFree }) },
+    "水印确认失败"
+  );
+}
+
 /** 视频工厂：删一份节奏模板，源视频与关键帧一起删。 */
 export async function deleteBenchmarkRhythm(rhythmId: string): Promise<{ id: string }> {
   return workflowRequest<{ id: string }>(

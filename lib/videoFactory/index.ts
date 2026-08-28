@@ -2,6 +2,7 @@ export * from "./types";
 export * from "./script";
 export * from "./storyboard";
 export * from "./benchmark";
+export * from "./beat";
 export * from "./replicability";
 export * from "./cast";
 export * from "./subtitle";

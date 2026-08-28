@@ -2,7 +2,13 @@
  * 爆款节奏拆解：把一条对标视频的真实切镜点提出来，变成可套用的节奏模板。
  *
  * 切镜是 ffmpeg 的 scene 滤镜算出来的硬数据，不过模型——模型猜不出「开头 5 秒切三刀」这种事，
- * 而那恰恰是爆款最值钱的部分。拿到的只是时间码和缩略图，原视频的画面与音频一概不进下游。
+ * 而那恰恰是爆款最值钱的部分。
+ *
+ * ⚠️ 2026-08-28 改了一条原则：原来是「原视频的画面与音频一概不进下游」，
+ * 现在**画面会**——判为走编辑通道的那些镜头，原片段会被切出来送进视频编辑模型换主体。
+ * 这是明着做的决定，不是漏了：CLAUDE.md 里「把原视频喂给视频重绘」属于灰色地带，
+ * 所以配了 source.origin 这道水印闸门，来路不明的片子不许往编辑通道走。
+ * **音频仍然一概不进下游**——成片的口播和 BGM 全是自己的，原声只用来读节拍和转写。
  */
 
 import type { ReplicabilityReport } from "./replicability";
@@ -138,12 +144,94 @@ export interface BenchmarkShotContent {
   scene: string;
 }
 
+/**
+ * 这一镜从原片切出来的片段，送进视频编辑模型换主体用的。
+ *
+ * 不是每镜都切：判为直接生成的镜头切了也用不上，一条片子几十镜全切就是几百兆垃圾。
+ * 有这个字段才代表原片段真的落盘了，别拿 route 去推——切片会失败。
+ */
+export interface BenchmarkShotClip {
+  /** 切出来多长，秒。和 durationSec 应该一致，对不上说明切歪了 */
+  durationSec: number;
+  /** 切出来的字节数，界面上给人看要占多少地方 */
+  bytes: number;
+}
+
+/**
+ * 这一镜里说了什么话。整片转写按镜头边界切出来的。
+ *
+ * 走编辑通道换掉主体之后，口型还是原片说原话时的口型——
+ * 要让他说自己的词就得再补一道对口型，而补之前得先知道这一镜原本说的是什么、占了多长。
+ */
+export interface BenchmarkShotVoiceover {
+  text: string;
+  /** 这段话在整片里的起止秒。和镜头边界有零点几秒出入是正常的 */
+  startSec: number;
+  endSec: number;
+}
+
+/**
+ * 这份原片是哪来的，决定它的片段能不能进编辑通道。
+ *
+ * extractor：走本机拆片服务抓的，是无水印源。
+ * upload：人工传的 mp4，来路不明——很可能是录屏或下载来的带水印版本。
+ */
+export type BenchmarkOrigin = "extractor" | "upload";
+
+/**
+ * 水印闸门。
+ *
+ * 抖音/小红书的水印是飘移的半透明 logo 加账号 ID，一旦带着进视频编辑模型，
+ * 输出里会变成一团糊掉的残留——洗不掉，而且不可逆，发出去就是搬运实锤。
+ * 所以 upload 来的片子必须有人真看过一眼才放行，不做自动判定：
+ * 水印检测本身就不可靠，一个假阴性的代价是把别人的账号 ID 印在自己的成片里。
+ */
+export interface BenchmarkSource {
+  origin: BenchmarkOrigin;
+  /**
+   * 人工确认「画面里没有水印」的时间。没确认过就没有这一项。
+   *
+   * 只存事实，不存结论：能不能用由 clipsAllowed 现算。
+   * 存一个 watermarkFree 布尔的话，哪天发现拆片服务某个源也带水印，
+   * 存量模板会全部保持放行——一条规则物化进几百份 JSON，就再也改不动了。
+   */
+  confirmedAt?: string;
+}
+
+/**
+ * 切点踩没踩在音乐节拍上。
+ *
+ * 这不是版权检查——原声本来就不进下游。它回答的是另一个问题：
+ * 这套节奏模板换掉 BGM 之后还成不成立。爆款的切点常常是踩着原曲鼓点切的，
+ * 画面全换、BGM 也换掉之后，那些切点就悬在空中，照抄的时间码反而会显得乱。
+ */
+export interface BenchmarkBeatSync {
+  /** 落在起音点上的切点占比，0-1 */
+  alignedPct: number;
+  /**
+   * 随机撒同样多的切点本来就能蒙对多少，0-1。
+   *
+   * 这一项不能省。实测一条完全不卡点的探店片对齐率有 28%，而它的随机基线就是 27%——
+   * 只报 28% 会让人以为「有点踩上了」。起音点越密，白捡的对齐越多，
+   * 判断绑不绑原曲看的是超出基线多少，不是绝对值。
+   */
+  expectedPct: number;
+  /** 参与计算的切点数 */
+  cuts: number;
+  /** 测不了就说测不了，不给一个假的 0 */
+  unavailable?: "no-audio" | "no-onsets";
+}
+
 export interface BenchmarkShot {
   order: number;
   startSec: number;
   endSec: number;
   durationSec: number;
   plan: BenchmarkShotPlan;
+  /** 原片段切出来了没有。只有走编辑通道的镜头才有 */
+  clip?: BenchmarkShotClip;
+  /** 这一镜里说了什么话。整片转写按镜头边界切出来的，没人声就没有 */
+  voiceover?: BenchmarkShotVoiceover;
   /** 量出来的结构。老的节奏模板没有这一项，读的地方都要当它可能不在 */
   metrics?: BenchmarkShotMetrics;
   /**
@@ -168,6 +256,10 @@ export interface BenchmarkRhythm {
   report?: ReplicabilityReport;
   /** 这条片子里可替换的实体清单。看过片才有 */
   cast?: BenchmarkCastEntity[];
+  /** 原片来路与水印确认状态。老模板没有这一项，读的地方要当它可能不在 */
+  source?: BenchmarkSource;
+  /** 切点与音乐节拍的对齐情况 */
+  beatSync?: BenchmarkBeatSync;
 }
 
 /** 灵敏度档位：同一条片子换个阈值，切出来的镜头数能差一倍，所以要让人能调。 */
@@ -474,4 +566,21 @@ export function castToPromptLines(cast: BenchmarkCastEntity[], names: Map<string
         : `- ${CAST_KIND_LABEL[entity.kind]}「${entity.label}」${shots}：没换，照对标的类型写`;
     })
     .join("\n");
+}
+
+/**
+ * 这份原片的片段能不能送进编辑通道。
+ *
+ * 两条放行理由：拆片服务抓的本来就是无水印源，或者人真的看过一眼点了确认。
+ * 默认不行——老模板没有 source 字段，读出来就是 undefined，
+ * 而「不知道来路」和「确认干净」之间应该拦住，不是放行：
+ * 放错一次的代价是成片里印着别人的账号 ID，且不可逆。
+ */
+export function clipsAllowed(rhythm: BenchmarkRhythm): boolean {
+  return rhythm.source?.origin === "extractor" || Boolean(rhythm.source?.confirmedAt);
+}
+
+/** 已经切出原片段的镜号。界面上标出来，也是编辑通道的实际可用清单。 */
+export function clippedShots(rhythm: BenchmarkRhythm): number[] {
+  return rhythm.shots.filter((shot) => shot.clip).map((shot) => shot.order);
 }

@@ -52,6 +52,7 @@ import {
   listVideoProjects,
   rewriteVideoScript,
   saveVideoProject,
+  confirmBenchmarkSource,
   screenReplicability,
 } from "@/lib/workflowClient";
 import {
@@ -465,6 +466,7 @@ export default function VideoFactory({
   const [isDetectingRhythm, setIsDetectingRhythm] = useState(false);
   const [savedRhythms, setSavedRhythms] = useState<BenchmarkRhythm[]>([]);
   const [isScreening, setIsScreening] = useState(false);
+  const [isConfirmingSource, setIsConfirmingSource] = useState(false);
 
   const [isWritingScript, setIsWritingScript] = useState(false);
   const [isCuttingShots, setIsCuttingShots] = useState(false);
@@ -1084,6 +1086,29 @@ export default function VideoFactory({
     }
   };
 
+  /**
+   * 确认（或撤销）这条原片没水印。
+   * 确认之后服务端立刻把要走编辑通道的镜头切出来，撤销则连已切的一起删——
+   * 所以这里必须把返回的节奏整个换掉，不能只改本地那个布尔值。
+   */
+  const handleConfirmSource = async (watermarkFree: boolean) => {
+    const target = detectedRhythm || project.rhythm;
+    if (!target) return;
+    setIsConfirmingSource(true);
+    try {
+      const data = await confirmBenchmarkSource(target.id, watermarkFree);
+      setDetectedRhythm(data.rhythm);
+      setProject((current) => (current.rhythm?.id === data.rhythm.id ? applyRhythm(current, data.rhythm) : current));
+      refreshRhythms();
+      onNotice({ type: "success", message: watermarkFree ? "已确认无水印，原片段已切出" : "已撤销确认，原片段已删除" });
+    } catch (error) {
+      console.error("[VideoFactory] 水印确认失败", { action: "videoFactory.benchmark.source", error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "水印确认失败" });
+    } finally {
+      setIsConfirmingSource(false);
+    }
+  };
+
   const handleDeleteRhythm = async (rhythmId: string) => {
     try {
       await deleteBenchmarkRhythm(rhythmId);
@@ -1445,6 +1470,8 @@ export default function VideoFactory({
             onClear={() => setProject((current) => ({ ...current, rhythm: null }))}
             onScreen={handleScreenRhythm}
             screening={isScreening}
+            onConfirmSource={handleConfirmSource}
+            confirmingSource={isConfirmingSource}
           />
 
           <BenchmarkCastBoard

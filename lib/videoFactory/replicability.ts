@@ -1,8 +1,12 @@
 /**
- * 可复刻性筛查：看着对标视频的关键帧，判断这条片子用 AI 生成到底做不做得出来。
+ * 可复刻性筛查：看着对标视频的关键帧，判断这条片子的每一镜该走哪条通道做出来。
  *
  * 存在的理由很实在——拆完节奏才发现「这是真人口播、对不了口型」，那前面的活儿全白干。
- * 所以这一步要在动手之前就把话说清楚，并且对每个卡住的镜头给出替代方案，而不是只报一句「做不了」。
+ * 所以这一步要在动手之前就把话说清楚。
+ *
+ * 从「做不做得出来」改成「走哪条通道」，是因为复刻不再只有图生视频一条路：
+ * 接上视频编辑通道之后，「连续精细动作」这类原本判死刑的镜头，
+ * 保留原片运动、只换主体就能过。二分法会把一半能做的镜头拦在门外。
  */
 
 import {
@@ -31,26 +35,77 @@ export const RISK_LABEL: Record<ReplicabilityRisk, string> = {
 };
 
 export const RISK_WHY: Record<ReplicabilityRisk, string> = {
-  talking: "图生视频不做对口型，嘴型对不上口播",
-  "fine-motion": "6 秒里主体形变一大就崩，手部操作尤其明显",
-  identity: "跨镜靠提示词措辞对齐外貌，镜头越多越容易换脸",
+  talking: "换得了人换不了口型：走编辑通道之后还欠一道对口型",
+  "fine-motion": "从零生成会崩，手部操作尤其明显；保留原片运动只换主体就能过",
+  identity: "编辑通道下同一张参考图贯穿全片，不再是卡点",
   text: "生成模型写不准文字，得靠后期贴字",
-  crowd: "人一多就糊脸、肢体错乱",
+  crowd: "从零生成人一多就糊脸；保留原片人群、只换前景那一位",
 };
 
 /**
- * 风险分两种，这个区分才是报告有没有用的关键。
- * 一条片子十有八九每镜都能挑出毛病，全标成红的等于没说——
- * 真正要拦住人的是「生成阶段就做不出来」，其余后期都能补。
+ * 一镜怎么做出来。
+ *
+ * 这是三条通道，不是三个严重度——报告的用处是「这镜该怎么做」，不是「这镜有多糟」。
+ * 一条片子十有八九每镜都能挑出毛病，按毛病轻重排等于没说。
  */
-export type RiskSeverity = "block" | "workable";
+/**
+ * 一镜额外要做的工序。空集就是「直接生成」——什么额外的活儿都没有。
+ *
+ * 为什么是集合而不是单值：这些工序是并列的，不是三选一。
+ * 一镜既有精细动作又有包装文字，就是既要切片编辑、又要后期贴字。
+ * 压成一个赢家的话，「还得贴字」这件真实待办会凭空消失在统计里。
+ */
+export type ShotStep = "edit" | "postfix" | "lipsync";
 
-export const RISK_SEVERITY: Record<ReplicabilityRisk, RiskSeverity> = {
-  talking: "block",
-  "fine-motion": "block",
-  crowd: "block",
-  identity: "workable",
-  text: "workable",
+export const STEP_LABEL: Record<ShotStep, string> = {
+  edit: "切片去编辑",
+  postfix: "后期贴字",
+  lipsync: "补对口型",
+};
+
+export const STEP_WHY: Record<ShotStep, string> = {
+  edit: "保留对标这一镜的原运动和构图，用视频编辑模型把主体换掉",
+  postfix: "画面能生成，文字后期贴上去",
+  lipsync: "编辑模型换得了人，口型还是原片说原话时的口型，要说自己的词得再补一道",
+};
+
+/** 固定的展示顺序，也是「主路线」取哪个的优先级。 */
+const STEP_ORDER: ShotStep[] = ["edit", "postfix", "lipsync"];
+
+export const RISK_STEPS: Record<ReplicabilityRisk, ShotStep[]> = {
+  // 说话镜换得了人换不了口型，所以是两道工序，不是一道
+  talking: ["edit", "lipsync"],
+  "fine-motion": ["edit"],
+  crowd: ["edit"],
+  // 编辑通道下同一张参考图贯穿全片，这条风险不再产生额外工序
+  identity: [],
+  text: ["postfix"],
+};
+
+/** 这一镜要做的全部额外工序，去重并按固定顺序排。 */
+export function shotSteps(shot: ShotRisk): ShotStep[] {
+  const steps = new Set(shot.risks.flatMap((risk) => RISK_STEPS[risk]));
+  return STEP_ORDER.filter((step) => steps.has(step));
+}
+
+/**
+ * 这一镜的主路线，给界面上「这镜怎么做」一句话用。
+ *
+ * 是 shotSteps 的派生视图，不是另一套判据——展示要一句话，统计要全集，
+ * 各取所需但只有一个真相来源。
+ */
+export type ShotRoute = "generate" | "edit" | "postfix";
+
+export const ROUTE_LABEL: Record<ShotRoute, string> = {
+  generate: "直接生成",
+  edit: "切片去编辑",
+  postfix: "生成 + 后期",
+};
+
+export const ROUTE_WHY: Record<ShotRoute, string> = {
+  generate: "图生视频从零做，主体换成自己的素材",
+  edit: STEP_WHY.edit,
+  postfix: STEP_WHY.postfix,
 };
 
 export interface ShotRisk {
@@ -101,12 +156,14 @@ export function buildReplicabilityPrompt(shots: BenchmarkShot[]): string {
 上面这些图是从对标视频里按顺序抽的关键帧，每张对应一个镜头：
 ${shotLines}
 
-【复刻用的引擎有这些硬边界】
-- 做法是先生成一张静态首帧图，再让模型把这张图动起来。
-- 每段最长 10 秒，没有尾帧控制，不能指定精确动作。
-- 不做对口型：人物开口说话的镜头，嘴型和口播对不上。
-- 画面里的文字生成不准。
-- 跨镜头的同一个人/同一件产品，只能靠提示词措辞对齐外貌，镜头越多越容易变样。
+【复刻有两条通道】
+- 通道 A 从零生成：先生成一张静态首帧图，再让模型把这张图动起来。
+  每段最长 10 秒，没有尾帧控制，不能指定精确动作，不做对口型，画面里的文字生成不准，
+  跨镜头的同一个人/同一件产品只能靠提示词措辞对齐外貌。
+- 通道 B 切片编辑：把对标这一镜的原片段送进视频编辑模型，运动、构图、光线原样保留，
+  只把画面里的人和货换成用户自己的。动作再精细也不会崩，但口型仍然是原片的。
+
+你不用决定走哪条——如实标出风险就行，走哪条由后面的规则算。
 
 【怎么判断】
 逐图看画面里实际有什么，只标你真的看见的东西，看不清就不标。风险类型只能从这五个里选：
@@ -116,7 +173,9 @@ ${shotLines}
 - text：画面里有承载信息的文字（字幕条不算，商品包装上的字、屏幕截图里的字算）
 - crowd：三个人以上或场面杂乱
 
-有风险的镜头要给一句可执行的替代方案，比如「改成手部特写不出脸」「拆成两个静态镜头，动作留给转场」「文字后期贴上去」。没风险的镜头 risks 留空数组、workaround 留空字符串。
+有风险的镜头给一句可执行的提示：要保住这一镜原本的效果，动手时得注意什么。
+比如「手和产品的接触点要拍清楚，换货时才对得上」「人群留在背景里，只换前景这一位」「文字后期贴上去」。
+没风险的镜头 risks 留空数组、workaround 留空字符串。
 
 【同时要拆出「可替换的实体」】
 这些图会被用来复刻：结构、构图、光线照抄，但里面的人、货、地方要换成用户自己的。
@@ -248,41 +307,58 @@ export function normalizeReport(
   };
 }
 
-/** 这一镜最重的那档风险；没风险返回 null。 */
-export function shotSeverity(shot: ShotRisk): RiskSeverity | null {
-  if (shot.risks.some((risk) => RISK_SEVERITY[risk] === "block")) return "block";
-  return shot.risks.length ? "workable" : null;
+export function shotRoute(shot: ShotRisk): ShotRoute {
+  const steps = shotSteps(shot);
+  if (steps.includes("edit")) return "edit";
+  if (steps.includes("postfix")) return "postfix";
+  return "generate";
 }
 
-/** 有风险的镜头，硬卡点排前面——那才是要先做决定的。 */
+/** 有风险的镜头，要切片的排前面——那批要先决定原片能不能用。 */
 export function riskyShots(report: ReplicabilityReport): ShotRisk[] {
+  const rank = (shot: ShotRisk) => (shotSteps(shot).includes("edit") ? 0 : 1);
   return report.shots
     .filter((shot) => shot.risks.length > 0)
-    .sort((a, b) => {
-      const rank = (shot: ShotRisk) => (shotSeverity(shot) === "block" ? 0 : 1);
-      return rank(a) - rank(b) || a.order - b.order;
-    });
+    .sort((a, b) => rank(a) - rank(b) || a.order - b.order);
 }
 
-export interface RiskTally {
-  /** 生成阶段就做不出来的镜头数 */
-  blocked: number;
-  /** 有毛病但后期能补的镜头数 */
-  workable: number;
-  clean: number;
+/**
+ * 每道工序各有多少镜。
+ *
+ * 各项**不互斥**：一镜既要切片又要贴字，两边都会计上，只有 generate 是「一道额外工序都没有」。
+ * 早先按单一路线计数会让后者吞掉前者，界面上「要贴字的」就少报了。
+ */
+export interface StepTally extends Record<ShotStep, number> {
+  generate: number;
 }
 
-export function tallyRisks(report: ReplicabilityReport): RiskTally {
-  let blocked = 0;
-  let workable = 0;
-  let clean = 0;
+export function tallySteps(report: ReplicabilityReport): StepTally {
+  const tally: StepTally = { generate: 0, edit: 0, postfix: 0, lipsync: 0 };
   for (const shot of report.shots) {
-    const severity = shotSeverity(shot);
-    if (severity === "block") blocked += 1;
-    else if (severity === "workable") workable += 1;
-    else clean += 1;
+    const steps = shotSteps(shot);
+    if (!steps.length) tally.generate += 1;
+    for (const step of steps) tally[step] += 1;
   }
-  return { blocked, workable, clean };
+  return tally;
+}
+
+/**
+ * 要切原片下来才做得了的镜号。
+ * 拆片时按它切 clip，不是每镜都切——切了也用不上，白占地方。
+ */
+export function clipShotOrders(report: ReplicabilityReport): number[] {
+  return report.shots.filter((shot) => shotSteps(shot).includes("edit")).map((shot) => shot.order);
+}
+
+/**
+ * 逐镜的主路线。
+ * 界面和切片器共用这一份，省得同一件事在四个地方各推一遍；
+ * 没看过片时全是「直接生成」——没有判据就不该假装有结论。
+ */
+export function routeByShot(report: ReplicabilityReport | undefined): Map<number, ShotRoute> {
+  const out = new Map<number, ShotRoute>();
+  for (const shot of report?.shots || []) out.set(shot.order, shotRoute(shot));
+  return out;
 }
 
 /**

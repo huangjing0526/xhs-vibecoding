@@ -63,6 +63,10 @@ export const PROVIDER_CAPS: Record<VideoGenProviderId, VideoGenCapability> = {
   "gemini-veo": { durations: [4, 6, 8], resolutions: ["720p", "1080p"], aspectRatios: ["16:9", "9:16"] },
   // 回传通道：片子在别处生成，时长按传回来的文件实际长度记，不受档位约束
   doubao: { durations: [], resolutions: [], aspectRatios: [] },
+  // 走编辑通道的镜头也落在这条：VACE / 可灵 / Runway 这些都在各自平台上手动跑，
+  // 我们负责切好片、标好哪镜要换什么，成片传回来。
+  // 没给「能不能接编辑活」单开一个能力位——那会是 UPLOAD_PROVIDERS 的第二张表，
+  // 而下面那条注释刚说过两张表迟早给出相反的答案。等真接了编辑 API 再按路线建模。
   manual: { durations: [], resolutions: [], aspectRatios: [] },
 };
 

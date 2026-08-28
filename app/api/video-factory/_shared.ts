@@ -82,6 +82,42 @@ export function benchmarkDir(benchmarkId: string): string {
   return path.join(BENCHMARK_ROOT, benchmarkId);
 }
 
+/**
+ * 限并发跑一批异步活儿，结果按输入顺序回。
+ *
+ * 用在成批 spawn ffmpeg 的地方：串着跑白等，一次全放又会让几十个进程抢同一个源文件。
+ */
+export async function mapLimited<T, R>(
+  items: T[],
+  limit: number,
+  task: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await task(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+/** 对标原片。目录布局的真相收在这一处，别在各个路由里各拼各的。 */
+export function benchmarkSourcePath(benchmarkId: string): string {
+  return path.join(benchmarkDir(benchmarkId), "source.mp4");
+}
+
+/**
+ * 对标某一镜切出来的原片段，送进视频编辑模型换主体用的。
+ * 和缩略图、大帧同放在节奏模板目录下——它们描述的是同一条片子的同一镜，分开放迟早对不上。
+ */
+export function benchmarkClipPath(benchmarkId: string, shotOrder: number): string {
+  return path.join(benchmarkDir(benchmarkId), `clip-${String(shotOrder).padStart(2, "0")}.mp4`);
+}
+
 export function projectDir(projectId: string): string {
   return path.join(PROJECT_ROOT, projectId);
 }
