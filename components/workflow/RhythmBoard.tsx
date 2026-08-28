@@ -31,6 +31,8 @@ import {
   describeRhythm,
   describeShotMetrics,
   entitiesInShot,
+  stageDurationSec,
+  stageOfShot,
   formatTimecode,
   rhythmShotCount,
   riskyShots,
@@ -207,9 +209,28 @@ function Filmstrip({
   onSelect: (order: number) => void;
   routes: Map<number, ShotRoute>;
 }) {
+  // 没归过组就平铺，归过就按段切开——段名和段时长挂在每组前面
+  const groups = rhythm.stages?.length
+    ? rhythm.stages.map((stage) => ({
+        stage,
+        shots: rhythm.shots.filter((shot) => stage.shots.includes(shot.order)),
+      }))
+    : [{ stage: null, shots: rhythm.shots }];
+
   return (
     <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-      {rhythm.shots.map((shot) => {
+      {groups.map(({ stage, shots }, groupIndex) => (
+        <div key={stage?.name || groupIndex} className="shrink-0">
+          {stage && (
+            <div className="mb-1 flex items-baseline gap-1.5 px-0.5" title={stage.purpose}>
+              <span className="text-[11px] font-bold text-ink">{stage.name}</span>
+              <span className="text-[10px] tabular-nums text-faint">
+                {stage.shots.length} 镜 · {stageDurationSec(stage, rhythm)}s
+              </span>
+            </div>
+          )}
+          <div className={`flex gap-2 ${stage ? "rounded-xl bg-soft/60 p-1" : ""}`}>
+      {shots.map((shot) => {
         const route = routes.get(shot.order) || "generate";
         const style = ROUTE_STYLE[route];
         return (
@@ -251,6 +272,9 @@ function Filmstrip({
         </button>
         );
       })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -837,6 +861,7 @@ export default function RhythmBoard({
       {stats && (
         <div className="mb-4 flex flex-wrap gap-2">
           <Stat value={stats.shotCount} label="镜头数" />
+          {rhythm.stages?.length ? <Stat value={rhythm.stages.length} label="叙事段" /> : null}
           <Stat value={`${stats.averageSec}s`} label="平均镜长" />
           <Stat value={`${stats.shortestSec}s`} label="最短一镜" />
           <Stat value={stats.openingCuts} label="前 5 秒切几刀" tone="brand" />
@@ -868,6 +893,14 @@ export default function RhythmBoard({
               <span className="font-mono text-xs text-muted">
                 {formatTimecode(selectedShot.startSec)} → {formatTimecode(selectedShot.endSec)}
               </span>
+              {(() => {
+                const stage = stageOfShot(rhythm.stages, selectedShot.order);
+                return stage ? (
+                  <span className="text-[11px] text-faint" title={stage.purpose}>
+                    · {stage.name}
+                  </span>
+                ) : null;
+              })()}
             </div>
             <div className="mt-2 font-rounded text-2xl font-bold tabular-nums text-ink">{selectedShot.durationSec} 秒</div>
             <p className="mt-1 flex items-center gap-1.5 text-sm leading-6 text-muted">

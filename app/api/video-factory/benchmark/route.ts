@@ -6,6 +6,7 @@ import { BENCHMARK_ROOT, FACE_MODELS_DIR, RENDERER_URL, benchmarkDir, isSafeSegm
 import { beatsFrom, readLoudnessSafe } from "@/app/api/video-factory/benchmark/_audio";
 import { readRhythm, writeRhythm } from "@/app/api/video-factory/benchmark/_rhythm";
 import { dropScreenFrames, runScreening } from "@/app/api/video-factory/benchmark/_screen";
+import { groupIntoStages } from "@/app/api/video-factory/benchmark/_stages";
 import { assignVoiceovers, transcribe } from "@/app/api/video-factory/benchmark/_transcript";
 import {
   DEFAULT_RHYTHM_THRESHOLD,
@@ -285,6 +286,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // 归到叙事阶段：三十几镜逐条看没人扛得住，人真正要的决策在「这一段占多长」这一层。
+    // 只吃口播，所以看片失败了它照样能跑
+    const stages = await groupIntoStages(finalRhythm);
+    if (stages.length) finalRhythm = await writeRhythm(id, { ...finalRhythm, stages });
+
     const described = finalRhythm.shots.filter((shot) => shot.content).length;
     const clipped = clippedShots(finalRhythm).length;
     console.info("[VideoFactory] 节奏拆解完成", {
@@ -295,6 +301,7 @@ export async function POST(request: NextRequest) {
       shotCount: shots.length,
       described,
       clipped,
+      stages: finalRhythm.stages?.length || 0,
       origin: sourceInfo.origin,
       castCount: finalRhythm.cast?.length || 0,
     });

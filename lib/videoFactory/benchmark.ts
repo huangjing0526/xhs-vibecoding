@@ -12,6 +12,7 @@
  */
 
 import type { ReplicabilityReport } from "./replicability";
+import type { BenchmarkStage } from "./stage";
 import { PROVIDER_CAPS, type ShotDuration, type VideoGenProviderId } from "./types";
 
 /** 一镜怎么落到生成引擎上：引擎的档位是离散的，短镜头一律「生成长的，剪短用」。 */
@@ -258,6 +259,13 @@ export interface BenchmarkRhythm {
   report?: ReplicabilityReport;
   /** 这条片子里可替换的实体清单。看过片才有 */
   cast?: BenchmarkCastEntity[];
+  /**
+   * 叙事阶段分组。看过片、归过组才有。
+   *
+   * 存在 rhythm 里而不是项目里：这是「这条对标片是怎么讲的」，和谁来复刻无关，
+   * 换个项目套同一条节奏，分组照样成立。
+   */
+  stages?: BenchmarkStage[];
   /** 原片来路与水印确认状态。老模板没有这一项，读的地方要当它可能不在 */
   source?: BenchmarkSource;
   /** 切点与音乐节拍的对齐情况 */
