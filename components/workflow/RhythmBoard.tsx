@@ -1,11 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Activity, AlertTriangle, Film, Loader2, Ruler, Scan, Scissors, Trash2, Upload, Users, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, Film, Link2, Loader2, Ruler, Scan, Scissors, Trash2, Upload, Users, Zap } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
 import Card, { CardHeader } from "@/components/ui/Card";
+import { Input } from "@/components/ui/Field";
+import { extractShareUrl } from "@/lib/videoExtract";
 import Stat from "@/components/ui/Stat";
 import {
   FAST_CUT_SEC,
@@ -42,8 +44,10 @@ import {
 interface RhythmBoardProps {
   rhythm: BenchmarkRhythm | null;
   busy: boolean;
-  /** 拆片带过来的无水印视频地址，有就能一键拆，不用再上传 */
+  /** 从「链接拆片」带过来的无水印视频地址，有就能一键拆，不用再贴一次 */
   sourceUrl?: string;
+  /** 当前忙在哪一步。贴链接要先取视频再切镜，两段耗时都不短，得分开说 */
+  busyHint?: string;
   /** 以前拆过的节奏，可以直接拿来套，不必每次重拆 */
   saved: BenchmarkRhythm[];
   onPickSaved: (rhythm: BenchmarkRhythm) => void;
@@ -51,6 +55,8 @@ interface RhythmBoardProps {
   /** 回到选择状态，重新拆一条或换一条 */
   onReset: () => void;
   onDetect: (options: { file?: File; threshold: number; reuseId?: string }) => void;
+  /** 贴一条抖音/小红书链接就地拆：先取无水印视频和口播，再切镜 */
+  onDetectLink: (link: string) => void;
   /** 已经在用这条节奏 */
   applied: boolean;
   onApply: () => void;
@@ -422,12 +428,14 @@ function ReplicabilityPanel({
 export default function RhythmBoard({
   rhythm,
   busy,
+  busyHint,
   sourceUrl,
   saved,
   onPickSaved,
   onDeleteSaved,
   onReset,
   onDetect,
+  onDetectLink,
   applied,
   onApply,
   onClear,
@@ -435,6 +443,9 @@ export default function RhythmBoard({
   screening,
 }: RhythmBoardProps) {
   const [selected, setSelected] = useState<number | null>(null);
+  const [link, setLink] = useState("");
+  /** 已存节奏默认收起：拆过几十条之后这张列表会把上面的入口挤出屏幕 */
+  const [savedOpen, setSavedOpen] = useState(false);
   const stats = useMemo(() => (rhythm ? summarizeRhythm(rhythm) : null), [rhythm]);
   // 按镜号索引风险，胶片条和详情都要按镜取
   const riskByShot = useMemo(
@@ -444,6 +455,7 @@ export default function RhythmBoard({
   const selectedShot = rhythm?.shots.find((shot) => shot.order === selected) || null;
 
   if (!rhythm) {
+    const linkReady = Boolean(extractShareUrl(link));
     return (
       <Card>
         <CardHeader
@@ -453,19 +465,45 @@ export default function RhythmBoard({
         <Callout tone="info">
           模型自己拆分镜会给你四平八稳的 6 秒一镜，而爆款的开场常常是 5 秒内切三刀——这种节奏猜不出来，只能量。
         </Callout>
+
+        {/* 贴链接和传文件是两条并列的入口，不是主次关系：
+            平台上刷到的直接贴链接，自己手里的素材传文件。 */}
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          {sourceUrl && (
-            <Button variant="ai" onClick={() => onDetect({ threshold: 0.3 })} loading={busy} icon={<Activity size={14} />}>
-              {busy ? "拆解中" : "拆刚才那条片子的节奏"}
-            </Button>
-          )}
-          <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-xl border border-line-strong bg-surface px-4 text-sm font-bold text-ink transition-colors hover:border-brand-300 hover:bg-brand-50">
+          <div className="relative min-w-[280px] flex-1">
+            <Link2 size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+            <Input
+              value={link}
+              disabled={busy}
+              onChange={(event) => setLink(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && linkReady && !busy) onDetectLink(link);
+              }}
+              placeholder="粘贴抖音 / 小红书链接，或整段分享口令"
+              className="pl-9"
+            />
+          </div>
+          <Button
+            variant="ai"
+            disabled={!linkReady || busy}
+            loading={busy}
+            onClick={() => onDetectLink(link)}
+            icon={<Activity size={14} />}
+          >
+            拆这条链接
+          </Button>
+          <span className="text-xs text-faint">或</span>
+          <label
+            className={`inline-flex h-9 items-center gap-2 rounded-xl border border-line-strong bg-surface px-4 text-sm font-bold transition-colors ${
+              busy ? "cursor-not-allowed text-faint" : "cursor-pointer text-ink hover:border-brand-300 hover:bg-brand-50"
+            }`}
+          >
             <Upload size={14} />
             上传 mp4
             <input
               type="file"
               accept="video/mp4"
               className="hidden"
+              disabled={busy}
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 if (file) onDetect({ file, threshold: 0.3 });
@@ -473,26 +511,50 @@ export default function RhythmBoard({
               }}
             />
           </label>
-          {busy && (
-            <span className="flex items-center gap-1.5 text-xs text-faint">
-              <Loader2 size={13} className="animate-spin" />
-              正在逐镜抽帧
-            </span>
-          )}
         </div>
-        {sourceUrl && (
-          <p className="mt-3 text-[11px] leading-5 text-faint">
-            用拆片结果时需要本机的 services/video-renderer 还在跑，视频是从它那里取的。
+
+        {/* 粘了东西但抠不出链接时当场说，别等点了按钮才报错 */}
+        {link.trim() && !linkReady && (
+          <p className="mt-2 text-[11px] leading-5 text-warn">
+            没认出链接。抖音/小红书的分享口令整段粘进来也行，但里面得带 http 开头的那一段。
           </p>
         )}
 
+        {sourceUrl && !link.trim() && (
+          <div className="mt-3">
+            <Button variant="secondary" size="sm" onClick={() => onDetect({ threshold: 0.3 })} disabled={busy}>
+              直接拆刚才「链接拆片」那条
+            </Button>
+          </div>
+        )}
+
+        {busy && (
+          <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
+            <Loader2 size={13} className="animate-spin shrink-0" />
+            {busyHint || "正在逐镜抽帧"}
+          </p>
+        )}
+
+        <p className="mt-3 text-[11px] leading-5 text-faint">
+          贴链接和用拆片结果都要本机的 services/video-renderer 在跑，视频是从它那里取的；上传 mp4 不需要。
+        </p>
+
         {saved.length > 0 && (
           <div className="mt-5 border-t border-line pt-4">
-            {/* 这是流程内的「给手上这条项目换一条节奏」，不是目录——浏览全部模板在「模板」区 */}
-            <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-faint">换一条已存的节奏</div>
-            <div className="space-y-2">
-              {saved.map((item) => {
-                return (
+            {/* 这是流程内的「给手上这条项目换一条节奏」，不是目录——浏览全部模板在「模板」区。
+                默认收起：拆过几十条之后，这张列表会把上面两个入口挤到屏幕外去。 */}
+            <button
+              type="button"
+              onClick={() => setSavedOpen((current) => !current)}
+              className="flex w-full items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-faint transition-colors hover:text-ink"
+              aria-expanded={savedOpen}
+            >
+              {savedOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              换一条已存的节奏 · {saved.length} 条
+            </button>
+            {savedOpen && (
+              <div className="mt-2 space-y-2">
+                {saved.map((item) => (
                   <div key={item.id} className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-2.5">
                     <button type="button" onClick={() => onPickSaved(item)} className="min-w-0 flex-1 text-left">
                       <span className="block truncate text-sm font-bold text-ink">{item.sourceLabel}</span>
@@ -502,9 +564,9 @@ export default function RhythmBoard({
                       删除
                     </Button>
                   </div>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </Card>

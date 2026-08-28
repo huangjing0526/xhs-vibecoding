@@ -43,6 +43,7 @@ import {
   deleteBenchmarkRhythm,
   deleteVideoProject,
   detectBenchmarkRhythm,
+  extractVideo,
   generateShotClip,
   generateShotFrame,
   getVideoGenProviders,
@@ -78,6 +79,7 @@ import {
   type BenchmarkRhythm,
   type BenchmarkSkeleton,
   type CameraMove,
+  analysisToSkeleton,
   castToken,
   pruneCastBinding,
   shotCastRefs,
@@ -487,6 +489,8 @@ export default function VideoFactory({
   const [castBusySlot, setCastBusySlot] = useState<CastSlot | null>(null);
   /** 正在绑的对标实体 token，绑定期间那一行转圈 */
   const [castEntityBusy, setCastEntityBusy] = useState<string | null>(null);
+  /** 拆解当前忙在哪一步。贴链接是取视频和切镜两段，各要几分钟，得分开说 */
+  const [detectHint, setDetectHint] = useState("");
   /** 正在绑素材的镜号。每镜一个槽，同时只会有一个在转 */
   const [materialBusyShot, setMaterialBusyShot] = useState<number | null>(null);
   /** 合成参数。字幕和配音默认都开——不带这两样的成片基本不能直接发 */
@@ -712,6 +716,69 @@ export default function VideoFactory({
         },
       };
     });
+  };
+
+  /**
+   * 贴一条抖音/小红书链接就地拆。
+   *
+   * 走的是「链接拆片」那条现成的链：本机 services/video-renderer 抓无水印视频 + whisper 转写，
+   * 再由模型拆出脚本结构。所以顺手把 skeleton 也存进项目——
+   * 用户贴链接的意图是「整条对标拿进来」，只取视频不要脚本等于白跑一遍 ASR。
+   *
+   * 两段耗时都不短（取视频要转写、切镜要抽帧看片），所以分段报进度，
+   * 不然用户会以为卡死了。
+   */
+  const handleDetectFromLink = async (raw: string) => {
+    const input = raw.trim();
+    if (!input) return;
+    setIsDetectingRhythm(true);
+    setDetectHint("正在取无水印视频和口播稿，这一步要转写，慢");
+    try {
+      const extracted = await extractVideo(input);
+      const videoUrl = extracted.video.videoUrl;
+      if (!videoUrl) {
+        onNotice({ type: "error", message: "拆片服务没给出视频地址，这条可能取不到无水印源" });
+        return;
+      }
+
+      const skeleton = analysisToSkeleton(extracted.analysis, {
+        platform: extracted.video.platform,
+        author: extracted.video.author,
+        title: extracted.video.title,
+        videoUrl,
+      });
+      // 先落盘：拆节奏要几分钟，中途关页面也不该把刚拆出来的脚本结构丢了
+      const saved = await persist({ ...project, skeleton });
+      setProject((current) => ({ ...current, id: saved.id, skeleton }));
+
+      setDetectHint("正在切镜、逐镜抽帧、看画面内容");
+      // 认得出是谁的哪条才叫得出名字；两样都没有就别硬拼一个「@未知作者《未命名》」
+      const named = extracted.video.author || extracted.video.title;
+      const formData = new FormData();
+      formData.append("threshold", "0.3");
+      formData.append("videoUrl", videoUrl);
+      formData.append(
+        "sourceLabel",
+        named ? `@${extracted.video.author || "未知作者"}《${extracted.video.title || "未命名"}》` : "对标视频",
+      );
+
+      const data = await detectBenchmarkRhythm(formData);
+      setDetectedRhythm(data.rhythm);
+      refreshRhythms();
+      const described = data.rhythm.shots.filter((shot) => shot.content).length;
+      onNotice({
+        type: "success",
+        message: described
+          ? `切出 ${data.rhythm.shots.length} 个镜头，${described} 镜有画面描述，口播结构也一并拆好了`
+          : `切出 ${data.rhythm.shots.length} 个镜头`,
+      });
+    } catch (error) {
+      console.error("[VideoFactory] 链接拆节奏失败", { action: "videoFactory.benchmark.link", error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "这条链接拆不动" });
+    } finally {
+      setIsDetectingRhythm(false);
+      setDetectHint("");
+    }
   };
 
   const handleDetectRhythm = async ({
@@ -1351,7 +1418,7 @@ export default function VideoFactory({
             </Card>
           ) : (
             <Callout tone="info">
-              没有对标来源也能做：直接填下面的选题，从零写一条。想借结构的话，去「链接拆片」拆一条再送过来。
+              没有对标来源也能做：直接填下面的选题，从零写一条。想借结构的话，把链接贴进下面那个框，或者传个 mp4。
             </Callout>
           )}
 
@@ -1359,6 +1426,8 @@ export default function VideoFactory({
             rhythm={shownRhythm}
             busy={isDetectingRhythm}
             sourceUrl={project.skeleton?.videoUrl}
+            busyHint={detectHint}
+            onDetectLink={handleDetectFromLink}
             saved={savedRhythms}
             onPickSaved={(item) => setDetectedRhythm(item)}
             onDeleteSaved={handleDeleteRhythm}
