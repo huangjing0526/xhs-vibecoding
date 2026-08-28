@@ -1,4 +1,5 @@
 import type { AreaId } from "@/lib/capabilities";
+import type { BloggerDistillation } from "@/lib/bloggerWorkflow";
 import {
   BUILT_IN_IMAGE_TEMPLATES,
   loadCustomImageTemplates,
@@ -6,7 +7,7 @@ import {
   type ImageTemplateThumb,
 } from "@/lib/imageFactory";
 import { CAST_SLOTS, describeRhythm, shotTone, type BenchmarkRhythm, type ShotTone } from "@/lib/videoFactory";
-import { listBenchmarkRhythms } from "@/lib/workflowClient";
+import { listBenchmarkRhythms, listDaokuTemplates } from "@/lib/workflowClient";
 
 /**
  * 「模板」的单一事实源。
@@ -15,11 +16,11 @@ import { listBenchmarkRhythms } from "@/lib/workflowClient";
  * 出图模板和拆来的视频结构本是同一种东西，只是数据形状不同——把「怎么读一张模板」收在这里之后，
  * 目录页只管画卡片、工作台只管按 kind 分发，谁都不用知道一共有几种模板。
  *
- * 加第三类（道库/笔记结构）时要改的只有两处：TemplateKind 加一个字面量，
- * 这里加一个 xxxTemplateCards() 来源函数。目录页和路由都不用动。
+ * 第三类（道库）就是按这个形状加进来的：TemplateKind 加一个字面量，这里加一个 xxxTemplateCards() 来源函数。
+ * 落哪个区、卡面什么图标，由 templateTarget / templateOrigin 从 kind 派生，目录页仍然不用数有几种。
  */
 
-export type TemplateKind = "image" | "rhythm";
+export type TemplateKind = "image" | "rhythm" | "daoku";
 
 /** 节奏条的一根：高度是它在这条片子里的时长占比，颜色是它有多快。 */
 export interface TemplateBar {
@@ -53,15 +54,41 @@ export interface RhythmTemplateCard extends TemplateCardBase {
   rhythm: BenchmarkRhythm;
 }
 
-export type TemplateCard = ImageTemplateCard | RhythmTemplateCard;
+export interface DaokuTemplateCard extends TemplateCardBase {
+  kind: "daoku";
+  /** 没有图也没有节奏条，样例是这位博主的标题句式——照着写就知道长什么样 */
+  lines: string[];
+  /** 整条带过去，下游不用拿 id 再查一遍库 */
+  distillation: BloggerDistillation;
+}
 
-/** 「照这个做」把人送进哪个工厂。 */
+export type TemplateCard = ImageTemplateCard | RhythmTemplateCard | DaokuTemplateCard;
+
+/**
+ * 「照这个做」把人送到哪个区。
+ * 道库不进工厂——它约束的是怎么写，得先有一条选题，所以送去项目页挑一条。
+ */
 export function templateTarget(card: TemplateCard): AreaId {
-  return card.kind === "rhythm" ? "videoFactory" : "images";
+  if (card.kind === "rhythm") return "videoFactory";
+  if (card.kind === "daoku") return "projects";
+  return "images";
+}
+
+/** 这张模板打哪来的：目录卡的图标与配色跟着它走，目录页不用记一共有几种 kind。 */
+export function templateOrigin(card: TemplateCard): AreaId {
+  if (card.kind === "rhythm") return "videoFactory";
+  if (card.kind === "daoku") return "blogger";
+  return "images";
 }
 
 /** 视频结构模板单独成区，排在出图模板之后。 */
 export const RHYTHM_CATEGORY = "视频结构";
+
+/** 道库排在最后一区。 */
+export const DAOKU_CATEGORY = "内容道库";
+
+/** 卡面上最多摆这么多句标题句式，多了卡片装不下。 */
+const MAX_DAO_LINES = 3;
 
 /**
  * 节奏条最多画这么多根。
@@ -104,6 +131,20 @@ export function toRhythmTemplateCard(rhythm: BenchmarkRhythm): RhythmTemplateCar
   };
 }
 
+export function toDaokuTemplateCard(distillation: BloggerDistillation): DaokuTemplateCard {
+  return {
+    kind: "daoku",
+    id: distillation.id,
+    name: distillation.sourceLabel,
+    description: distillation.coreDao,
+    category: DAOKU_CATEGORY,
+    // 槽位是蒸馏时按这位博主的道定下来的，这里只把它摊平成卡面文字
+    slots: distillation.slots.map((slot) => slot.label),
+    lines: distillation.titlePatterns.slice(0, MAX_DAO_LINES),
+    distillation,
+  };
+}
+
 /** 内置 + 自建的出图模板。自建的存在本机浏览器里，所以这个函数只能在挂载后调。 */
 export function imageTemplateCards(): ImageTemplateCard[] {
   return [...BUILT_IN_IMAGE_TEMPLATES, ...loadCustomImageTemplates()].map(toImageTemplateCard);
@@ -113,4 +154,10 @@ export function imageTemplateCards(): ImageTemplateCard[] {
 export async function rhythmTemplateCards(): Promise<RhythmTemplateCard[]> {
   const { rhythms } = await listBenchmarkRhythms();
   return rhythms.map(toRhythmTemplateCard);
+}
+
+/** 蒸馏出来的道库，也存在本机磁盘上。 */
+export async function daokuTemplateCards(): Promise<DaokuTemplateCard[]> {
+  const { distillations } = await listDaokuTemplates();
+  return distillations.map(toDaokuTemplateCard);
 }

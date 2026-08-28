@@ -6,7 +6,7 @@
  * 与「对标拆解」道库同源：拆出的结构可一键沉淀成 BloggerDistillation。
  */
 
-import type { BloggerDistillation } from "./bloggerWorkflow";
+import { DAOKU_BASE_SLOTS, type BloggerDistillation } from "./bloggerWorkflow";
 
 export type VideoPlatform = "douyin" | "xiaohongshu" | "unknown";
 
@@ -163,9 +163,12 @@ export function scriptAnalysisToDistillation(
 ): BloggerDistillation {
   const slug = (video.author || "unknown").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "unknown";
   const nonEmpty = (items: string[]) => items.map((s) => s.trim()).filter(Boolean);
+  const bloggerId = `video-${video.platform}-${slug}`;
   return {
-    id: `distill-video-${slug}-${Date.now().toString(36)}`,
-    bloggerId: `video-${video.platform}-${slug}`,
+    id: `distill-${bloggerId}`,
+    bloggerId,
+    sourceLabel: video.author || video.title || `${VIDEO_PLATFORM_LABEL[video.platform]}对标视频`,
+    createdAt: new Date().toISOString(),
     coreDao: analysis.reusableTemplate || analysis.hook || video.title,
     topicDao: nonEmpty([analysis.painPoint]),
     titlePatterns: nonEmpty([analysis.hook]),
@@ -176,5 +179,7 @@ export function scriptAnalysisToDistillation(
     adaptationNotes: nonEmpty([
       `来源：${VIDEO_PLATFORM_LABEL[video.platform]} @${video.author || "未知作者"}《${video.title || "无标题"}》`,
     ]),
+    // 拆一条视频只够拆出「道」，看不出这位作者额外要什么料，所以只给基座三槽。
+    slots: DAOKU_BASE_SLOTS,
   };
 }

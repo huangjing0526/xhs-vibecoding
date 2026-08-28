@@ -23,8 +23,10 @@ import {
   type ImageTemplateThumb,
 } from "@/lib/imageFactory";
 import {
+  daokuTemplateCards,
   imageTemplateCards,
   rhythmTemplateCards,
+  templateOrigin,
   type TemplateBar,
   type TemplateCard,
 } from "@/lib/templates";
@@ -52,6 +54,8 @@ interface CatalogItem {
   slots?: string[];
   /** 没有样例图的模板（视频结构）用一条节奏条代替。 */
   bars?: TemplateBar[];
+  /** 道库既没有图也没有节奏条，样例就是它的标题句式。 */
+  lines?: string[];
   /** 悬停时露出的动作文案，如「照这个做 →」；不填就不露。 */
   cta?: string;
   /** 自建的东西才给这两个；内置的不填，卡片上就不出现。 */
@@ -70,6 +74,19 @@ function RhythmBars({ bars }: { bars: TemplateBar[] }) {
           style={{ height: `${bar.height}%` }}
           className={`min-w-[3px] flex-1 rounded-t-sm ${SHOT_TONE_BAR[bar.tone]}`}
         />
+      ))}
+    </div>
+  );
+}
+
+/** 道库的样例：几句标题句式。道库没有画面，能看的只有「照着它写会写成什么样」。 */
+function DaoLines({ lines }: { lines: string[] }) {
+  return (
+    <div className="flex h-full flex-col justify-center gap-1.5 px-4 py-3">
+      {lines.map((line) => (
+        <p key={line} className="line-clamp-1 text-[11px] font-bold leading-5 text-brand-600/80">
+          「{line}」
+        </p>
       ))}
     </div>
   );
@@ -114,6 +131,8 @@ function CatalogCard({ item }: { item: CatalogItem }) {
       <div className={`relative aspect-[4/3] bg-gradient-to-br to-surface ${item.tint}`}>
         {item.bars?.length ? (
           <RhythmBars bars={item.bars} />
+        ) : item.lines?.length ? (
+          <DaoLines lines={item.lines} />
         ) : item.preview || item.thumb ? (
           <TemplatePreview template={item} sizes="260px" />
         ) : (
@@ -358,7 +377,7 @@ export function TemplateGallery({
   onOpenTemplate: (card: TemplateCard) => void;
 }) {
   const [imageCards, setImageCards] = useState<TemplateCard[]>([]);
-  const [rhythmCards, setRhythmCards] = useState<TemplateCard[]>([]);
+  const [diskCards, setDiskCards] = useState<TemplateCard[]>([]);
   const [editingTemplate, setEditingTemplate] = useState<ImageFactoryTemplate | null>(null);
   const [customTemplates, setCustomTemplates] = useState<ImageFactoryTemplate[]>([]);
   const [saveError, setSaveError] = useState("");
@@ -369,17 +388,23 @@ export function TemplateGallery({
     setCustomTemplates(loadCustomImageTemplates());
   }, []);
 
-  // 拆来的视频结构存在本机磁盘上，读回来并到同一份目录里
+  // 拆来的视频结构和蒸馏出来的道库都存在本机磁盘上，读回来并到同一份目录里。
+  // 两路各读各的：一路失败不该把另一路也拖没了，失败的那路记一笔，读到的照常摆出来。
   useEffect(() => {
     let ignore = false;
-    rhythmTemplateCards()
-      .then((loaded) => {
-        if (!ignore) setRhythmCards(loaded);
-      })
-      .catch((error) => {
-        // 一次失败的读取不该把上一次读到的清空，所以这里只记不改
-        console.error("[TemplateGallery] 视频结构模板读取失败", { action: "templates.rhythms.list", error });
-      });
+    Promise.allSettled<TemplateCard[]>([rhythmTemplateCards(), daokuTemplateCards()]).then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") {
+          console.error("[TemplateGallery] 磁盘模板读取失败", {
+            action: "templates.disk.list",
+            error: result.reason,
+          });
+        }
+      }
+      const loaded = results.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+      // 一次全军覆没不该把上一次读到的清空，所以空结果只在真读到东西时才覆盖
+      if (!ignore && loaded.length) setDiskCards(loaded);
+    });
     return () => {
       ignore = true;
     };
@@ -410,16 +435,18 @@ export function TemplateGallery({
 
   const items = useMemo<CatalogItem[]>(
     () =>
-      [...imageCards, ...rhythmCards].map((card) => ({
+      [...imageCards, ...diskCards].map((card) => ({
         id: card.id,
         name: card.name,
         description: card.description,
         category: card.category,
-        icon: card.kind === "rhythm" ? AREAS.videoFactory.icon : AREAS.images.icon,
-        tint: card.kind === "rhythm" ? AREAS.videoFactory.tint : AREAS.images.tint,
+        // 图标与配色跟着「这张模板打哪来」走，这里不数一共有几种模板
+        icon: AREAS[templateOrigin(card)].icon,
+        tint: AREAS[templateOrigin(card)].tint,
         preview: card.kind === "image" ? card.preview : undefined,
         thumb: card.kind === "image" ? card.thumb : undefined,
         bars: card.kind === "rhythm" ? card.bars : undefined,
+        lines: card.kind === "daoku" ? card.lines : undefined,
         slots: card.slots,
         // 自建模板的改与删收在目录里：从前要绕「模板页→卡片→工厂→删→弹回模板页」
         onEdit: card.kind === "image" && !card.template.builtIn ? () => setEditingTemplate(card.template) : undefined,
@@ -428,7 +455,7 @@ export function TemplateGallery({
         cta: "照这个做 →",
         onOpen: () => onOpenTemplate(card),
       })),
-    [imageCards, rhythmCards, onOpenTemplate, handleDeleteTemplate]
+    [imageCards, diskCards, onOpenTemplate, handleDeleteTemplate]
   );
 
   return (

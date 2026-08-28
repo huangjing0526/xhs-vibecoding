@@ -92,6 +92,7 @@ import {
   isAbortError,
   listVideoProjects,
   publishDraft,
+  saveDaokuTemplate,
   saveDraft,
   saveMaterial,
   rewriteInline,
@@ -1136,12 +1137,47 @@ export default function WorkflowDashboard() {
    * 模板目录是挑模板的唯一入口，工厂只负责跑，所以分发只有这一处。
    */
   const openTemplate = useCallback((card: TemplateCard) => {
-    // 落哪个区由 templateTarget 说了算，这里只把工厂起手要的东西交出去
+    // 落哪个区由 templateTarget 说了算，这里只把起手要的东西交出去
     if (card.kind === "rhythm") setPendingRhythm(card.rhythm);
-    else setPendingTemplateId(card.id);
+    else if (card.kind === "daoku") {
+      // 道库约束的是「怎么写」，得先有一条选题才用得上，所以设为当前道库后送去项目页挑一条
+      setBloggerDistillation(card.distillation);
+      setNotice({
+        type: "info",
+        message: `已选道库「${card.name}」，挑一条项目，去「爆款优化」按这套道改写`,
+      });
+    } else setPendingTemplateId(card.id);
     setArea(templateTarget(card));
     setRecent(pushRecent("template", card.id));
-  }, []);
+  }, [setNotice]);
+
+  /**
+   * 蒸馏出一份道库：设为当前道库，同时落盘。
+   * 不落盘它就只活在这一次会话里，进不了模板目录——「设为当前」和「存成模板」是同一个动作，只有这一处。
+   */
+  const adoptDistillation = useCallback((distillation: BloggerDistillation) => {
+    setBloggerDistillation(distillation);
+    saveDaokuTemplate(distillation)
+      .then(() => {
+        setNotice({
+          type: "success",
+          message: `道库「${distillation.sourceLabel}」已存进模板`,
+          action: { label: "去模板看", run: () => setArea("templates") },
+        });
+      })
+      .catch((error) => {
+        console.error("[Workbench] 道库落盘失败", {
+          userId: "local",
+          action: "daoku.save",
+          id: distillation.id,
+          error,
+        });
+        setNotice({
+          type: "error",
+          message: error instanceof Error ? error.message : "道库没能存进模板，这次蒸馏只在当前会话里有效",
+        });
+      });
+  }, [setNotice]);
 
   // 打开一篇笔记：选中它并进详情页，列表与详情是两级，选中即跳转
   const openNote = useCallback(
@@ -1713,7 +1749,8 @@ export default function WorkflowDashboard() {
           <ToolPage area="blogger" onGoProjects={() => setArea("projects")}>
             <BloggerResearch
               selectedDistillation={bloggerDistillation}
-              onDistillationChange={setBloggerDistillation}
+              onDistillationChange={adoptDistillation}
+              onNotice={setNotice}
             />
           </ToolPage>
         )}
@@ -1742,7 +1779,7 @@ export default function WorkflowDashboard() {
               onNotice={setNotice}
               incomingUrl={pendingExtractUrl}
               onUrlConsumed={() => setPendingExtractUrl(null)}
-              onSinkToDaoku={setBloggerDistillation}
+              onSinkToDaoku={adoptDistillation}
               onGoBlogger={() => setArea("blogger")}
               onSendToVideoFactory={(skeleton) => {
                 setVideoSkeleton(skeleton);

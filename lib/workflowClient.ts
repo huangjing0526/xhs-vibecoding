@@ -1,3 +1,4 @@
+import type { BloggerDistillation, BloggerProfile, BloggerSample } from "@/lib/bloggerWorkflow";
 import type { CoverConfig } from "@/lib/cover";
 import type { CoverInput, CoverPlan } from "@/lib/coverWorkflow";
 import type {
@@ -646,6 +647,35 @@ export async function detectBenchmarkRhythm(formData: FormData): Promise<{ rhyth
 export async function listBenchmarkRhythms(): Promise<{ rhythms: BenchmarkRhythm[] }> {
   const response = await fetch("/api/video-factory/benchmark", { cache: "no-store" });
   return parseApiResponse<{ rhythms: BenchmarkRhythm[] }>(response, "节奏模板读取失败");
+}
+
+/** 对标拆解：蒸馏出来的道库，落盘后就是可复刻的模板。 */
+export async function listDaokuTemplates(): Promise<{ distillations: BloggerDistillation[] }> {
+  const response = await fetch("/api/daoku", { cache: "no-store" });
+  return parseApiResponse<{ distillations: BloggerDistillation[] }>(response, "道库模板读取失败");
+}
+
+/** 对标拆解：从样本蒸馏出一位博主的道。没配 AI 时后端会回启发式骨架，用 usedFallback 区分。 */
+export async function distillBlogger(
+  profile: BloggerProfile,
+  samples: BloggerSample[],
+): Promise<{ distillation: BloggerDistillation; usedFallback: boolean }> {
+  const response = await fetch("/api/daoku/distill", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ profile, samples }),
+  });
+  return parseApiResponse<{ distillation: BloggerDistillation; usedFallback: boolean }>(response, "蒸馏失败");
+}
+
+/** 存一份道库。id 按博主定死，重蒸馏是覆盖同一份。 */
+export async function saveDaokuTemplate(distillation: BloggerDistillation): Promise<void> {
+  const response = await fetch("/api/daoku", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(distillation),
+  });
+  await parseApiResponse<{ distillation: BloggerDistillation }>(response, "道库保存失败");
 }
 
 /** 可复用参考素材库（模特 / 产品 / 场景）：三种库同一套接口，只差路径。 */
