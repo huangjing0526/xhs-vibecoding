@@ -1,7 +1,11 @@
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
-type WorkflowAIProvider = "openai" | "anthropic" | "siliconflow" | "gemini" | "custom" | "mock";
+type WorkflowAIProvider = "openai" | "anthropic" | "siliconflow" | "gemini" | "custom" | "codex-cli" | "mock";
 
 interface WorkflowAIConfig {
   provider: WorkflowAIProvider;
@@ -34,6 +38,11 @@ function getEnv(name: string): string | undefined {
 }
 
 function detectWorkflowAIConfig(): WorkflowAIConfig {
+  // 显式指定优先于按 key 探测：codex 走本机 CLI，没有 key 可探，
+  // 而且配了 GEMINI_API_KEY 的机器上也可能是想用 codex（比如那家配额用完了）
+  if (getEnv("WORKFLOW_AI_PROVIDER") === "codex-cli") {
+    return { provider: "codex-cli", model: getEnv("CODEX_MODEL") };
+  }
   if (getEnv("GEMINI_API_KEY")) {
     return {
       provider: "gemini",
@@ -172,6 +181,61 @@ async function runWithRetry<T>(action: string, provider: WorkflowAIProvider, tas
   throw lastError;
 }
 
+/** 跑一条本机命令，把 stdout 收回来。prompt 走 stdin，避免超长命令行。 */
+function runCli(command: string, args: string[], stdin: string, timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { env: process.env, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`${command} 执行超时`));
+    }, timeoutMs);
+    child.stdin.end(stdin);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", (error) => { clearTimeout(timer); reject(new Error(`跑不起来 ${command}：${error.message}`)); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve(stdout);
+      else reject(new Error(`${command} 失败（退出码 ${code}）：${(stderr || stdout).slice(-400)}`));
+    });
+  });
+}
+
+/** codex CLI 一次调用的默认上限。十几张图它要跑好几分钟，卡死了也得有个头。 */
+const CODEX_TIMEOUT_MS = 15 * 60 * 1000;
+
+/**
+ * 走本机的 codex CLI 看图。
+ *
+ * 为什么值得单开一条通道：它用的是本机已登录的额度，不吃这个项目的 API key，
+ * 所以某一家配额用完时还有路可走。图片要落成文件（-i 只认路径），
+ * 提示词走 stdin（十几张图的提示词几千字，塞命令行参数不合适）。
+ */
+async function runCodexCli(prompt: string, images: WorkflowImage[] | undefined, model?: string): Promise<string> {
+  const work = await mkdtemp(path.join(tmpdir(), "codex-vision-"));
+  try {
+    const args = ["exec"];
+    for (const [index, image] of (images || []).entries()) {
+      const ext = image.mimeType === "image/png" ? "png" : image.mimeType === "image/webp" ? "webp" : "jpg";
+      const file = path.join(work, `img-${String(index + 1).padStart(2, "0")}.${ext}`);
+      await writeFile(file, Buffer.from(image.base64, "base64"));
+      args.push("-i", file);
+    }
+    if (model) args.push("-c", `model=${JSON.stringify(model)}`);
+    const outFile = path.join(work, "answer.txt");
+    // -o 只写最后一条消息，省得从整段运行日志里捞回答
+    args.push("-o", outFile, "-");
+    await runCli("codex", args, prompt, CODEX_TIMEOUT_MS);
+    return await readFile(outFile, "utf8");
+  } finally {
+    await rm(work, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export async function generateWorkflowJson<T>({
   action,
   prompt,
@@ -206,7 +270,11 @@ export async function generateWorkflowJson<T>({
   const attemptOnce = async (): Promise<T> => {
     let rawText = "";
 
-    if (config.provider === "anthropic") {
+    if (config.provider === "codex-cli") {
+      rawText = await runWithRetry(action, config.provider, () =>
+        runCodexCli(prompt, images, config.model),
+      );
+    } else if (config.provider === "anthropic") {
       const message = await runWithRetry(action, config.provider, async () => {
         const anthropic = new Anthropic({ apiKey: config.apiKey });
         // 图放在文字前面：模型先看完素材再读要求，比反过来准
