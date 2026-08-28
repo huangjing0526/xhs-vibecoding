@@ -106,6 +106,7 @@ import {
 import type { VideoPlan } from "@/lib/videoWorkflow";
 import { describeProjectProgress, type BenchmarkRhythm, type BenchmarkSkeleton, type VideoProject } from "@/lib/videoFactory";
 import { templateTarget, type TemplateCard } from "@/lib/templates";
+import type { LibraryAssetEntry, LibraryKind } from "@/lib/imageFactory";
 import VideoFactory from "./VideoFactory";
 import SourceWorkspace from "./SourceWorkspace";
 import type { Notice } from "./types";
@@ -322,6 +323,11 @@ export default function WorkflowDashboard() {
   const [area, setArea] = useState<AreaId>("home");
   // 从模板目录带进图片工厂的模板，工厂接住后立刻清空——否则来回切区会重复选回去
   const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null);
+  /**
+   * 资产页「用这位生成」带过来的一张资产。
+   * 它要穿过模板目录才到工厂——人得先挑模板——所以存在这一层，不能塞给任何一个页面自己拿着。
+   */
+  const [pendingAsset, setPendingAsset] = useState<{ asset: LibraryAssetEntry; kind: LibraryKind } | null>(null);
   // 同上，走视频那条线。带整条节奏而不是 id：目录手上本来就有，传 id 会让工厂再查一次库，
   // 那次查询扑空时这个 id 会一直挂着，等下一次进视频工厂再触发，把人正做着的项目冲掉。
   const [pendingRhythm, setPendingRhythm] = useState<BenchmarkRhythm | null>(null);
@@ -1356,7 +1362,13 @@ export default function WorkflowDashboard() {
 
         {area === "assets" && (
           <CanvasPage title={AREAS.assets.label} subtitle={AREAS.assets.subtitle}>
-            <AssetLibrary onNotice={setNotice} onUseAssets={() => openArea("templates")} />
+            <AssetLibrary
+              onNotice={setNotice}
+              onUseAsset={(asset, kind) => {
+                setPendingAsset({ asset, kind });
+                openArea("templates");
+              }}
+            />
           </CanvasPage>
         )}
 
@@ -1585,6 +1597,8 @@ export default function WorkflowDashboard() {
               incomingTemplateId={pendingTemplateId}
               onTemplateConsumed={() => setPendingTemplateId(null)}
               onBackToTemplates={() => setArea("templates")}
+              incomingAsset={pendingAsset}
+              onAssetConsumed={() => setPendingAsset(null)}
               incomingBrief={pendingImageBrief}
               onBriefConsumed={() => setPendingImageBrief(null)}
               onUseAsCover={(dataUrl) => {

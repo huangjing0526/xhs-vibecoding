@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Plus, Search } from "lucide-react";
+import { Pencil, Plus, Search, Trash2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import CanvasPage from "@/components/workflow/CanvasPage";
 import TemplateEditor from "@/components/workflow/ImageTemplateEditor";
@@ -14,6 +14,7 @@ import EmptyState from "@/components/ui/EmptyState";
 import { AREAS, TOOL_AREAS, toolSections, type AreaId } from "@/lib/capabilities";
 import { groupInOrder } from "@/lib/collections";
 import {
+  deleteCustomImageTemplate,
   imageTemplateCategories,
   loadCustomImageTemplates,
   newCustomImageTemplate,
@@ -53,6 +54,9 @@ interface CatalogItem {
   bars?: TemplateBar[];
   /** 悬停时露出的动作文案，如「照这个做 →」；不填就不露。 */
   cta?: string;
+  /** 自建的东西才给这两个；内置的不填，卡片上就不出现。 */
+  onEdit?: () => void;
+  onDelete?: () => void;
   onOpen: () => void;
 }
 
@@ -74,12 +78,39 @@ function RhythmBars({ bars }: { bars: TemplateBar[] }) {
 /** 一张目录卡：上面一块示意图，左下角压一个小图标，下面是名字与说明。 */
 function CatalogCard({ item }: { item: CatalogItem }) {
   const Icon = item.icon;
+  const manageable = Boolean(item.onEdit || item.onDelete);
   return (
-    <button
-      type="button"
-      onClick={item.onOpen}
-      className="group overflow-hidden rounded-3xl border border-line bg-surface text-left transition-all duration-150 hover:border-brand-300 hover:shadow-raised"
-    >
+    // 整张卡从前就是一个 button，改/删按钮塞不进去（button 不能嵌 button），所以外面包一层
+    <div className="group relative overflow-hidden rounded-3xl border border-line bg-surface transition-all duration-150 hover:border-brand-300 hover:shadow-raised">
+      {manageable && (
+        <div className="absolute right-2 top-2 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          {item.onEdit && (
+            <button
+              type="button"
+              onClick={item.onEdit}
+              aria-label={`编辑${item.name}`}
+              className="rounded-lg bg-surface/90 p-1.5 text-faint shadow-card hover:text-brand-600"
+            >
+              <Pencil size={12} />
+            </button>
+          )}
+          {item.onDelete && (
+            <button
+              type="button"
+              onClick={item.onDelete}
+              aria-label={`删除${item.name}`}
+              className="rounded-lg bg-surface/90 p-1.5 text-faint shadow-card hover:text-danger"
+            >
+              <Trash2 size={12} />
+            </button>
+          )}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={item.onOpen}
+        className="block w-full text-left"
+      >
       <div className={`relative aspect-[4/3] bg-gradient-to-br to-surface ${item.tint}`}>
         {item.bars?.length ? (
           <RhythmBars bars={item.bars} />
@@ -111,8 +142,9 @@ function CatalogCard({ item }: { item: CatalogItem }) {
             {item.cta}
           </span>
         )}
-      </div>
-    </button>
+        </div>
+      </button>
+    </div>
   );
 }
 
@@ -365,6 +397,17 @@ export function TemplateGallery({
     }
   }, []);
 
+  const handleDeleteTemplate = useCallback((template: ImageFactoryTemplate) => {
+    if (!window.confirm(`确认删除自建模板「${template.name}」吗？`)) return;
+    try {
+      setCustomTemplates(deleteCustomImageTemplate(template.id));
+      setImageCards(imageTemplateCards());
+      setSaveError("");
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "模板没能从本机删掉");
+    }
+  }, []);
+
   const items = useMemo<CatalogItem[]>(
     () =>
       [...imageCards, ...rhythmCards].map((card) => ({
@@ -378,10 +421,14 @@ export function TemplateGallery({
         thumb: card.kind === "image" ? card.thumb : undefined,
         bars: card.kind === "rhythm" ? card.bars : undefined,
         slots: card.slots,
+        // 自建模板的改与删收在目录里：从前要绕「模板页→卡片→工厂→删→弹回模板页」
+        onEdit: card.kind === "image" && !card.template.builtIn ? () => setEditingTemplate(card.template) : undefined,
+        onDelete:
+          card.kind === "image" && !card.template.builtIn ? () => handleDeleteTemplate(card.template) : undefined,
         cta: "照这个做 →",
         onOpen: () => onOpenTemplate(card),
       })),
-    [imageCards, rhythmCards, onOpenTemplate]
+    [imageCards, rhythmCards, onOpenTemplate, handleDeleteTemplate]
   );
 
   return (

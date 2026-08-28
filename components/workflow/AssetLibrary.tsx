@@ -34,11 +34,14 @@ const KIND_OPTIONS = LIBRARY_KINDS.map((value) => ({ value, label: LIBRARY_COPY[
 
 export default function AssetLibrary({
   onNotice,
-  onUseAssets,
+  onUseAsset,
 }: {
   onNotice: (notice: Notice) => void;
-  /** 资产库唯一的出口动作：去挑个模板开跑，槽位那头再从这里取图。 */
-  onUseAssets: () => void;
+  /**
+   * 资产库的出口动作：带着这一位去挑模板，进工厂后直接落进对应槽位。
+   * 从前它挂在页头、不带对象，到了工厂还得把同一位再挑一遍——那不叫出口，叫跳转。
+   */
+  onUseAsset: (asset: LibraryAssetEntry, kind: LibraryKind) => void;
 }) {
   const [kind, setKind] = useState<LibraryKind>("models");
   const [assets, setAssets] = useState<LibraryAssetEntry[]>([]);
@@ -113,15 +116,9 @@ export default function AssetLibrary({
     <div className="mt-6 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SegmentedControl value={kind} options={KIND_OPTIONS} onChange={switchKind} ariaLabel="资产类型" />
-        <div className="flex items-center gap-2">
-          {/* 存进来的东西得有地方用掉，否则这个库就是只进不出 */}
-          <Button size="sm" variant="secondary" icon={<Sparkles size={14} />} onClick={onUseAssets}>
-            用它生成
-          </Button>
-          <Button size="sm" icon={<Upload size={14} />} onClick={() => setUploading(true)}>
-            上传到{copy.label}
-          </Button>
-        </div>
+        <Button size="sm" icon={<Upload size={14} />} onClick={() => setUploading(true)}>
+          上传到{copy.label}
+        </Button>
       </div>
 
       {errorMessage && <Callout tone="danger">{errorMessage}</Callout>}
@@ -148,9 +145,20 @@ export default function AssetLibrary({
                 <span className="ml-2 text-[11px] font-normal text-faint">{openProfile.assets.length} 张</span>
               </h2>
             </div>
-            <Button size="sm" variant="ghost" icon={<Upload size={14} />} onClick={() => setUploading(true)}>
-              补充上传
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              {/* 存进来的东西得有地方用掉，否则这个库就是只进不出。带的是这一位最能代表她的那张 */}
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Sparkles size={14} />}
+                onClick={() => onUseAsset(openProfile.assets[0], kind)}
+              >
+                用这{copy.subject === "场景" ? "个" : "位"}{copy.subject}生成
+              </Button>
+              <Button size="sm" variant="ghost" icon={<Upload size={14} />} onClick={() => setUploading(true)}>
+                补充上传
+              </Button>
+            </div>
           </div>
           {openProfile.traits && (
             // 身份档案能写到十几行，默认收成两行；要核对细节再展开，不然图全被挤到屏幕外

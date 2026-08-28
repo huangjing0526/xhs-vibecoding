@@ -47,6 +47,19 @@ export const LIBRARY_COPY: Record<LibraryKind, LibraryCopy> = {
   },
 };
 
+/**
+ * 每种库能填进哪些槽位 id。
+ *
+ * 「用这位模特生成」要把资产直接放进正确的槽位，靠 label 猜是脆的（「模特图」「出镜的人」都可能），
+ * 而槽位 id 本来就是语义化的，拿它对就是确定的。对不上就不放——宁可让人手动挑，
+ * 也别把一张商品图塞进模特位，那种错要跑完一轮才发现。
+ */
+export const LIBRARY_SLOT_IDS: Record<LibraryKind, string[]> = {
+  models: ["model", "person"],
+  products: ["product", "garment"],
+  scenes: ["scene", "backdrop"],
+};
+
 export const LIBRARY_LABEL = Object.fromEntries(
   LIBRARY_KINDS.map((kind) => [kind, LIBRARY_COPY[kind].label]),
 ) as Record<LibraryKind, string>;

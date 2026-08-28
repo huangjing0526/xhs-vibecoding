@@ -48,6 +48,7 @@ import {
   deleteCustomImageTemplate,
   imageTemplateCategories,
   LIBRARY_COPY as ASSET_LIBRARY_COPY,
+  LIBRARY_SLOT_IDS,
   LIBRARY_COPY,
   loadCustomImageTemplates,
   saveCustomImageTemplate,
@@ -104,6 +105,8 @@ export default function ImageFactory({
   incomingTemplateId,
   onTemplateConsumed,
   onBackToTemplates,
+  incomingAsset,
+  onAssetConsumed,
   incomingBrief,
   onBriefConsumed,
 }: {
@@ -113,6 +116,9 @@ export default function ImageFactory({
   onTemplateConsumed?: () => void;
   /** 回模板目录换一个模板——这里不再自带目录，挑模板只有那一处。 */
   onBackToTemplates: () => void;
+  /** 资产页「用这位生成」带过来的一张，进来即落进对应槽位。 */
+  incomingAsset?: { asset: LibraryAssetEntry; kind: LibraryKind } | null;
+  onAssetConsumed?: () => void;
   /** 首页那句话判成「做图」时带过来的要求，填进当前产出的补充要求。 */
   incomingBrief?: string | null;
   onBriefConsumed?: () => void;
@@ -398,10 +404,7 @@ export default function ImageFactory({
    * 资产图挂在同源路由上，取回来包成 File 就能复用「上传」那条通路——
    * 槽位、校验、FormData 全不用动，服务端也不用知道这张图是传的还是取的。
    */
-  const pickFromLibrary = async (entry: LibraryAssetEntry, kind: LibraryKind) => {
-    const slot = pickingSlot;
-    if (!slot) return;
-    setPickingSlot(null);
+  const fillSlotFromAsset = useCallback(async (slot: ImageTemplateSlot, entry: LibraryAssetEntry, kind: LibraryKind) => {
     try {
       const response = await fetch(entry.imageUrl);
       if (!response.ok) throw new Error(`资产图取回失败（${response.status}）`);
@@ -428,6 +431,35 @@ export default function ImageFactory({
         error instanceof Error ? error.message : `从${ASSET_LIBRARY_COPY[kind].label}取图失败`,
       );
     }
+  }, [activeTemplateId]);
+
+  /**
+   * 资产页带过来的那一位：按槽位 id 落进对的位置。
+   *
+   * 靠 id 而不是靠 label 猜——「模特图」「出镜的人」都可能是同一个槽位，
+   * 而 id 是语义化的，对上就是确定的。对不上宁可不放：把一张商品图塞进模特位，
+   * 要跑完一轮出了图才发现，比让人手动挑一次贵得多。
+   */
+  useEffect(() => {
+    if (!incomingAsset || !activeTemplate) return;
+    const wanted = LIBRARY_SLOT_IDS[incomingAsset.kind];
+    const slot = activeTemplate.slots.find((item) => wanted.includes(item.id));
+    if (slot) {
+      fillSlotFromAsset(slot, incomingAsset.asset, incomingAsset.kind);
+    } else {
+      setErrorMessage(
+        `这个模板没有放${ASSET_LIBRARY_COPY[incomingAsset.kind].subject}的槽位，用槽位上的「从资产里选」手动放。`,
+      );
+    }
+    onAssetConsumed?.();
+  }, [incomingAsset, activeTemplate, fillSlotFromAsset, onAssetConsumed]);
+
+  /** 弹层选中一条：填进当时点开它的那个槽位。 */
+  const pickFromLibrary = (entry: LibraryAssetEntry, kind: LibraryKind) => {
+    const slot = pickingSlot;
+    if (!slot) return;
+    setPickingSlot(null);
+    fillSlotFromAsset(slot, entry, kind);
   };
 
   /** 整组或单张都走这一条：一次请求存完，服务端只读写一次索引。 */
