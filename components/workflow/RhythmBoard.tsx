@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Activity, AlertTriangle, ChevronDown, ChevronRight, Film, Link2, Loader2, Mic, Music, Ruler, Scan, Scissors, ShieldCheck, Trash2, Upload, Users, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, Film, Link2, Loader2, MapPin, Mic, Music, Package, Ruler, Scan, Scissors, ShieldCheck, Trash2, Upload, Users, Zap } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
@@ -23,6 +23,7 @@ import {
   SHOT_TONE_BAR,
   VERDICT_LABEL,
   beatLocked,
+  castForShot,
   castToken,
   clippedShots,
   clipsAllowed,
@@ -37,9 +38,11 @@ import {
   shotRoute,
   shotSteps,
   shotTone,
+  splitCastTokens,
   summarizeRhythm,
   tallySteps,
   type BenchmarkCastEntity,
+  type BenchmarkCastKind,
   type BenchmarkRhythm,
   type BenchmarkShot,
   type BenchmarkShotContent,
@@ -288,7 +291,71 @@ function MeasuredStructure({ metrics }: { metrics?: BenchmarkShotMetrics }) {
  * 这一镜画面里是什么。四段照原样摆出来，占位符不展开——
  * {角色1} 这种记号正是「要换成你自己的」那几处，得让人一眼看见换在哪。
  */
-function ShotContentBlock({ content }: { content?: BenchmarkShotContent }) {
+/** 三类实体的配色。和「可替换」这件事绑在一起，所以三类共用一套底，靠图标区分。 */
+const CAST_KIND_ICON: Record<BenchmarkCastKind, typeof Users> = {
+  role: Users,
+  product: Package,
+  scene: MapPin,
+};
+
+/**
+ * 描述里的占位符就地画成标签。
+ *
+ * 原样印出「{角色1} 夹起 {产品1}」的话，人得翻到下面的花名册才知道那是谁——
+ * 而这两样东西正是这一镜要换掉的，本来就该在同一行里看见。
+ */
+function CastText({ text, names }: { text: string; names: Map<string, string> }) {
+  return (
+    <>
+      {splitCastTokens(text).map((part, index) =>
+        part.token ? (
+          <span
+            key={index}
+            title={names.get(part.token) || "这个占位符不在花名册里，换不掉"}
+            className="mx-0.5 rounded bg-brand-50 px-1 font-bold text-brand-600"
+          >
+            {names.get(part.token) || part.token}
+          </span>
+        ) : (
+          <span key={index}>{part.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+/** 这一镜里出现的人、货、地方。看某一镜时要问的就是这个。 */
+function ShotElements({ cast }: { cast: BenchmarkCastEntity[] }) {
+  if (!cast.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {cast.map((entity) => {
+        const Icon = CAST_KIND_ICON[entity.kind];
+        return (
+          <span
+            key={castToken(entity)}
+            title={`${castToken(entity)}——也出现在对标第 ${entity.shots.join("、")} 镜`}
+            className="flex items-center gap-1 rounded-lg bg-brand-50 px-2 py-1 text-[11px] text-brand-600"
+          >
+            <Icon size={11} className="shrink-0" />
+            <span className="font-bold">{entity.label}</span>
+            {entity.shots.length > 1 && (
+              <span className="text-[10px] text-brand-600/60">跨 {entity.shots.length} 镜</span>
+            )}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function ShotContentBlock({
+  content,
+  names,
+}: {
+  content?: BenchmarkShotContent;
+  names: Map<string, string>;
+}) {
   if (!content) {
     return (
       <p className="mt-2 text-[11px] leading-5 text-faint">
@@ -309,7 +376,9 @@ function ShotContentBlock({ content }: { content?: BenchmarkShotContent }) {
         .map(([label, text]) => (
           <p key={label} className="flex gap-2 text-xs leading-5">
             <span className="w-7 shrink-0 font-bold text-faint">{label}</span>
-            <span className="min-w-0 text-ink">{text}</span>
+            <span className="min-w-0 text-ink">
+              <CastText text={text} names={names} />
+            </span>
           </p>
         ))}
     </div>
@@ -561,6 +630,11 @@ export default function RhythmBoard({
   );
   // 路线算一次给所有消费者用，省得同一件事在胶片条、报告、切片清单里各推一遍
   const routes = useMemo(() => routeByShot(rhythm?.report), [rhythm]);
+  // 占位符 → 它在对标里是什么。描述里就地渲染成标签要用
+  const castNames = useMemo(
+    () => new Map((rhythm?.cast || []).map((entity) => [castToken(entity), entity.label])),
+    [rhythm],
+  );
   const selectedShot = rhythm?.shots.find((shot) => shot.order === selected) || null;
 
   if (!rhythm) {
@@ -768,8 +842,9 @@ export default function RhythmBoard({
               <Scissors size={13} className="shrink-0 text-faint" />
               {planText(selectedShot)}
             </p>
+            <ShotElements cast={castForShot(rhythm.cast, selectedShot.order)} />
             <MeasuredStructure metrics={selectedShot.metrics} />
-            <ShotContentBlock content={selectedShot.content} />
+            <ShotContentBlock content={selectedShot.content} names={castNames} />
             {selectedShot.voiceover?.text && (
               <p className="mt-2 flex gap-1.5 text-xs leading-5 text-muted">
                 <Mic size={12} className="mt-1 shrink-0 text-faint" />

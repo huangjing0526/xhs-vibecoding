@@ -554,6 +554,35 @@ export function undescribedShots(rhythm: BenchmarkRhythm): number[] {
   return rhythm.shots.filter((shot) => !shot.content).map((shot) => shot.order);
 }
 
+/**
+ * 这一镜里有哪些可替换的实体。
+ *
+ * 花名册记的是「这个实体出现在哪几镜」，而看某一镜时要问的是反过来的问题。
+ * 两边都从 entity.shots 来，所以不会打架。
+ */
+export function castForShot(cast: BenchmarkCastEntity[] | undefined, order: number): BenchmarkCastEntity[] {
+  return (cast || []).filter((entity) => entity.shots.includes(order));
+}
+
+/**
+ * 把带占位符的描述切成片段，交给界面逐段渲染。
+ *
+ * 界面要把 {角色1} 画成一个可辨认的标签，而不是原样印出花括号——
+ * 所以不能像 resolveCastTokens 那样直接替换成字符串，得保留「这一段是占位符」这个信息。
+ */
+export function splitCastTokens(text: string): Array<{ token?: string; text: string }> {
+  const parts: Array<{ token?: string; text: string }> = [];
+  let last = 0;
+  for (const match of text.matchAll(CAST_TOKEN_PATTERN)) {
+    const at = match.index ?? 0;
+    if (at > last) parts.push({ text: text.slice(last, at) });
+    parts.push({ token: match[1].trim(), text: match[1].trim() });
+    last = at + match[0].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) });
+  return parts;
+}
+
 /** 实体清单写成给分镜模型看的对照表：占位符 → 换成了什么。 */
 export function castToPromptLines(cast: BenchmarkCastEntity[], names: Map<string, string>): string {
   return cast
