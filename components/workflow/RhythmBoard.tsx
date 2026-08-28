@@ -821,6 +821,17 @@ export default function RhythmBoard({
           </button>
         ))}
         {busy && <Loader2 size={13} className="animate-spin text-faint" />}
+        {/* 判据不同切出来的镜头数能差一半，看这份模板时得知道它是哪个判据切的 */}
+        {rhythm.detector === "adaptive" ? (
+          <span className="text-[11px] text-faint">· 自适应判据</span>
+        ) : (
+          <span
+            className="text-[11px] text-warn"
+            title="ffmpeg 的固定阈值会漏掉同机位同场景的切换——换装、景别变化、人物进出画面。实测五条片子漏了 7 刀。"
+          >
+            · 固定阈值，会漏切（装 scenedetect 更准）
+          </span>
+        )}
       </div>
 
       {stats && (

@@ -8,10 +8,14 @@ import { readRhythm, writeRhythm } from "@/app/api/video-factory/benchmark/_rhyt
 import { runScreening } from "@/app/api/video-factory/benchmark/_screen";
 import { assignVoiceovers, transcribe } from "@/app/api/video-factory/benchmark/_transcript";
 import {
+  DEFAULT_RHYTHM_THRESHOLD,
+  MIN_SHOT_SEC,
   PROVIDER_CAPS,
-  RHYTHM_THRESHOLDS,
   clippedShots,
   cutsToShots,
+  ffmpegThreshold,
+  normalizeThreshold,
+  type CutDetector,
   type BenchmarkRhythm,
   type BenchmarkShot,
   type BenchmarkShotMetrics,
@@ -55,8 +59,11 @@ async function probe(file: string): Promise<ProbeResult> {
   return { durationSec: pick("duration"), width: pick("width"), height: pick("height") };
 }
 
-/** ffmpeg 的 scene 滤镜给出画面突变的时间点，这是不经模型的硬数据。 */
-async function detectCuts(file: string, threshold: number): Promise<number[]> {
+/**
+ * ffmpeg 的 scene 滤镜：全局固定阈值的帧间像素差。
+ * 装不了 PySceneDetect 时的兜底——它不会误切，但会漏掉同机位同场景下的切换。
+ */
+async function detectCutsFfmpeg(file: string, threshold: number): Promise<number[]> {
   const out = await run("ffmpeg", [
     "-hide_banner",
     "-i", file,
@@ -66,6 +73,43 @@ async function detectCuts(file: string, threshold: number): Promise<number[]> {
     "-",
   ]);
   return [...out.matchAll(/pts_time:([0-9.]+)/g)].map((match) => Number(match[1]));
+}
+
+/**
+ * 切镜点。优先 PySceneDetect 的自适应判据，没装就回落 ffmpeg。
+ *
+ * 为什么优先它：五条样本实测，ffmpeg 一刀没多切，但漏了 7 刀，
+ * 而漏掉的全是换装、景别变化、人物进出画面这类同机位同场景的切换——
+ * 一件换装视频漏掉换装那一刀，节奏模板就把两次换装当成了一镜。
+ *
+ * 回落是有意保留的：切镜是拆片的必经步骤，不像结构量化那样可选，
+ * 让它硬依赖一个 pip 包，等于谁没装谁就整条用不了。
+ */
+async function detectCuts(
+  file: string,
+  threshold: number,
+): Promise<{ cuts: number[]; detector: CutDetector }> {
+  try {
+    const script = path.join(process.cwd(), "scripts", "video-factory", "detect-cuts.py");
+    const raw = await run("python3", [script, file, String(threshold), String(MIN_SHOT_SEC)]);
+    // 和结构量化同一个坑：runCommand 把 stderr 接在 stdout 后面，按位置取会拿到警告
+    const line = raw
+      .split("\n")
+      .map((item) => item.trim())
+      .find((item) => item.startsWith("{") && item.endsWith("}")) || "";
+    const parsed = JSON.parse(line) as { cuts?: number[]; error?: string };
+    if (parsed.cuts?.length) return { cuts: parsed.cuts, detector: "adaptive" };
+    if (parsed.error) throw new Error(parsed.error);
+    // 空数组是合法结果（整条片子一刀没切），但那太反常，宁可换个判据再看一眼
+    throw new Error("一个切点都没检出");
+  } catch (error) {
+    console.warn("[VideoFactory] 自适应切镜没跑成，回落 ffmpeg", {
+      action: "videoFactory.benchmark.cuts",
+      hint: "装上更准：pip3 install scenedetect opencv-python-headless",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { cuts: await detectCutsFfmpeg(file, ffmpegThreshold(threshold)), detector: "ffmpeg" };
+  }
 }
 
 /** 每镜取中点那一帧当缩略图——开头结尾常常是转场糊的。 */
@@ -134,8 +178,8 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const videoUrl = String(formData.get("videoUrl") || "").trim();
     const sourceLabel = String(formData.get("sourceLabel") || "").trim();
-    const rawThreshold = Number(formData.get("threshold") || 0.3);
-    const threshold = RHYTHM_THRESHOLDS.some((item) => item.value === rawThreshold) ? rawThreshold : 0.3;
+    // 换判据之前存的阈值是另一套数，normalizeThreshold 会把认不出来的收敛回默认档
+    const threshold = normalizeThreshold(Number(formData.get("threshold") || DEFAULT_RHYTHM_THRESHOLD));
     const videoFile = formData.get("videoFile");
     // 重测灵敏度时沿用同一个目录，不必重新下载/上传视频
     const reuseId = String(formData.get("id") || "").trim();
@@ -169,7 +213,7 @@ export async function POST(request: NextRequest) {
     const info = await probe(source);
     if (!info.durationSec) return apiBadRequest("读不出视频时长，换个文件试试");
 
-    const cuts = await detectCuts(source, threshold);
+    const { cuts, detector } = await detectCuts(source, threshold);
     // 节奏模板是跨项目复用的，这里存的 plan 只是按默认引擎算的一种落法；
     // 真正套进某个项目时会按那个项目的引擎 replanRhythm 一次，所以这里不必纠结选谁。
     const bareShots = cutsToShots(cuts, info.durationSec, PROVIDER_CAPS["grok-cli"].durations);
@@ -211,6 +255,7 @@ export async function POST(request: NextRequest) {
       width: info.width,
       height: info.height,
       threshold,
+      detector,
       shots,
       createdAt: new Date().toISOString(),
       source: sourceInfo,
@@ -241,6 +286,7 @@ export async function POST(request: NextRequest) {
       action: "videoFactory.benchmark",
       id,
       threshold,
+      detector,
       shotCount: shots.length,
       described,
       clipped,

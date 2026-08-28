@@ -250,6 +250,8 @@ export interface BenchmarkRhythm {
   height: number;
   /** 检测灵敏度，重测时原样回传，方便对比 */
   threshold: number;
+  /** 这份是哪个判据切出来的。老模板没有这一项，读的地方当它是 ffmpeg */
+  detector?: CutDetector;
   shots: BenchmarkShot[];
   createdAt: string;
   /** 可复刻性筛查结论；没查过就没有 */
@@ -262,12 +264,50 @@ export interface BenchmarkRhythm {
   beatSync?: BenchmarkBeatSync;
 }
 
-/** 灵敏度档位：同一条片子换个阈值，切出来的镜头数能差一倍，所以要让人能调。 */
+/**
+ * 切镜用哪个判据。
+ *
+ * adaptive 是 PySceneDetect 的 AdaptiveDetector，装了才有；没装回落到 ffmpeg 的 scene 滤镜。
+ * 两者切出来的结果差得不小，而节奏模板是要复用的——不记下来，
+ * 过几天没人说得清手上这份是哪个判据切的、能不能和另一份比。
+ */
+export type CutDetector = "adaptive" | "ffmpeg";
+
+export const CUT_DETECTOR_LABEL: Record<CutDetector, string> = {
+  adaptive: "自适应（PySceneDetect）",
+  ffmpeg: "固定阈值（ffmpeg）",
+};
+
+/**
+ * 灵敏度档位：同一条片子换个阈值，切出来的镜头数能差一倍，所以要让人能调。
+ *
+ * 一档两个数，因为两个判据的阈值语义完全不同：adaptive 比的是「差异值超出邻域均值几倍」，
+ * ffmpeg 比的是「帧间像素差的绝对值」。共用一个数的话，回落那次会切出几百镜。
+ * adaptive 的三档是实测定的——2.0 到 4.0 之间在五条样本上几乎切不出区别，不值得占一档。
+ */
 export const RHYTHM_THRESHOLDS = [
-  { value: 0.2, label: "敏感", hint: "连轻微的运镜切换也算一刀，镜头会偏多" },
-  { value: 0.3, label: "默认", hint: "大多数短视频用这档" },
-  { value: 0.45, label: "保守", hint: "只认明显的硬切，适合画面本来就乱的片子" },
+  { value: 1.5, ffmpeg: 0.2, label: "敏感", hint: "连轻微的运镜切换也算一刀，镜头会偏多" },
+  { value: 3.0, ffmpeg: 0.3, label: "默认", hint: "大多数短视频用这档" },
+  { value: 6.0, ffmpeg: 0.45, label: "保守", hint: "只认明显的硬切，适合画面本来就乱的片子" },
 ] as const;
+
+/** 默认档。阈值认不出来时回落到它，比如老模板存的是换判据之前的那套数。 */
+export const DEFAULT_RHYTHM_THRESHOLD = 3.0;
+
+/**
+ * 把存下来的阈值收敛回合法档位。
+ *
+ * 换判据之前存的是 0.2/0.3/0.45，那套数在 adaptive 语义下低得离谱——
+ * 直接拿去重测会把一条片子切成几百镜。认不出来就当默认档。
+ */
+export function normalizeThreshold(value: number): number {
+  return RHYTHM_THRESHOLDS.some((item) => item.value === value) ? value : DEFAULT_RHYTHM_THRESHOLD;
+}
+
+/** 这一档在回落到 ffmpeg 时该用哪个阈值。 */
+export function ffmpegThreshold(value: number): number {
+  return RHYTHM_THRESHOLDS.find((item) => item.value === value)?.ffmpeg ?? 0.3;
+}
 
 /** 低于这个长度的「镜头」基本是闪频误判，并进前一镜。 */
 export const MIN_SHOT_SEC = 0.3;
