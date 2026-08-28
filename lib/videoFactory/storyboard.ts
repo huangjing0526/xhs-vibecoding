@@ -6,12 +6,16 @@
  */
 
 import {
+  castToPromptLines,
   rhythmShotCount,
   rhythmToPlanLines,
+  shotContentToPrompt,
   shotMetricsToPrompt,
+  undescribedShots,
   type BenchmarkRhythm,
   type BenchmarkShotMetrics,
 } from "./benchmark";
+import { castNameMap, type CastBinding } from "./cast";
 import {
   PROVIDER_CAPS,
   SHOT_DURATIONS,
@@ -122,7 +126,7 @@ const CAMERA_MOVE_TABLE = CAMERA_MOVES.map((move) => `- ${move.label}：${move.u
 
 export function buildStoryboardPrompt(
   script: ScriptDraft,
-  options?: { visualStyle?: string; rhythm?: BenchmarkRhythm | null },
+  options?: { visualStyle?: string; rhythm?: BenchmarkRhythm | null; castBinding?: CastBinding },
 ): string {
   const rhythm = options?.rhythm || null;
   const shotCount = rhythm ? rhythmShotCount(rhythm) : suggestShotCount(script.estimatedDurationSec);
@@ -156,6 +160,29 @@ ${measuredLines.join("\n")}
 - 上面没提到的镜头，按下面的通用运镜要求处理。\n`
     : "";
 
+  // 对标每一镜实际拍了什么。占位符在这里就换成用户绑定的素材名——
+  // 让模型自己判断「哪部分该换」的话，同一份对标每次改写出来的画面都不一样。
+  const names = castNameMap(rhythm?.cast, options?.castBinding);
+  const contentLines = (rhythm?.shots || [])
+    .map((shot) => {
+      const line = shot.content ? shotContentToPrompt(shot.content, names) : "";
+      return line ? `第 ${shot.order} 镜：${line}` : "";
+    })
+    .filter(Boolean);
+  const missing = rhythm ? undescribedShots(rhythm) : [];
+  const contentSection = contentLines.length
+    ? `\n【对标每一镜实际拍了什么，画面照着这个来】
+${contentLines.join("\n")}
+${
+  rhythm?.cast?.length
+    ? `\n人、货、场景已经替换成你自己的了，对照表：\n${castToPromptLines(rhythm.cast, names)}\n`
+    : ""
+}
+- 构图、景别、光线、色调照上面写的复现，这是这条对标值钱的地方。
+- 主体一律用上面对照表里的说法，不要写回对标里原本那个人或那件货。
+- ${missing.length ? `第 ${missing.join("、")} 镜没看到画面，那几镜按脚本内容自己写，别照抄相邻镜头。` : "每一镜都有描述，不要自由发挥。"}\n`
+    : "";
+
   return `你在把一份口播脚本拆成 AI 视频的分镜表。
 
 【口播脚本】
@@ -170,7 +197,7 @@ ${options?.visualStyle?.trim() || "未指定，按脚本内容自己定一个统
 - 每镜的做法是：先出一张静态的第一帧图，再让模型把这张图动起来。
   所以 framePrompt 描述「画面长什么样」，videoPrompt 只描述「怎么动」，两者不要重复。
 - 镜头总数建议 ${shotCount} 个左右，所有镜头时长加起来应接近 ${script.estimatedDurationSec} 秒。
-${rhythmSection}${measuredSection}
+${rhythmSection}${measuredSection}${contentSection}
 【运镜怎么挑】
 可选的运镜只有这几种，cameraMove 只能填其中一个标签：
 ${CAMERA_MOVE_TABLE}
@@ -192,6 +219,7 @@ ${
 【写提示词的要求】
 - 两个提示词都用中文写，不要中英混写。
 - framePrompt：主体、构图、景别、光线、色调、材质都要具体，竖构图，不要写运动。
+  有对标画面描述的镜头，framePrompt 就是把那几段展开成完整句子——构图光线照抄，主体用对照表里的说法。
 - videoPrompt：第一句必须是运镜本身，第二句才写主体的动作。
   例：「镜头缓慢向前推进，人物抬头看向镜头，发丝轻微飘动。」
   不要重复描述画面内容，不要要求画面里出现文字。

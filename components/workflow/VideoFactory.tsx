@@ -22,6 +22,7 @@ import EmptyState from "@/components/ui/EmptyState";
 import { Field, Input, Textarea } from "@/components/ui/Field";
 import ModalOverlay from "@/components/ui/ModalOverlay";
 import PipelineRail from "@/components/ui/PipelineRail";
+import BenchmarkCastBoard from "@/components/workflow/BenchmarkCastBoard";
 import CastBoard from "@/components/workflow/CastBoard";
 import RhythmBoard from "@/components/workflow/RhythmBoard";
 import ShotMaterialSlot from "@/components/workflow/ShotMaterialSlot";
@@ -32,8 +33,10 @@ import { cachedProbe, pickUsableProvider } from "@/lib/enginePreference";
 import {
   analyzeStoryboard,
   attachShotClip,
+  bindCastEntity,
   bindProjectCast,
   bindShotMaterial,
+  clearCastEntity,
   clearProjectCast,
   clearShotMaterial,
   composeFinalCut,
@@ -75,6 +78,12 @@ import {
   type BenchmarkRhythm,
   type BenchmarkSkeleton,
   type CameraMove,
+  castToken,
+  pruneCastBinding,
+  shotCastRefs,
+  unusedCastTokens,
+  type BenchmarkCastEntity,
+  type BenchmarkShotContent,
   type CastSlot,
   type ScriptDraft,
   type Shot,
@@ -113,6 +122,17 @@ interface FrameCandidate {
   createdAt: string;
 }
 
+/**
+ * 换一份节奏（重测灵敏度、重看一次片、套另一条对标）时统一走这里。
+ *
+ * 必须顺手清掉指向已消失实体的绑定：重看一次片会重拆实体清单，
+ * 上一版的「产品3」这次可能压根不存在，留着不报错，但「已换 5 个」会虚高，
+ * 而那个数字正是用户判断「还差谁没换」的唯一依据。
+ */
+function applyRhythm(project: VideoProject, rhythm: BenchmarkRhythm): VideoProject {
+  return { ...project, rhythm, castBinding: pruneCastBinding(rhythm.cast, project.castBinding) };
+}
+
 const EMPTY_PROJECT: VideoProject = {
   id: "",
   title: "",
@@ -124,6 +144,7 @@ const EMPTY_PROJECT: VideoProject = {
   targetDurationSec: DEFAULT_TARGET_DURATION_SEC,
   rhythm: null,
   cast: EMPTY_CAST,
+  castBinding: {},
   script: null,
   storyboard: null,
   clips: [],
@@ -464,6 +485,8 @@ export default function VideoFactory({
   const [pendingFrames, setPendingFrames] = useState<Record<number, { path?: string; file?: File; label: string }>>({});
   const [generatingShot, setGeneratingShot] = useState<number | null>(null);
   const [castBusySlot, setCastBusySlot] = useState<CastSlot | null>(null);
+  /** 正在绑的对标实体 token，绑定期间那一行转圈 */
+  const [castEntityBusy, setCastEntityBusy] = useState<string | null>(null);
   /** 正在绑素材的镜号。每镜一个槽，同时只会有一个在转 */
   const [materialBusyShot, setMaterialBusyShot] = useState<number | null>(null);
   /** 合成参数。字幕和配音默认都开——不带这两样的成片基本不能直接发 */
@@ -490,6 +513,22 @@ export default function VideoFactory({
   const storyboard = project.storyboard;
   /** 已绑上参考图的槽位，首帧那一段的文案与提醒都按它算，别再写死角色和产品 */
   const boundCastSlots = CAST_SLOTS.filter((slot) => project.cast[slot.id]);
+  const benchmarkCast = useMemo(() => project.rhythm?.cast || [], [project.rhythm]);
+  /**
+   * 清单里列了、却没有任何一镜描述引用到的实体。
+   * 模型偶尔会认出个东西又从不在描述里用它——这种实体绑了素材也换不到任何地方，
+   * 界面上得点名，不然人会以为绑了就生效了。
+   */
+  const unusedCastTokenList = useMemo(
+    () =>
+      unusedCastTokens(
+        benchmarkCast,
+        (project.rhythm?.shots || [])
+          .map((shot) => shot.content)
+          .filter((content): content is BenchmarkShotContent => Boolean(content)),
+      ),
+    [benchmarkCast, project.rhythm],
+  );
 
   /**
    * 开一条全新的项目。
@@ -699,9 +738,7 @@ export default function VideoFactory({
       const data = await detectBenchmarkRhythm(formData);
       setDetectedRhythm(data.rhythm);
       // 重测灵敏度时项目里那份也要跟着换，不然套用的还是旧节奏
-      setProject((current) =>
-        current.rhythm?.id === data.rhythm.id ? { ...current, rhythm: data.rhythm } : current,
-      );
+      setProject((current) => (current.rhythm?.id === data.rhythm.id ? applyRhythm(current, data.rhythm) : current));
       refreshRhythms();
       onNotice({ type: "success", message: `切出 ${data.rhythm.shots.length} 个镜头` });
     } catch (error) {
@@ -804,6 +841,63 @@ export default function VideoFactory({
     }
   };
 
+  /**
+   * 把对标里的一个实体换成自己的素材。
+   * 和项目级槽位并存：实体绑定按镜生效（一件外套只管它出现的那两镜），
+   * 项目级槽位管所有没被实体覆盖到的镜头。
+   */
+  const handleBindCastEntity = async (
+    entity: BenchmarkCastEntity,
+    source: { assetId?: string; library?: LibraryKind; label: string; file?: File },
+  ) => {
+    const token = castToken(entity);
+    setCastEntityBusy(token);
+    try {
+      const saved = project.id ? project : await persist(project);
+      const formData = new FormData();
+      formData.append("projectId", saved.id);
+      formData.append("token", token);
+      formData.append("label", source.label);
+      if (source.file) formData.append("file", source.file);
+      else if (source.assetId) {
+        formData.append("assetId", source.assetId);
+        formData.append("library", source.library || "products");
+      }
+
+      const data = await bindCastEntity(formData);
+      setProject((current) => ({
+        ...current,
+        id: saved.id,
+        castBinding: { ...current.castBinding, [token]: data.ref },
+      }));
+      onNotice({ type: "success", message: `「${token}」已换成你的素材` });
+    } catch (error) {
+      console.error("[VideoFactory] 绑定对标实体失败", { action: "videoFactory.castEntity.bind", token, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "绑定素材失败" });
+    } finally {
+      setCastEntityBusy(null);
+    }
+  };
+
+  const handleClearCastEntity = async (entity: BenchmarkCastEntity) => {
+    if (!project.id) return;
+    const token = castToken(entity);
+    setCastEntityBusy(token);
+    try {
+      await clearCastEntity(project.id, token);
+      setProject((current) => {
+        const next = { ...current.castBinding };
+        delete next[token];
+        return { ...current, castBinding: next };
+      });
+    } catch (error) {
+      console.error("[VideoFactory] 取消实体绑定失败", { action: "videoFactory.castEntity.clear", token, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "取消绑定失败" });
+    } finally {
+      setCastEntityBusy(null);
+    }
+  };
+
   /** 按分镜提示词生成一镜首帧，自动带上绑定的角色与产品。返回是否成功，批量时据此中断。 */
   const runFrame = async (shot: Shot): Promise<boolean> => {
     if (!shot.framePrompt.trim()) {
@@ -822,6 +916,15 @@ export default function VideoFactory({
       formData.append("cast", JSON.stringify(project.cast));
       // 这一镜单独绑了素材就带上，服务端会把它排在项目级参考图前面
       if (shot.material) formData.append("material", JSON.stringify(shot.material));
+      // 这一镜对应的对标实体绑了谁，按 sourceShotOrder 现算——绑定是单一事实来源，
+      // 不在项目目录里再拷一份「展开后的每镜素材」，那要维护三份一致性
+      const entityRefs = shotCastRefs(project.rhythm?.cast, project.castBinding, shot.sourceShotOrder);
+      if (entityRefs.length) {
+        formData.append(
+          "castEntities",
+          JSON.stringify(entityRefs.map(({ entity, ref }) => ({ kind: entity.kind, label: ref.label, path: ref.path }))),
+        );
+      }
 
       await generateShotFrame(formData);
       setProject((current) => ({ ...current, id: saved.id }));
@@ -900,9 +1003,7 @@ export default function VideoFactory({
       const data = await screenReplicability(target.id);
       setDetectedRhythm(data.rhythm);
       // 项目里套用的是同一份就一并更新，否则报告只存在于模板里、项目侧看不到
-      setProject((current) =>
-        current.rhythm?.id === data.rhythm.id ? { ...current, rhythm: data.rhythm } : current,
-      );
+      setProject((current) => (current.rhythm?.id === data.rhythm.id ? applyRhythm(current, data.rhythm) : current));
       refreshRhythms();
       onNotice({
         type: data.usedFallback ? "info" : "success",
@@ -967,6 +1068,7 @@ export default function VideoFactory({
         script,
         visualStyle,
         rhythm: project.rhythm,
+        castBinding: project.castBinding,
         genProvider,
       });
       // 新分镜作废了旧片子。clips 归服务端所有，自动存盘不带它，
@@ -1268,12 +1370,22 @@ export default function VideoFactory({
             applied={Boolean(shownRhythm && project.rhythm?.id === shownRhythm.id)}
             onApply={() => {
               if (!shownRhythm) return;
-              setProject((current) => ({ ...current, rhythm: shownRhythm }));
+              setProject((current) => applyRhythm(current, shownRhythm));
               onNotice({ type: "success", message: "已套用这条节奏，拆分镜时会照它切" });
             }}
             onClear={() => setProject((current) => ({ ...current, rhythm: null }))}
             onScreen={handleScreenRhythm}
             screening={isScreening}
+          />
+
+          <BenchmarkCastBoard
+            projectId={project.id}
+            cast={benchmarkCast}
+            binding={project.castBinding}
+            busyToken={castEntityBusy}
+            unusedTokens={unusedCastTokenList}
+            onBind={handleBindCastEntity}
+            onClear={handleClearCastEntity}
           />
 
           <CastBoard

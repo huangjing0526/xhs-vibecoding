@@ -60,6 +60,8 @@ export async function POST(request: NextRequest) {
       targetDurationSec: incoming.targetDurationSec ?? existing?.targetDurationSec ?? DEFAULT_TARGET_DURATION_SEC,
       rhythm: incoming.rhythm ?? existing?.rhythm ?? null,
       cast: incoming.cast ?? existing?.cast ?? EMPTY_CAST,
+      // 老项目没有这个字段；空对象就是「一个实体都没绑」，语义正确
+      castBinding: incoming.castBinding ?? existing?.castBinding ?? {},
       // 老项目没有这个字段，回落到加它之前唯一能生成的引擎
       genProvider: incoming.genProvider ?? existing?.genProvider ?? "grok-cli",
       script: incoming.script ?? existing?.script ?? null,

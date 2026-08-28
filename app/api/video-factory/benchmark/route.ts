@@ -3,6 +3,7 @@ import path from "node:path";
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import { BENCHMARK_ROOT, FACE_MODELS_DIR, RENDERER_URL, benchmarkDir, isSafeSegment, newProjectId, runCommand } from "@/app/api/video-factory/_shared";
+import { runScreening } from "@/app/api/video-factory/benchmark/_screen";
 import {
   PROVIDER_CAPS,
   RHYTHM_THRESHOLDS,
@@ -182,13 +183,36 @@ export async function POST(request: NextRequest) {
     };
     await writeFile(path.join(dir, "rhythm.json"), JSON.stringify(rhythm, null, 2), "utf8");
 
+    // 顺手看一遍片，拿到可替换的实体和每镜画面内容。
+    // 不做成手动一步：忘了点的话，分镜表的画面就是模型照脚本现编的，和对标片实际拍了什么无关。
+    // 和结构量化一样失败即跳过——节奏是 ffmpeg 的硬数据，不该被模型拖垮。
+    let finalRhythm = rhythm;
+    try {
+      const screened = await runScreening(id, rhythm);
+      finalRhythm = screened.rhythm;
+    } catch (error) {
+      console.warn("[VideoFactory] 拆片后看片失败，只留节奏", {
+        action: "videoFactory.benchmark.screen",
+        id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const described = finalRhythm.shots.filter((shot) => shot.content).length;
     console.info("[VideoFactory] 节奏拆解完成", {
       action: "videoFactory.benchmark",
       id,
       threshold,
       shotCount: shots.length,
+      described,
+      castCount: finalRhythm.cast?.length || 0,
     });
-    return apiOk({ rhythm }, `切出 ${shots.length} 个镜头`);
+    return apiOk(
+      { rhythm: finalRhythm },
+      described
+        ? `切出 ${shots.length} 个镜头，${described} 镜有画面描述`
+        : `切出 ${shots.length} 个镜头`,
+    );
   } catch (error) {
     console.error("[VideoFactory] 节奏拆解失败", { action: "videoFactory.benchmark", id });
     return apiError(error, "videoFactory.benchmark", "节奏拆解失败");

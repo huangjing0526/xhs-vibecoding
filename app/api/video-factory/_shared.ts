@@ -100,6 +100,14 @@ export function castPath(projectId: string, slot: string, extension: string): st
   return path.join(projectDir(projectId), `cast-${slot}${extension}`);
 }
 
+/**
+ * 对标实体绑定的素材落点，如 cast-entity-product-2.png。
+ * slug 用 ASCII（role/product/scene + 序号），中文 token 不进文件名。
+ */
+export function castEntityPath(projectId: string, slug: string, extension: string): string {
+  return path.join(projectDir(projectId), `cast-entity-${slug}${extension}`);
+}
+
 /** 某一镜单独指定的素材落点。和项目级 cast 并存，互不覆盖。 */
 export function shotMaterialPath(projectId: string, shotOrder: number, extension: string): string {
   return path.join(projectDir(projectId), `shot-${String(shotOrder).padStart(2, "0")}-material${extension}`);

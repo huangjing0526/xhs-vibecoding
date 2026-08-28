@@ -64,6 +64,80 @@ export interface BenchmarkShotMetrics {
   unavailable?: Partial<Record<"subjectScaleRatio" | "endFaceWidth" | "tempo" | "cameraMotion", MetricUnavailable>>;
 }
 
+/**
+ * 对标片里一个可替换的实体。用户拿自己的素材换掉的就是它。
+ *
+ * 为什么单独成表，而不是把主体直接写进每镜描述：
+ * 「换成自己的产品」这件事的单位是实体，不是镜头——一件外套出现在第 4、6 两镜，
+ * 绑一次就该两镜都换。描述里只留占位符，替换在代码里做，模型不参与。
+ */
+export type BenchmarkCastKind = "role" | "product" | "scene";
+
+/** 三类实体的中文说法。占位符、界面、提示词共用这一份，别在各处各写一遍。 */
+export const CAST_KIND_LABEL: Record<BenchmarkCastKind, string> = {
+  role: "角色",
+  product: "产品",
+  scene: "场景",
+};
+
+export interface BenchmarkCastEntity {
+  kind: BenchmarkCastKind;
+  /** 同类里的序号，从 1 起。和 kind 一起构成占位符「角色1」 */
+  index: number;
+  /**
+   * 它在对标片里是什么，一句话。
+   *
+   * 颗粒度停在类型和结构：「女性模特」「白色长袖衬衫」「室内浅色走廊」。
+   * 不写到能认出具体是谁、具体哪件商品——那越过了「借结构、换素材」的边界。
+   */
+  label: string;
+  /** 出现在对标片的哪几镜。绑一次要换哪几镜，看的就是这个 */
+  shots: number[];
+}
+
+/** 占位符里的写法，如「角色1」。中文，给模型和界面看。 */
+export function castToken(entity: Pick<BenchmarkCastEntity, "kind" | "index">): string {
+  return `${CAST_KIND_LABEL[entity.kind]}${entity.index}`;
+}
+
+/** 落盘和 URL 里的写法，如「role-1」。中文 token 不进文件名。 */
+export function castTokenSlug(entity: Pick<BenchmarkCastEntity, "kind" | "index">): string {
+  return `${entity.kind}-${entity.index}`;
+}
+
+/**
+ * 从模型给的中文 token 反解回实体键，如「角色1」→ role/1。认不出返回 null。
+ *
+ * 编号由模型定、服务端只做校验，不重新编号：描述里的占位符是模型同一次写下的，
+ * 服务端一改号，那些占位符就全成了对不上的孤儿。
+ */
+export function parseCastToken(token: string): { kind: BenchmarkCastKind; index: number } | null {
+  const match = /^(角色|产品|场景)([1-9])$/.exec(token.trim());
+  if (!match) return null;
+  const kind = (Object.keys(CAST_KIND_LABEL) as BenchmarkCastKind[]).find(
+    (key) => CAST_KIND_LABEL[key] === match[1],
+  );
+  return kind ? { kind, index: Number(match[2]) } : null;
+}
+
+/**
+ * 一镜的画面内容，四段对齐 framePrompt 的写法要求：主体、构图、光线、场景。
+ *
+ * subject 和 scene 里的主体写成占位符「{角色1}」「{产品2}」，
+ * 换素材时就是确定性的字符串替换——结构、构图、光线原样保留，只有主体变。
+ * 交给模型重新理解一遍的话，同一份对标每次改写出来的画面都不一样。
+ */
+export interface BenchmarkShotContent {
+  /** 主体在做什么。主体处用占位符 */
+  subject: string;
+  /** 景别 + 构图 */
+  framing: string;
+  /** 光线 + 色调 */
+  light: string;
+  /** 场景元素。场景主体处用占位符 */
+  scene: string;
+}
+
 export interface BenchmarkShot {
   order: number;
   startSec: number;
@@ -72,6 +146,11 @@ export interface BenchmarkShot {
   plan: BenchmarkShotPlan;
   /** 量出来的结构。老的节奏模板没有这一项，读的地方都要当它可能不在 */
   metrics?: BenchmarkShotMetrics;
+  /**
+   * 这一镜画面里是什么。看片时抽到了才有——
+   * 抽样上限之外的镜头就是没看到，这里留空而不是编一段，和 metrics 一个规矩。
+   */
+  content?: BenchmarkShotContent;
 }
 
 export interface BenchmarkRhythm {
@@ -87,6 +166,8 @@ export interface BenchmarkRhythm {
   createdAt: string;
   /** 可复刻性筛查结论；没查过就没有 */
   report?: ReplicabilityReport;
+  /** 这条片子里可替换的实体清单。看过片才有 */
+  cast?: BenchmarkCastEntity[];
 }
 
 /** 灵敏度档位：同一条片子换个阈值，切出来的镜头数能差一倍，所以要让人能调。 */
@@ -330,4 +411,67 @@ export function shotMetricsToPrompt(shot: BenchmarkShot): string {
     );
   }
   return lines.join("；");
+}
+
+/** 占位符长这样：{角色1}、{产品2}。花括号里只允许没有嵌套的一段。 */
+const CAST_TOKEN_PATTERN = /\{([^{}]+)\}/g;
+
+/**
+ * 把描述里的占位符换成实际名字。
+ *
+ * 没绑素材的实体换成它在对标里的说法（「女性模特」），认不出的占位符脱掉括号——
+ * 两种情况都不留花括号出去：一个换不掉的 {角色1} 漏进首帧提示词，
+ * 模型会真的照着把括号画进画面里。宁可退化成自然语言，也不留半成品记号。
+ */
+export function resolveCastTokens(text: string, names: Map<string, string>): string {
+  return text.replace(CAST_TOKEN_PATTERN, (_, token: string) => {
+    const key = token.trim();
+    return names.get(key) || key;
+  });
+}
+
+/** 描述里实际用到的占位符，按出现顺序去重。校验模型有没有编出清单外的实体时用。 */
+export function usedCastTokens(content: BenchmarkShotContent): string[] {
+  const seen = new Set<string>();
+  for (const text of [content.subject, content.scene, content.framing, content.light]) {
+    for (const match of text.matchAll(CAST_TOKEN_PATTERN)) seen.add(match[1].trim());
+  }
+  return [...seen];
+}
+
+/**
+ * 一镜的内容写成喂给分镜模型的几行。
+ * names 传进来做占位符替换：模型看到的应该是已经换好主体的画面，不是带记号的模板。
+ */
+export function shotContentToPrompt(content: BenchmarkShotContent, names: Map<string, string>): string {
+  const parts = [
+    content.subject && `主体：${resolveCastTokens(content.subject, names)}`,
+    content.framing && `构图：${content.framing}`,
+    content.light && `光线：${content.light}`,
+    content.scene && `场景：${resolveCastTokens(content.scene, names)}`,
+  ].filter(Boolean);
+  return parts.join("；");
+}
+
+/**
+ * 没描述到的镜号。
+ * 抽样上限之外的镜头就是没看到，得说出来——和 metrics「测不了就标测不了」同一条规矩，
+ * 不然分镜表会拿一份缺了几镜的底稿假装完整。
+ */
+export function undescribedShots(rhythm: BenchmarkRhythm): number[] {
+  return rhythm.shots.filter((shot) => !shot.content).map((shot) => shot.order);
+}
+
+/** 实体清单写成给分镜模型看的对照表：占位符 → 换成了什么。 */
+export function castToPromptLines(cast: BenchmarkCastEntity[], names: Map<string, string>): string {
+  return cast
+    .map((entity) => {
+      const token = castToken(entity);
+      const bound = names.get(token);
+      const shots = entity.shots.length ? `（对标第 ${entity.shots.join("、")} 镜）` : "";
+      return bound && bound !== entity.label
+        ? `- ${CAST_KIND_LABEL[entity.kind]}「${bound}」${shots}：对标里这个位置是${entity.label}，换成你的`
+        : `- ${CAST_KIND_LABEL[entity.kind]}「${entity.label}」${shots}：没换，照对标的类型写`;
+    })
+    .join("\n");
 }

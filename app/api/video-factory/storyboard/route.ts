@@ -8,6 +8,7 @@ import {
   replanRhythm,
   VIDEO_GEN_PROVIDERS,
   type BenchmarkRhythm,
+  type CastBinding,
   type ScriptDraft,
   type Storyboard,
   type VideoGenProviderId,
@@ -22,6 +23,8 @@ interface StoryboardRequest {
   rhythm?: BenchmarkRhythm | null;
   /** 项目选定的出片引擎，决定每镜能切成几秒 */
   genProvider?: VideoGenProviderId;
+  /** 对标实体 → 自己的素材。提示词里的主体在服务端就换好，不劳模型判断哪部分该换 */
+  castBinding?: CastBinding;
 }
 
 export async function POST(request: NextRequest) {
@@ -43,7 +46,11 @@ export async function POST(request: NextRequest) {
     const fallback = createFallbackStoryboard(script, genProvider);
     const ai = await generateWorkflowJson<Storyboard>({
       action: "videoFactory.storyboard",
-      prompt: buildStoryboardPrompt(script, { visualStyle: body.visualStyle, rhythm }),
+      prompt: buildStoryboardPrompt(script, {
+        visualStyle: body.visualStyle,
+        rhythm,
+        castBinding: body.castBinding,
+      }),
       fallback,
       maxTokens: 4000,
     });

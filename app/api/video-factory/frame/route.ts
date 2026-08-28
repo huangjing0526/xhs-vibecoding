@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import { MIME_BY_EXTENSION, mimeByExtension } from "@/app/api/image-factory/_shared";
 import { framePath, isSafeSegment, projectDir, runCommand } from "@/app/api/video-factory/_shared";
-import { CAST_SLOTS, type CastRef, type ProjectCast } from "@/lib/videoFactory";
+import { CAST_KIND_LABEL, CAST_SLOTS, type BenchmarkCastKind, type CastRef, type ProjectCast } from "@/lib/videoFactory";
 
 // 调本机生图 CLI，必须 nodejs runtime。
 export const runtime = "nodejs";
@@ -121,12 +121,33 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // 对标实体绑的素材：一个实体出现在哪几镜就管哪几镜，前端按 sourceShotOrder 算好了送过来。
+    // 排在项目级槽位之前——套了对标的片子，实体绑定才是这一镜真正要展示的东西。
+    const rawEntities = String(formData.get("castEntities") || "").trim();
+    /** 已经由实体绑定覆盖掉的槽位，项目级那张就别再塞进来了 */
+    const coveredSlots = new Set<string>();
+    if (rawEntities) {
+      const entities = JSON.parse(rawEntities) as Array<{ kind?: string; label?: string; path?: string }>;
+      for (const entity of Array.isArray(entities) ? entities : []) {
+        const slot = CAST_SLOTS.find((item) => item.id === entity.kind);
+        const resolved = slot && entity.path ? await inProject(entity.path) : null;
+        if (!slot || !resolved) continue;
+        references.push({
+          label: `${CAST_KIND_LABEL[slot.id as BenchmarkCastKind]}（${entity.label || slot.label}）`,
+          path: resolved,
+          usage: slot.usage,
+        });
+        coveredSlots.add(slot.id);
+      }
+    }
+
     // 角色/产品/场景的绑定图由前端连同请求一起带过来
     if (rawCast) {
       const cast = JSON.parse(rawCast) as ProjectCast;
       for (const slot of CAST_SLOTS) {
         const ref = cast[slot.id];
-        if (!ref?.path) continue;
+        // 这一镜的实体绑定已经给了同类的图，再塞项目级那张就是两个互相矛盾的参考
+        if (!ref?.path || coveredSlots.has(slot.id)) continue;
         const resolved = await inProject(ref.path);
         if (resolved) {
           references.push({ label: `${slot.label}（${ref.label}）`, path: resolved, usage: slot.usage });

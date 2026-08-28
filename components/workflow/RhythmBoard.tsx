@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Activity, AlertTriangle, Film, Loader2, Ruler, Scan, Scissors, Trash2, Upload, Zap } from "lucide-react";
+import { Activity, AlertTriangle, Film, Loader2, Ruler, Scan, Scissors, Trash2, Upload, Users, Zap } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
@@ -16,6 +16,8 @@ import {
   RISK_WHY,
   SHOT_TONE_BAR,
   VERDICT_LABEL,
+  castToken,
+  describeCast,
   describeRhythm,
   describeShotMetrics,
   formatTimecode,
@@ -25,8 +27,10 @@ import {
   shotTone,
   summarizeRhythm,
   tallyRisks,
+  type BenchmarkCastEntity,
   type BenchmarkRhythm,
   type BenchmarkShot,
+  type BenchmarkShotContent,
   type BenchmarkShotMetrics,
   type MetricUnavailable,
   type ReplicabilityReport,
@@ -233,6 +237,66 @@ function MeasuredStructure({ metrics }: { metrics?: BenchmarkShotMetrics }) {
   );
 }
 
+/**
+ * 这一镜画面里是什么。四段照原样摆出来，占位符不展开——
+ * {角色1} 这种记号正是「要换成你自己的」那几处，得让人一眼看见换在哪。
+ */
+function ShotContentBlock({ content }: { content?: BenchmarkShotContent }) {
+  if (!content) {
+    return (
+      <p className="mt-2 text-[11px] leading-5 text-faint">
+        这一镜没抽到帧，画面内容没看——分镜到这一镜会按你的脚本自己写。
+      </p>
+    );
+  }
+  const rows: Array<[string, string]> = [
+    ["主体", content.subject],
+    ["构图", content.framing],
+    ["光线", content.light],
+    ["场景", content.scene],
+  ];
+  return (
+    <div className="mt-2 space-y-0.5">
+      {rows
+        .filter(([, text]) => text)
+        .map(([label, text]) => (
+          <p key={label} className="flex gap-2 text-xs leading-5">
+            <span className="w-7 shrink-0 font-bold text-faint">{label}</span>
+            <span className="min-w-0 text-ink">{text}</span>
+          </p>
+        ))}
+    </div>
+  );
+}
+
+/** 这条片子里可替换的实体清单。绑素材在视频工厂那边做，这里只说清有哪些。 */
+function CastSummary({ cast }: { cast?: BenchmarkCastEntity[] }) {
+  if (!cast?.length) return null;
+  return (
+    <div className="mt-4 rounded-2xl border border-line bg-soft p-3.5">
+      <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-faint">
+        <Users size={12} />
+        可替换的实体 · {describeCast(cast)}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {cast.map((entity) => (
+          <span
+            key={castToken(entity)}
+            className="rounded-lg bg-surface px-2 py-1 text-[11px] text-ink"
+            title={entity.shots.length ? `对标第 ${entity.shots.join("、")} 镜` : "没定位到具体镜头"}
+          >
+            <span className="font-bold text-brand-500">{castToken(entity)}</span>
+            <span className="ml-1 text-muted">{entity.label}</span>
+          </span>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] leading-5 text-faint">
+        套用这条节奏后，去下面「把对标里的人、货、场景换成你自己的」逐个绑上你的素材。
+      </p>
+    </div>
+  );
+}
+
 const VERDICT_TONE: Record<ReplicabilityVerdict, "ok" | "warn" | "danger"> = {
   easy: "ok",
   doable: "warn",
@@ -384,7 +448,7 @@ export default function RhythmBoard({
       <Card>
         <CardHeader
           title="拆对标的真实节奏"
-          description="用 ffmpeg 算出这条片子每一刀切在哪，得到的只有时间码和缩略图，画面和音频都不会进下游"
+          description="用 ffmpeg 算出每一刀切在哪，再看一遍关键帧写出每镜画面内容——进下游的是时间码和文字描述，对标的原画面和原音频都不搬运"
         />
         <Callout tone="info">
           模型自己拆分镜会给你四平八稳的 6 秒一镜，而爆款的开场常常是 5 秒内切三刀——这种节奏猜不出来，只能量。
@@ -534,6 +598,7 @@ export default function RhythmBoard({
               {planText(selectedShot)}
             </p>
             <MeasuredStructure metrics={selectedShot.metrics} />
+            <ShotContentBlock content={selectedShot.content} />
             {(() => {
               const risk = riskByShot.get(selectedShot.order);
               if (!risk?.risks.length) return null;
@@ -561,6 +626,8 @@ export default function RhythmBoard({
       ) : (
         <p className="mt-3 text-[11px] text-faint">点节奏条或关键帧看某一镜的时间码与生成方案。</p>
       )}
+
+      <CastSummary cast={rhythm.cast} />
 
       <ReplicabilityPanel
         rhythmId={rhythm.id}

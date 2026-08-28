@@ -30,6 +30,7 @@ import type { VideoExtractResult } from "@/lib/videoExtract";
 import type {
   BenchmarkRhythm,
   BenchmarkSkeleton,
+  CastBinding,
   CastRef,
   CastSlot,
   FinalCut,
@@ -618,6 +619,8 @@ export async function analyzeStoryboard(options: {
   rhythm?: BenchmarkRhythm | null;
   /** 项目选定的出片引擎，决定每镜能切成几秒 */
   genProvider?: VideoGenProviderId;
+  /** 对标实体 → 自己的素材；服务端拿它把画面描述里的主体换掉 */
+  castBinding?: CastBinding;
   signal?: AbortSignal;
 }): Promise<{ storyboard: Storyboard; usedFallback: boolean; provider: string }> {
   return workflowRequest(
@@ -630,6 +633,7 @@ export async function analyzeStoryboard(options: {
         visualStyle: options.visualStyle,
         rhythm: options.rhythm,
         genProvider: options.genProvider,
+        castBinding: options.castBinding,
       }),
     },
     "分镜拆解失败"
@@ -688,6 +692,24 @@ export async function bindProjectCast(formData: FormData): Promise<{ slot: CastS
 export async function clearProjectCast(projectId: string, slot: CastSlot): Promise<{ slot: CastSlot }> {
   return workflowRequest<{ slot: CastSlot }>(
     `/api/video-factory/cast?projectId=${encodeURIComponent(projectId)}&slot=${slot}`,
+    { method: "DELETE" },
+    "取消绑定失败"
+  );
+}
+
+/**
+ * 视频工厂：把对标里的一个实体（「角色1」「产品2」）换成自己的素材。
+ * 走 multipart 以支持现场上传，因此不能用 workflowRequest（它固定 JSON 头）。
+ */
+export async function bindCastEntity(formData: FormData): Promise<{ token: string; ref: CastRef }> {
+  const response = await fetch("/api/video-factory/cast-entity", { method: "POST", body: formData });
+  return parseApiResponse<{ token: string; ref: CastRef }>(response, "绑定素材失败");
+}
+
+/** 视频工厂：把一个实体改回照对标的类型写。 */
+export async function clearCastEntity(projectId: string, token: string): Promise<{ token: string }> {
+  return workflowRequest<{ token: string }>(
+    `/api/video-factory/cast-entity?projectId=${encodeURIComponent(projectId)}&token=${encodeURIComponent(token)}`,
     { method: "DELETE" },
     "取消绑定失败"
   );
