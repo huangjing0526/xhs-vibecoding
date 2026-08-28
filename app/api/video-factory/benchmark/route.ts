@@ -243,14 +243,16 @@ export async function POST(request: NextRequest) {
     // 切点踩没踩鼓点，决定这套节奏换 BGM 之后还成不成立
     const beatSync = beatsFrom(await loudness, cuts, info.durationSec);
 
-    // 纯重测灵敏度时没有新文件也没有新链接，来路沿用上一次的——
-    // 重设成 upload 会把人工确认过的水印状态白白清掉，逼人再确认一遍同一条片子
-    const previous = reuseId ? (await readRhythm(id))?.source : undefined;
-    const sourceInfo: BenchmarkSource = origin ? { origin } : previous || { origin: "upload" };
+    // 重测灵敏度是拿同一个文件再切一遍，所以凡是「这条片子本身是什么」的信息都沿用上一份：
+    // 来路重设成 upload 会把人工确认过的水印状态白白清掉，逼人再确认一遍同一条片子；
+    // 标题重设成「对标视频」会把作者和原标题冲掉，而那是列表里认出这是哪条的唯一凭据。
+    const previous = reuseId ? await readRhythm(id) : null;
+    const sourceInfo: BenchmarkSource = origin ? { origin } : previous?.source || { origin: "upload" };
 
     const rhythm: BenchmarkRhythm = {
       id,
-      sourceLabel: sourceLabel || (videoFile instanceof File ? videoFile.name : "对标视频"),
+      sourceLabel:
+        sourceLabel || previous?.sourceLabel || (videoFile instanceof File ? videoFile.name : "对标视频"),
       totalDurationSec: Math.round(info.durationSec * 100) / 100,
       width: info.width,
       height: info.height,
