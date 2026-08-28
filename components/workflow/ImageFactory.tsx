@@ -138,6 +138,10 @@ export default function ImageFactory({
   const [promptByTemplate, setPromptByTemplate] = useState<Record<string, string>>({});
   /** 人手点开的场景分组；没点过就跟着已选场景走，所以这里允许一直是空 */
   const [sceneGroupPick, setSceneGroupPick] = useState("");
+  /** 人手点开的视图分组 tab；没点过就落在第一组 */
+  const [viewGroupPick, setViewGroupPick] = useState("");
+  /** 产出 -> 选中的人设包；随生成追加进提示词，不写进补充要求输入框 */
+  const [stylePicks, setStylePicks] = useState<Record<string, string>>({});
   const [providers, setProviders] = useState<CliProviderStatus[]>([]);
   const [provider, setProvider] = useState<ImageCliProvider>("codex");
   /** 空串 = 跟随 CLI 自己的默认模型 */
@@ -225,6 +229,23 @@ export default function ImageFactory({
   const visibleScenePresets = groupedScenes
     ? sceneGroups.find((group) => group.key === activeSceneGroup)?.items || []
     : scenePresets;
+  const stylePresets = activeTemplate?.stylePresets || [];
+  /** 传了模特参考图就不再叠人设——身份跟参考图走，文字人设只会和它打架 */
+  const styleLocked = (template: ImageFactoryTemplate) =>
+    template.slots.some((slot) => slot.id === "model") && Boolean(selectedInputs["model"]);
+  const activeStyleLocked = activeTemplate ? styleLocked(activeTemplate) : false;
+  const activeStyleId = activeTemplate ? stylePicks[activeTemplate.id] || "" : "";
+  /**
+   * 视图分组多于一组就切成 tab：模特资产图一次 13 个格子平铺下来要滚两屏，
+   * 分成「定妆主图 / 全身三视图 / 头部九宫格」后一次只看一组。
+   */
+  const groupedViews = viewGroups.length > 1;
+  const activeViewGroup = viewGroups.some((group) => group.key === viewGroupPick)
+    ? viewGroupPick
+    : viewGroups[0]?.key || "";
+  const visibleViewGroups = groupedViews
+    ? viewGroups.filter((group) => group.key === activeViewGroup)
+    : viewGroups;
   const activePicks = activeTemplate ? pickedViews(activeTemplate).map((view) => view.id) : [];
   const inBatch = activeTemplate ? batchIds.includes(activeTemplate.id) : false;
   /** 还能加进这一批的产出，按分类分好组——分组是渲染下拉时的真开销，别留在 JSX 里每次重算 */
@@ -365,6 +386,15 @@ export default function ImageFactory({
   const setPrompt = (value: string) => {
     if (!activeTemplate) return;
     setPromptByTemplate((current) => ({ ...current, [activeTemplate.id]: value }));
+  };
+
+  /** 人设包单选，再点一次取消。 */
+  const toggleStylePreset = (presetId: string) => {
+    if (!activeTemplate) return;
+    setStylePicks((current) => ({
+      ...current,
+      [activeTemplate.id]: current[activeTemplate.id] === presetId ? "" : presetId,
+    }));
   };
 
   const toggleScenePreset = (presetId: string) => {
@@ -562,7 +592,16 @@ export default function ImageFactory({
         formData.set("templateName", job.template.name);
         formData.set("templateCategory", job.template.category);
         formData.set("templatePrompt", job.template.prompt);
-        formData.set("customPrompt", promptByTemplate[job.template.id] || "");
+        // 人设包随生成追加，不占用户手打的补充要求；传了模特参考图就不叠，身份跟图走
+        const stylePreset = styleLocked(job.template)
+          ? undefined
+          : (job.template.stylePresets || []).find((preset) => preset.id === stylePicks[job.template.id]);
+        formData.set(
+          "customPrompt",
+          [promptByTemplate[job.template.id] || "", stylePreset ? `人物设定：${stylePreset.prompt}` : ""]
+            .filter(Boolean)
+            .join("\n"),
+        );
         // 头肩近景和全身站姿不该是同一个画幅，视角自己声明了就以它为准
         formData.set("aspectRatio", job.view?.aspectRatio || job.template.aspectRatio);
         formData.set("viewId", job.key);
@@ -702,7 +741,7 @@ export default function ImageFactory({
               <div>
                 <h2 className="text-[15px] font-bold text-ink">① 上传素材</h2>
                 <p className="mt-0.5 text-xs text-faint">
-                  {activeSlots.length > 0 ? "本次要跑的产出共需要这些图，传一次就够" : "这种产出不需要素材，直接生成"}
+                  {activeSlots.length > 0 ? "本次要跑的产出共需要这些图，传一次就够；截图可直接 ⌘V 粘贴进来" : "这种产出不需要素材，直接生成"}
                 </p>
               </div>
               {activeSlots.length > 0 && (
@@ -773,6 +812,39 @@ export default function ImageFactory({
 
           <Card>
             <h2 className="text-[15px] font-bold text-ink">② 想要什么画面</h2>
+            {stylePresets.length > 0 && (
+              <div className="mt-3 rounded-2xl bg-soft p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-xs font-bold text-muted">模特人设</h3>
+                  <span className="text-[11px] text-faint">
+                    {activeStyleLocked ? "已传模特参考，长相跟参考图走，人设不生效" : "单选随生成附加，不占下面的补充要求；再点一次取消"}
+                  </span>
+                </div>
+                <div className={`mt-2.5 flex flex-wrap gap-2 ${activeStyleLocked ? "pointer-events-none opacity-40" : ""}`}>
+                  {stylePresets.map((preset) => {
+                    const checked = !activeStyleLocked && activeStyleId === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={checked}
+                        onClick={() => toggleStylePreset(preset.id)}
+                        title={preset.prompt}
+                        className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-colors ${
+                          checked
+                            ? "border-brand-400 bg-brand-50 text-brand-700"
+                            : "border-line bg-surface text-muted hover:border-brand-300 hover:text-ink"
+                        }`}
+                      >
+                        {checked && <Check size={12} />}
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {scenePresets.length > 0 && (
               <div className="mt-3 rounded-2xl bg-soft p-3">
                 <div className="flex items-center justify-between gap-3">
@@ -862,15 +934,50 @@ export default function ImageFactory({
               </div>
               {/* 样例里的那张脸是示意角度用的，不说清楚容易被当成「我会得到这个人」 */}
               <p className="mt-1.5 text-[11px] leading-4 text-faint">样例只示意这个角度长什么样，实际出图用你上传的素材。</p>
-              {viewGroups.map((group) => (
+              {/* 分了组就切 tab，一次只看一组；勾选状态跨 tab 保留，右上角的计数仍是全模板的 */}
+              {groupedViews && (
+                <div className="-mx-1 mt-3 flex gap-2 overflow-x-auto px-1 pb-1" role="tablist">
+                  {viewGroups.map((group) => {
+                    const cover = group.items.find((view) => view.preview)?.preview;
+                    const opened = group.key === activeViewGroup;
+                    const picked = group.items.filter((view) => activePicks.includes(view.id)).length;
+                    return (
+                      <button
+                        key={group.key || "all"}
+                        type="button"
+                        role="tab"
+                        aria-selected={opened}
+                        onClick={() => setViewGroupPick(group.key)}
+                        className={`flex shrink-0 items-center gap-2 rounded-xl border py-1 pl-1 pr-2.5 transition-colors ${
+                          opened ? "border-brand-400 bg-brand-50" : "border-line bg-surface hover:border-brand-300"
+                        }`}
+                      >
+                        <span className="relative h-8 w-8 shrink-0 overflow-hidden rounded-lg bg-soft">
+                          {cover && <Image src={cover} alt="" fill sizes="32px" className="object-cover" unoptimized />}
+                        </span>
+                        <span className="text-left">
+                          <span className={`block text-[11px] font-bold ${opened ? "text-brand-700" : "text-muted"}`}>
+                            {group.key || "其它"}
+                          </span>
+                          <span className="block text-[10px] text-faint">已选 {picked} / {group.items.length}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {visibleViewGroups.map((group) => (
                 <div key={group.key || "all"} className="mt-3">
                   {/* 分了组的模板（九宫格 / 三视图）给一键，13 个格子一个个点太蠢 */}
                   {group.key && (
                     <div className="mb-2 flex items-center justify-between gap-3">
-                      <h3 className="text-xs font-bold text-muted">
-                        {group.key}
-                        <span className="ml-1.5 font-normal text-faint">{group.items.length} 张</span>
-                      </h3>
+                      {/* 切了 tab 就别再把组名和张数写第二遍，tab 上已经有了 */}
+                      {groupedViews ? <span /> : (
+                        <h3 className="text-xs font-bold text-muted">
+                          {group.key}
+                          <span className="ml-1.5 font-normal text-faint">{group.items.length} 张</span>
+                        </h3>
+                      )}
                       <button
                         type="button"
                         onClick={() => toggleViewGroup(group.items.map((view) => view.id))}

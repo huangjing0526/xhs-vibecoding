@@ -94,6 +94,16 @@ export interface ImageTemplateView {
   preview?: string;
 }
 
+/**
+ * 人设包：一条 = 气质长相 + 妆容 + 发型写成一段互洽的措辞，单选。
+ * 生成时追加到用户补充之后，不写进输入框；传了模特参考图则整组不生效——身份跟图走。
+ */
+export interface ImageStylePreset {
+  id: string;
+  label: string;
+  prompt: string;
+}
+
 /** 场景预设：模板层只放规则，画面场景拆到这里，点选后写进「补充生成要求」。 */
 export interface ImageScenePreset {
   id: string;
@@ -117,6 +127,8 @@ export interface ImageFactoryTemplate {
   views?: ImageTemplateView[];
   /** 可点选的画面场景，选中即填进补充要求；模板规则不受影响。 */
   scenePresets?: ImageScenePreset[];
+  /** 可点选的人设包，决定「生成一个什么样的人」；只对不传参考图的生成生效。 */
+  stylePresets?: ImageStylePreset[];
   thumb?: ImageTemplateThumb;
   /** 该模板真实跑出来的一张样例，用作卡片预览；没有就回落到 thumb 的示意图。 */
   preview?: string;
