@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Activity, AlertTriangle, ChevronDown, ChevronRight, Film, Link2, Loader2, MapPin, Mic, Music, Package, Ruler, Scan, Scissors, ShieldCheck, Trash2, Upload, Users, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, Download, Film, Link2, Loader2, MapPin, Mic, Music, Package, Ruler, Scan, Scissors, ShieldCheck, Trash2, Upload, Users, Zap } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
@@ -23,7 +23,6 @@ import {
   SHOT_TONE_BAR,
   VERDICT_LABEL,
   beatLocked,
-  castForShot,
   castToken,
   clippedShots,
   clipsAllowed,
@@ -31,6 +30,7 @@ import {
   describeCast,
   describeRhythm,
   describeShotMetrics,
+  entitiesInShot,
   formatTimecode,
   rhythmShotCount,
   riskyShots,
@@ -101,6 +101,8 @@ interface RhythmBoardProps {
   /** 人工确认这条原片没水印。确认了才切原片段，撤销则连已切的一起删 */
   onConfirmSource: (watermarkFree: boolean) => void;
   confirmingSource: boolean;
+  /** 导出编辑任务包时用来查绑定，没落盘的项目就没有 */
+  projectId?: string;
 }
 
 const TONE_LABEL: Record<ShotTone, string> = {
@@ -428,12 +430,15 @@ const VERDICT_TONE: Record<ReplicabilityVerdict, "ok" | "warn" | "danger"> = {
  */
 function ReplicabilityPanel({
   rhythm,
+  projectId,
   screening,
   onScreen,
   confirming,
   onConfirmSource,
 }: {
   rhythm: BenchmarkRhythm;
+  /** 有项目就把绑定的素材名写进任务清单；没有就按对标里的说法写 */
+  projectId?: string;
   screening: boolean;
   onScreen: () => void;
   confirming: boolean;
@@ -499,13 +504,28 @@ function ReplicabilityPanel({
       {/* 水印闸门。只有真有镜头要切片时才值得占地方 */}
       {tally.edit > 0 && (
         allowed ? (
-          <p className="mt-2 flex items-center gap-1.5 text-[11px] leading-5 text-faint">
-            <ShieldCheck size={12} className="shrink-0 text-ok" />
-            {rhythm.source?.origin === "extractor"
-              ? "无水印源（拆片服务抓的）"
-              : "已人工确认无水印"}
-            ，已切出 {clippedSet.size} 段原片
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <p className="flex items-center gap-1.5 text-[11px] leading-5 text-faint">
+              <ShieldCheck size={12} className="shrink-0 text-ok" />
+              {rhythm.source?.origin === "extractor"
+                ? "无水印源（拆片服务抓的）"
+                : "已人工确认无水印"}
+              ，已切出 {clippedSet.size} 段原片
+            </p>
+            {clippedSet.size > 0 && (
+              /* 逐镜点开、逐个下载、再各自回想这一镜换谁——十几镜就是一下午。一次拿走 */
+              <a
+                href={`/api/video-factory/benchmark/edit-pack?id=${encodeURIComponent(rhythm.id)}${
+                  projectId ? `&project=${encodeURIComponent(projectId)}` : ""
+                }`}
+                download
+                className="flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] font-bold text-ink transition-colors hover:border-brand-300"
+              >
+                <Download size={12} className="text-faint" />
+                导出这 {clippedSet.size} 段和任务清单
+              </a>
+            )}
+          </div>
         ) : (
           <Callout tone="warn" className="mt-3">
             <div className="font-bold">这 {tally.edit} 镜要用原片段，先确认画面里没有水印</div>
@@ -617,6 +637,7 @@ export default function RhythmBoard({
   screening,
   onConfirmSource,
   confirmingSource,
+  projectId,
 }: RhythmBoardProps) {
   const [selected, setSelected] = useState<number | null>(null);
   const [link, setLink] = useState("");
@@ -842,7 +863,7 @@ export default function RhythmBoard({
               <Scissors size={13} className="shrink-0 text-faint" />
               {planText(selectedShot)}
             </p>
-            <ShotElements cast={castForShot(rhythm.cast, selectedShot.order)} />
+            <ShotElements cast={entitiesInShot(rhythm.cast, selectedShot.order)} />
             <MeasuredStructure metrics={selectedShot.metrics} />
             <ShotContentBlock content={selectedShot.content} names={castNames} />
             {selectedShot.voiceover?.text && (
@@ -899,6 +920,7 @@ export default function RhythmBoard({
 
       <ReplicabilityPanel
         rhythm={rhythm}
+        projectId={projectId}
         screening={screening}
         onScreen={onScreen}
         confirming={confirmingSource}

@@ -1472,6 +1472,7 @@ export default function VideoFactory({
             screening={isScreening}
             onConfirmSource={handleConfirmSource}
             confirmingSource={isConfirmingSource}
+            projectId={project.id || undefined}
           />
 
           <BenchmarkCastBoard

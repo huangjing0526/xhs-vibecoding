@@ -415,6 +415,15 @@ export function describeRhythm(rhythm: BenchmarkRhythm): string {
 }
 
 /** 时间码，节奏条和镜头清单共用一种写法。 */
+/**
+ * 一镜原片段的文件名。
+ * 磁盘上的落点和编辑任务包里的目标名共用它——两处各写一份格式，
+ * 哪天补零位数一改，包里的清单就会指向一个不存在的文件。
+ */
+export function clipFileName(shotOrder: number): string {
+  return `clip-${String(shotOrder).padStart(2, "0")}.mp4`;
+}
+
 export function formatTimecode(seconds: number): string {
   const whole = Math.floor(seconds);
   const minutes = Math.floor(whole / 60);
@@ -552,16 +561,6 @@ export function shotContentToPrompt(content: BenchmarkShotContent, names: Map<st
  */
 export function undescribedShots(rhythm: BenchmarkRhythm): number[] {
   return rhythm.shots.filter((shot) => !shot.content).map((shot) => shot.order);
-}
-
-/**
- * 这一镜里有哪些可替换的实体。
- *
- * 花名册记的是「这个实体出现在哪几镜」，而看某一镜时要问的是反过来的问题。
- * 两边都从 entity.shots 来，所以不会打架。
- */
-export function castForShot(cast: BenchmarkCastEntity[] | undefined, order: number): BenchmarkCastEntity[] {
-  return (cast || []).filter((entity) => entity.shots.includes(order));
 }
 
 /**

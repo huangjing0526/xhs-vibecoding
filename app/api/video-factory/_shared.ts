@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { JOB_ROOT, isSafeSegment, newShortId } from "@/app/api/image-factory/_shared";
-import { EMPTY_CAST, type VideoProject } from "@/lib/videoFactory";
+import { EMPTY_CAST, clipFileName, type VideoProject } from "@/lib/videoFactory";
 
 // 路径安全校验与短 id 的规则两个工厂完全一致，直接复用图片工厂那份，不再造第二套
 export { isSafeSegment };
@@ -115,7 +115,7 @@ export function benchmarkSourcePath(benchmarkId: string): string {
  * 和缩略图、大帧同放在节奏模板目录下——它们描述的是同一条片子的同一镜，分开放迟早对不上。
  */
 export function benchmarkClipPath(benchmarkId: string, shotOrder: number): string {
-  return path.join(benchmarkDir(benchmarkId), `clip-${String(shotOrder).padStart(2, "0")}.mp4`);
+  return path.join(benchmarkDir(benchmarkId), clipFileName(shotOrder));
 }
 
 export function projectDir(projectId: string): string {

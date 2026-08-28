@@ -4,6 +4,7 @@ export * from "./storyboard";
 export * from "./benchmark";
 export * from "./beat";
 export * from "./replicability";
+export * from "./editPack";
 export * from "./cast";
 export * from "./subtitle";
 
