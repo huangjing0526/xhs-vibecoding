@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Activity, AlertTriangle, Film, Loader2, Scan, Scissors, Trash2, Upload, Zap } from "lucide-react";
+import { Activity, AlertTriangle, Film, Loader2, Ruler, Scan, Scissors, Trash2, Upload, Zap } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
@@ -9,6 +9,7 @@ import Card, { CardHeader } from "@/components/ui/Card";
 import Stat from "@/components/ui/Stat";
 import {
   FAST_CUT_SEC,
+  METRIC_UNAVAILABLE_LABEL,
   RHYTHM_THRESHOLDS,
   RISK_LABEL,
   RISK_SEVERITY,
@@ -16,6 +17,7 @@ import {
   SHOT_TONE_BAR,
   VERDICT_LABEL,
   describeRhythm,
+  describeShotMetrics,
   formatTimecode,
   rhythmShotCount,
   riskyShots,
@@ -25,6 +27,8 @@ import {
   tallyRisks,
   type BenchmarkRhythm,
   type BenchmarkShot,
+  type BenchmarkShotMetrics,
+  type MetricUnavailable,
   type ReplicabilityReport,
   type ReplicabilityVerdict,
   type ShotRisk,
@@ -191,6 +195,40 @@ function Filmstrip({
         </button>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * 一镜量出来的结构：机位、主体走近还是后退、节奏三段。
+ *
+ * 这几个数是拿来核对的，所以测不出来的项要明说为什么，而不是留白——
+ * 留白会让人以为「这一镜就是固定机位」，而实际是根本没测到。
+ */
+function MeasuredStructure({ metrics }: { metrics?: BenchmarkShotMetrics }) {
+  if (!metrics) return null;
+  const summary = describeShotMetrics(metrics);
+  const missing = Object.entries(metrics.unavailable || {});
+  if (!summary && !missing.length) return null;
+
+  return (
+    <div className="mt-2">
+      {summary && (
+        <div className="flex items-center gap-1.5 text-sm leading-6 text-ink">
+          <Ruler size={13} className="shrink-0 text-faint" />
+          <span className="font-medium">{summary}</span>
+        </div>
+      )}
+      {missing.length > 0 && (
+        <p className="mt-1 text-[11px] leading-5 text-faint">
+          测不了：
+          {missing
+            .map(([, reason]) => METRIC_UNAVAILABLE_LABEL[reason as MetricUnavailable])
+            // 同一个原因会挂在好几个字段上（没检出人脸就三项全废），说一遍就够
+            .filter((label, index, all) => label && all.indexOf(label) === index)
+            .join("、")}
+        </p>
+      )}
     </div>
   );
 }
@@ -495,6 +533,7 @@ export default function RhythmBoard({
               <Scissors size={13} className="shrink-0 text-faint" />
               {planText(selectedShot)}
             </p>
+            <MeasuredStructure metrics={selectedShot.metrics} />
             {(() => {
               const risk = riskByShot.get(selectedShot.order);
               if (!risk?.risks.length) return null;

@@ -87,8 +87,12 @@ async function measureShots(source: string, shots: BenchmarkShot[]): Promise<Map
       shots.map((shot) => ({ order: shot.order, startSec: shot.startSec, endSec: shot.endSec })),
     );
     const raw = await run("python3", [script, source, payload, "--models", FACE_MODELS_DIR]);
-    // 脚本可能往 stdout 前面吐 OpenCV 的 backend 警告，只取最后一行 JSON
-    const line = raw.trim().split("\n").filter(Boolean).pop() || "";
+    // runCommand 把 stderr 接在 stdout 后面，而 OpenCV 会往 stderr 吐 backend 警告，
+    // 所以不能按位置取——按内容找那行 JSON。
+    const line = raw
+      .split("\n")
+      .map((item) => item.trim())
+      .find((item) => item.startsWith("{") && item.endsWith("}")) || "";
     const parsed = JSON.parse(line) as { shots?: Array<BenchmarkShotMetrics & { order: number }>; error?: string };
     if (parsed.error) {
       console.warn("[VideoFactory] 结构量化跳过", { action: "videoFactory.benchmark.metrics", reason: parsed.error });
