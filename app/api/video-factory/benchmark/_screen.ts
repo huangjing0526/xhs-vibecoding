@@ -8,7 +8,7 @@
  * 节奏是 ffmpeg 算出来的硬数据，看片是锦上添花，不能因为它把整条拆解搞崩。
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { benchmarkDir, benchmarkSourcePath, runCommand } from "@/app/api/video-factory/_shared";
 import { writeRhythm } from "@/app/api/video-factory/benchmark/_rhythm";
@@ -72,6 +72,23 @@ async function readScreenFrame(benchmarkId: string, dir: string, shot: Benchmark
     });
   }
   return readFile(frameFile(dir, shot.order)).catch(() => null);
+}
+
+/**
+ * 扔掉缓存的大帧。
+ *
+ * 缓存只按镜号命名，而镜号在重拆之后指向的是另一段画面——
+ * 阈值一调、判据一换，第 12 镜就从 30 镜版本的 12 镜变成了 33 镜版本的 12 镜。
+ * 不清的话，模型看着旧边界的画面，结论却挂到新镜号上，整份描述会错位到别的镜头。
+ *
+ * 只在重拆时调；重看片沿用缓存正是它存在的理由——同一批边界不必重抽一遍。
+ */
+export async function dropScreenFrames(benchmarkId: string): Promise<void> {
+  const dir = benchmarkDir(benchmarkId);
+  const entries = await readdir(dir).catch(() => [] as string[]);
+  for (const name of entries) {
+    if (/^screen-\d+\.jpg$/.test(name)) await unlink(path.join(dir, name)).catch(() => {});
+  }
 }
 
 export interface ScreeningOutcome {

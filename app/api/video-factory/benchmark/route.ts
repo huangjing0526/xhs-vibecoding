@@ -5,7 +5,7 @@ import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import { BENCHMARK_ROOT, FACE_MODELS_DIR, RENDERER_URL, benchmarkDir, isSafeSegment, mapLimited, newProjectId, runCommand } from "@/app/api/video-factory/_shared";
 import { beatsFrom, readLoudnessSafe } from "@/app/api/video-factory/benchmark/_audio";
 import { readRhythm, writeRhythm } from "@/app/api/video-factory/benchmark/_rhythm";
-import { runScreening } from "@/app/api/video-factory/benchmark/_screen";
+import { dropScreenFrames, runScreening } from "@/app/api/video-factory/benchmark/_screen";
 import { assignVoiceovers, transcribe } from "@/app/api/video-factory/benchmark/_transcript";
 import {
   DEFAULT_RHYTHM_THRESHOLD,
@@ -217,6 +217,9 @@ export async function POST(request: NextRequest) {
     // 节奏模板是跨项目复用的，这里存的 plan 只是按默认引擎算的一种落法；
     // 真正套进某个项目时会按那个项目的引擎 replanRhythm 一次，所以这里不必纠结选谁。
     const bareShots = cutsToShots(cuts, info.durationSec, PROVIDER_CAPS["grok-cli"].durations);
+
+    // 镜头边界已经变了，上一版按镜号缓存的大帧现在全指向别的画面，先扔掉
+    await dropScreenFrames(id);
 
     // 缩略图逐镜抽，多的就不抽了——纯粹是白等。
     // 限并发跑：每次抽帧都是一次进程启动加一次定位，串着跑 30 张要三秒多，

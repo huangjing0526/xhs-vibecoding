@@ -128,7 +128,20 @@ function getErrorStatus(error: unknown): number | undefined {
   return typeof status === "number" ? status : undefined;
 }
 
+/**
+ * 配额耗尽和短时超速都是 429，但重试的意义完全相反。
+ *
+ * 超速等一会儿就好；配额耗尽等到明天才好，这时重试三次只是把剩下的额度也烧掉——
+ * 实测免费层每天 20 次请求，一次失败重试三遍就吃掉 15% 的当日额度，而且必然全失败。
+ * 状态码分不出这两种，只能看错误正文。
+ */
+function isQuotaExhausted(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /quota|exceeded your current|billing/i.test(message);
+}
+
 function shouldRetryWorkflowAI(error: unknown): boolean {
+  if (isQuotaExhausted(error)) return false;
   const status = getErrorStatus(error);
   return !status || status === 429 || status >= 500;
 }
