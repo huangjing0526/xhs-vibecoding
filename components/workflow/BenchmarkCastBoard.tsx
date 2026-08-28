@@ -43,6 +43,8 @@ export interface BenchmarkCastBoardProps {
     source: { assetId?: string; library?: LibraryKind; label: string; file?: File },
   ) => void;
   onClear: (entity: BenchmarkCastEntity) => void;
+  /** 去填选题。素材要拷进项目目录，项目没落盘就绑不了，得先把人送过去 */
+  onGoFillTopic: () => void;
 }
 
 /**
@@ -63,6 +65,7 @@ export default function BenchmarkCastBoard({
   unusedTokens,
   onBind,
   onClear,
+  onGoFillTopic,
 }: BenchmarkCastBoardProps) {
   const [picking, setPicking] = useState<BenchmarkCastEntity | null>(null);
   /** 换绑后要绕开浏览器缓存：同一个实体的图是同名覆盖的 */
@@ -88,7 +91,14 @@ export default function BenchmarkCastBoard({
 
       {!ready && (
         <Callout tone="info" className="mb-3">
-          先填一下选题，项目落盘后才能绑素材。
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              素材要拷进项目目录，所以得先让项目落盘——去「脚本改写」填一下选题就行，那一步也正是把口播换成你自己的。
+            </span>
+            <Button size="sm" onClick={onGoFillTopic} icon={<ArrowRight size={13} />}>
+              去填选题
+            </Button>
+          </div>
         </Callout>
       )}
 

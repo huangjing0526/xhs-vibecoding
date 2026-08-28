@@ -1483,6 +1483,7 @@ export default function VideoFactory({
             unusedTokens={unusedCastTokenList}
             onBind={handleBindCastEntity}
             onClear={handleClearCastEntity}
+            onGoFillTopic={() => setStep("script")}
           />
 
           <CastBoard
