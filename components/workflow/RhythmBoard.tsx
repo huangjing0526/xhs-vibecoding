@@ -20,6 +20,7 @@ import {
   ROUTE_WHY,
   STEP_LABEL,
   STEP_WHY,
+  TALKING_APPROACH_LABEL,
   SHOT_TONE_BAR,
   VERDICT_LABEL,
   beatLocked,
@@ -39,6 +40,7 @@ import {
   riskyShots,
   routeByShot,
   shotRoute,
+  planTalkingShot,
   shotSteps,
   shotSubjectKind,
   shotTone,
@@ -955,6 +957,20 @@ export default function RhythmBoard({
                 </p>
               </div>
             )}
+            {(() => {
+              const risk = riskByShot.get(selectedShot.order);
+              if (!risk?.risks.includes("talking")) return null;
+              const plan = planTalkingShot(rhythm, selectedShot);
+              return (
+                <p className="mt-2 flex gap-1.5 rounded-xl bg-soft px-2.5 py-2 text-xs leading-5 text-ink">
+                  <Mic size={12} className="mt-1 shrink-0 text-faint" />
+                  <span>
+                    这一镜有人说话，换完主体口型还是原片的。
+                    建议走<span className="font-bold">{TALKING_APPROACH_LABEL[plan.approach]}</span>——{plan.why}。
+                  </span>
+                </p>
+              );
+            })()}
             {(() => {
               const risk = riskByShot.get(selectedShot.order);
               if (!risk?.risks.length) return null;
