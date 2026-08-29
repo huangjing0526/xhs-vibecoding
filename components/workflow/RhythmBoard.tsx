@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Activity, AlertTriangle, ChevronDown, ChevronRight, Download, Film, Link2, Loader2, MapPin, Mic, Music, Package, Ruler, Scan, Scissors, ShieldCheck, Trash2, Upload, Users, Zap } from "lucide-react";
+import { Activity, AlertTriangle, Camera, ChevronDown, ChevronRight, Download, Film, Link2, Loader2, MapPin, Mic, Music, Package, Ruler, Scan, Scissors, ShieldCheck, Trash2, Upload, Users, Zap } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
@@ -33,12 +33,14 @@ import {
   entitiesInShot,
   stageDurationSec,
   stageOfShot,
+  stockShots,
   formatTimecode,
   rhythmShotCount,
   riskyShots,
   routeByShot,
   shotRoute,
   shotSteps,
+  shotSubjectKind,
   shotTone,
   splitCastTokens,
   summarizeRhythm,
@@ -257,6 +259,14 @@ function Filmstrip({
               className="absolute left-1 top-1 z-10 rounded-full bg-ink/70 px-1 text-[8px] font-bold text-white"
             >
               片
+            </span>
+          )}
+          {shotSubjectKind(rhythm, shot.order) === "stock" && (
+            <span
+              title="画面里没有人，是产品或环境——用你自己拍的实拍顶，比生成又快又真"
+              className="absolute bottom-6 left-1 z-10 rounded-full bg-ok px-1 text-[8px] font-bold text-white"
+            >
+              拍
             </span>
           )}
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -495,7 +505,9 @@ function ReplicabilityPanel({
   const clippedSet = new Set(clippedShots(rhythm));
   const allowed = clipsAllowed(rhythm);
   // 各项不互斥：一镜既要切片又要贴字，两边都会数上，所以逐项说而不是拼成一句分配式
+  const stockCount = stockShots(rhythm).length;
   const counts = [
+    stockCount && `${stockCount} 镜可用实拍`,
     tally.generate && `${tally.generate} 镜直接生成`,
     tally.edit && `${tally.edit} 镜要切片`,
     tally.postfix && `${tally.postfix} 镜要贴字`,
@@ -907,6 +919,15 @@ export default function RhythmBoard({
               <Scissors size={13} className="shrink-0 text-faint" />
               {planText(selectedShot)}
             </p>
+            {shotSubjectKind(rhythm, selectedShot.order) === "stock" && (
+              <p className="mt-2 flex gap-1.5 rounded-xl bg-ok/5 px-2.5 py-2 text-xs leading-5 text-ink">
+                <Camera size={12} className="mt-1 shrink-0 text-ok" />
+                <span>
+                  这一镜画面里没有人，是产品或环境。<span className="font-bold">用你自己拍的实拍顶</span>，
+                  比生成又快又真，也不占生成额度——照下面的画面描述去素材库找对应的片子。
+                </span>
+              </p>
+            )}
             <ShotElements cast={entitiesInShot(rhythm.cast, selectedShot.order)} />
             <MeasuredStructure metrics={selectedShot.metrics} />
             <ShotContentBlock content={selectedShot.content} names={castNames} />

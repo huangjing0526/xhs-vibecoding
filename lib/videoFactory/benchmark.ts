@@ -645,6 +645,36 @@ export function castToPromptLines(cast: BenchmarkCastEntity[], names: Map<string
 }
 
 /**
+ * 这一镜靠什么来：自己拍的实拍，还是得演/得生成。
+ *
+ * stock 是探店、带货这类片子里最划算的一档——一盘菜、一个空镜、一只手托着产品，
+ * 拿自己拍的顶比让模型生成又快又真，还不占生成额度。判据不用再问模型：
+ * 这一镜的实体里没有角色、又没人说话，那画面里就没有人，剩下的都是物和环境。
+ *
+ * unknown 是抽样上限之外的镜头——没描述过就没有实体归属，判不了。
+ * 和 metrics 一个规矩：宁可说判不了，也不能拿一个错的绿灯让人去翻素材库。
+ */
+export type ShotSubjectKind = "stock" | "acted" | "unknown";
+
+export function shotSubjectKind(rhythm: BenchmarkRhythm, order: number): ShotSubjectKind {
+  const shot = rhythm.shots.find((item) => item.order === order);
+  if (!shot?.content) return "unknown";
+  const hasRole = (rhythm.cast || []).some(
+    (entity) => entity.kind === "role" && entity.shots.includes(order),
+  );
+  if (hasRole) return "acted";
+  const risks = rhythm.report?.shots.find((item) => item.order === order)?.risks || [];
+  return risks.includes("talking") ? "acted" : "stock";
+}
+
+/** 能用自有实拍顶掉的镜号。清单直接拿去素材库找对应的片子。 */
+export function stockShots(rhythm: BenchmarkRhythm): number[] {
+  return rhythm.shots
+    .map((shot) => shot.order)
+    .filter((order) => shotSubjectKind(rhythm, order) === "stock");
+}
+
+/**
  * 这份原片的片段能不能送进编辑通道。
  *
  * 两条放行理由：拆片服务抓的本来就是无水印源，或者人真的看过一眼点了确认。
