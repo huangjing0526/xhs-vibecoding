@@ -187,10 +187,11 @@ export function pickFramesToScreen(shots: BenchmarkShot[], max = MAX_SCREEN_FRAM
 }
 
 /**
- * 一批送去判路线的帧数上限。
+ * 一批送去判路线的镜头数。
  *
- * 分批而不是一次全送：几十张图的单次请求既慢又容易被截断成半条 JSON，
- * 而截断一次就等于这条片子全部镜头都没判过。
+ * 预算是**图片数**不是镜头数：一镜送中段和末段两张，所以 6 镜就是 12 张，
+ * 和内容那一趟送的图数同量级。分批而不是一次全送：几十张图的单次请求既慢
+ * 又容易被截断成半条 JSON，而截断一次就等于这条片子全部镜头都没判过。
  *
  * 分批是安全的，因为真正决定工序的四类风险（talking / fine-motion / text / crowd）
  * 全都看单帧就能判。唯一跨镜的 identity 不产生任何工序（见 RISK_STEPS），
@@ -198,7 +199,7 @@ export function pickFramesToScreen(shots: BenchmarkShot[], max = MAX_SCREEN_FRAM
  * 真正需要通盘看的判断——实体清单、跨镜主体、整片结论——留在内容那一趟，
  * 它送的是全片的均匀切片，视野比任何一批都宽。
  */
-export const ROUTE_BATCH_SIZE = 12;
+export const ROUTE_BATCH_SIZE = 6;
 
 /** 全量镜头切成若干批，顺序不打乱——批内的图片序号要映射回镜号。 */
 export function chunkShotsForRoute(shots: BenchmarkShot[], size = ROUTE_BATCH_SIZE): BenchmarkShot[][] {
@@ -214,21 +215,31 @@ export function chunkShotsForRoute(shots: BenchmarkShot[], size = ROUTE_BATCH_SI
 /**
  * 送去看的那叠图写成清单。
  *
- * 只给图片序号，不给镜号：镜号是跳着的（内容那一趟是抽样的，路线那一趟每批都从 1 数起），
+ * 只给序号，不给真实镜号：镜号是跳着的（内容那一趟是抽样的，路线那一趟每批都从 1 数起），
  * 让模型做这层映射它会直接按图片顺序重编，结论就标到别的镜头上去了。映射放服务端做。
  *
- * 两个提示词共用这一份，因为「图 N 对应 screened[N-1]」这条契约两边的收敛函数都指着它——
+ * 两个提示词共用这一份，因为「第 N 项对应 screened[N-1]」这条契约两边的收敛函数都指着它——
  * 各写各的，迟早有一边改了措辞而另一边的映射没跟上。
  */
-function framedShotIndex(shots: BenchmarkShot[]): string {
-  const lines = shots.map((shot, index) => `图 ${index + 1}：${shot.durationSec} 秒`).join("\n");
-  return `上面这些图是从对标视频里按顺序抽的关键帧，每张对应一个镜头：\n${lines}`;
+function framedShotIndex(shots: BenchmarkShot[], framesPerShot: 1 | 2): string {
+  const lines = shots
+    .map((shot, index) => {
+      const at = index * framesPerShot + 1;
+      const which = framesPerShot === 2 ? `图 ${at} 和图 ${at + 1}` : `图 ${at}`;
+      return `第 ${index + 1} 个镜头（${which}）：${shot.durationSec} 秒`;
+    })
+    .join("\n");
+  const how =
+    framesPerShot === 2
+      ? "上面这些图是从对标视频里抽的关键帧，**每个镜头连着两张**：先是这一镜靠中间的一帧，紧接着是靠结尾的一帧。"
+      : "上面这些图是从对标视频里按顺序抽的关键帧，每张对应一个镜头：";
+  return `${how}\n${lines}`;
 }
 
 export function buildRoutePrompt(shots: BenchmarkShot[]): string {
   return `你在帮一个团队判断：这条对标视频的每一镜，该用哪种做法复刻出来。
 
-${framedShotIndex(shots)}
+${framedShotIndex(shots, 2)}
 
 【复刻有两条通道】
 - 通道 A 从零生成：先生成一张静态首帧图，再让模型把这张图动起来。
@@ -239,12 +250,25 @@ ${framedShotIndex(shots)}
 你不用决定走哪条——如实标出风险就行，走哪条由后面的规则算。
 
 【怎么判断】
-逐图看画面里实际有什么，只标你真的看见的东西，看不清就不标。风险类型只能从这五个里选：
-- talking：有人正对镜头开口说话
-- fine-motion：连续的精细动作，尤其是手部操作
-- identity：这一镜里的人或产品，在上面这批图的别的图里也出现过
-- text：画面里有承载信息的文字（字幕条不算，商品包装上的字、屏幕截图里的字算）
-- crowd：三个人以上或场面杂乱
+逐镜看那两张图，只标你真的看见的东西，看不清就不标。风险类型只能从这五个里选：
+
+- **talking**：有人正对镜头开口说话。
+  背对镜头、只有旁白配音、嘴没动的都不算——判的是「这一镜要对口型」，不是「这一镜有声音」。
+
+- **fine-motion**：两张图之间，手或产品发生了要紧的位移或形变。
+  这两张图是同一镜的中段和末段，**比着看**：手的位置变了、东西被夹起来或翻过来了、
+  液体流出来了，这些算；只是人整体走近、镜头晃、表情变了，不算。
+  两张图看着几乎一样，就是没有精细动作，别标。
+
+- **identity**：这一镜里的人或产品，在上面这批图的别的镜头里也出现过。
+
+- **text**：**观众必须读清楚才看得懂这一镜**的文字。
+  价格牌、屏幕截图里的关键数字、专门给了特写的包装文案、活动规则，这些算。
+  背景里的店招、货架上的品牌名、随手入画的菜单、墙上的装饰字，**一律不算**——
+  那些复刻时根本不需要复现出来，标了只会让每一镜都白挂一道后期贴字的工序。
+  这一条要挑剔：一条正常的片子里真正需要后期贴字的，通常只有个位数镜头。
+
+- **crowd**：三个人以上或场面杂乱。
 
 有风险的镜头给一句可执行的提示：要保住这一镜原本的效果，动手时得注意什么。
 比如「手和产品的接触点要拍清楚，换货时才对得上」「人群留在背景里，只换前景这一位」「文字后期贴上去」。
@@ -252,11 +276,11 @@ ${framedShotIndex(shots)}
 
 what 用中文写这一镜画面里是什么，一句话。
 
-只返回 JSON，不要解释。image 必须是上面的图片序号，每张图一条，不要漏也不要多。格式：
+只返回 JSON，不要解释。shot 是上面的**镜头序号**（不是图片序号），每个镜头一条，不要漏也不要多。格式：
 {
   "shots": [
     {
-      "image": 1,
+      "shot": 1,
       "risks": ["talking"],
       "what": "这一镜画面里是什么，一句话",
       "workaround": "卡住时怎么绕；没风险就留空字符串"
@@ -272,7 +296,7 @@ what 用中文写这一镜画面里是什么，一句话。
 export function buildContentPrompt(shots: BenchmarkShot[]): string {
   return `你在帮一个团队把一条对标视频拆成「换掉素材就能重做一遍」的底稿。
 
-${framedShotIndex(shots)}
+${framedShotIndex(shots, 1)}
 
 【要拆出「可替换的实体」】
 这些图会被用来复刻：结构、构图、光线照抄，但里面的人、货、地方要换成用户自己的。
@@ -338,8 +362,10 @@ export function createFallbackReport(): ReplicabilityReport {
   };
 }
 
-/** 模型按图片序号回话，这是它的原始形状。 */
+/** 模型按序号回话，这是它的原始形状。路线那一趟给镜头序号，内容那一趟给图片序号。 */
 interface RawShotRisk {
+  /** 路线那一趟：第几个镜头（每镜两帧，图片序号对不上镜号） */
+  shot?: unknown;
   image?: unknown;
   risks?: unknown;
   what?: unknown;
@@ -374,19 +400,28 @@ export interface ScreeningResult {
 export function normalizeRoutes(
   raw: { shots?: unknown } | undefined,
   screened: BenchmarkShot[],
+  speaking?: Set<number> | null,
 ): ShotRisk[] {
   const shots = (Array.isArray(raw?.shots) ? raw.shots : []) as RawShotRisk[];
   return shots
     .map((shot) => {
-      const index = Number(shot.image) - 1;
+      const index = Number(shot.shot) - 1;
       const source = screened[index];
-      // 序号超范围说明模型编了张不存在的图，整条丢掉好过标错镜头
+      // 序号超范围说明模型编了个不存在的镜头，整条丢掉好过标错镜头
       if (!source) return null;
+      const risks = (Array.isArray(shot.risks) ? shot.risks : []).filter(
+        (risk): risk is ReplicabilityRisk => RISK_KEYS.includes(risk as ReplicabilityRisk),
+      );
       return {
         order: source.order,
-        risks: (Array.isArray(shot.risks) ? shot.risks : []).filter((risk): risk is ReplicabilityRisk =>
-          RISK_KEYS.includes(risk as ReplicabilityRisk),
-        ),
+        // 这一镜的时间区间里一个字都没说，就不可能是「正对镜头开口说话」。
+        // 静帧上看嘴型本来就容易看岔，而逐镜口播是 whisper 按时间码切出来的硬数据——
+        // 和 normalizeStoryboard 拿实测机位钉死模型的运镜是同一套做法：量得到的，不让模型说了算。
+        // speaking 为空表示这条片子没转写过，那时什么都不否定。
+        // ⚠️ 手上五份模板全是从头讲到尾的口播片，没有一镜是静音的，所以这道闸门至今
+        // **一次都没真正驳回过**。逻辑验过是对的（标了 talking 的镜全都落在有声区间内），
+        // 但「该驳回时真驳回」还等一条带空镜的对标片来验。
+        risks: speaking ? risks.filter((risk) => risk !== "talking" || speaking.has(source.order)) : risks,
         what: str(shot.what),
         workaround: str(shot.workaround),
       };

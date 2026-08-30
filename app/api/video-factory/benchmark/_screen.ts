@@ -26,6 +26,7 @@ import {
   chunkShotsForRoute,
   clippedShots,
   createFallbackReport,
+  speakingShots,
   normalizeRoutes,
   normalizeScreening,
   pickFramesToScreen,
@@ -48,7 +49,7 @@ const FRAME_CONCURRENCY = 6;
  * 每批绝大部分时间在等模型回话，本机 CPU 是闲的，所以并着跑划算；
  * 但也不能全放——provider 侧限流触发 429 之后走的是退避重试，压上去反而更慢。
  */
-const ROUTE_CONCURRENCY = 2;
+const ROUTE_CONCURRENCY = 3;
 
 /** 模型没回话时那两个字段的兜底。只有 verdict 和 summary 会被读到 */
 const FALLBACK_REPORT = createFallbackReport();
@@ -62,20 +63,39 @@ const FALLBACK_REPORT = createFallbackReport();
 const SCREEN_FRAME_WIDTH = 640;
 
 const frameFile = (dir: string, order: number) => path.join(dir, `frame-${String(order).padStart(2, "0")}.jpg`);
-const screenFrameFile = (dir: string, order: number) =>
-  path.join(dir, `screen-${String(order).padStart(2, "0")}.jpg`);
+
+/**
+ * 一镜抽两个位置。
+ *
+ * mid 是老位置，内容那一趟判景别和色调用它；late 是为路线那一趟加的——
+ * 「连续精细动作」在**一张**静帧上根本判不出来，模型只能猜，实测同一批帧连跑两次
+ * 三十几镜里有一半的工序判定会变。给它同一镜的中段和末段两张，让它比着看。
+ */
+type ScreenFrameKind = "mid" | "late";
+
+const screenFrameFile = (dir: string, order: number, kind: ScreenFrameKind) =>
+  path.join(dir, `screen-${String(order).padStart(2, "0")}${kind === "late" ? "-late" : ""}.jpg`);
+
+/** 这一镜在哪一秒取帧。末段取 85% 而不是末帧——切点前一帧常常已经在转场里了 */
+const frameAtSec = (shot: BenchmarkShot, kind: ScreenFrameKind) =>
+  shot.startSec + shot.durationSec * (kind === "late" ? 0.85 : 0.5);
 
 /**
  * 取一镜的大帧：已经抽过就直接读，没有就从源视频抽一张。
  * 源视频没了或 ffmpeg 抽失败，回落到那张 200 宽的缩略图——小图也比没图强。
  */
-async function readScreenFrame(benchmarkId: string, dir: string, shot: BenchmarkShot): Promise<Buffer | null> {
-  const target = screenFrameFile(dir, shot.order);
+async function readScreenFrame(
+  benchmarkId: string,
+  dir: string,
+  shot: BenchmarkShot,
+  kind: ScreenFrameKind = "mid",
+): Promise<Buffer | null> {
+  const target = screenFrameFile(dir, shot.order, kind);
   const cached = await readFile(target).catch(() => null);
   if (cached) return cached;
 
   const source = benchmarkSourcePath(benchmarkId);
-  const middle = shot.startSec + shot.durationSec / 2;
+  const middle = frameAtSec(shot, kind);
   try {
     await runCommand(
       "ffmpeg",
@@ -96,6 +116,7 @@ async function readScreenFrame(benchmarkId: string, dir: string, shot: Benchmark
     console.warn("[VideoFactory] 大帧抽取失败，回落到缩略图", {
       action: "videoFactory.screen.frame",
       shot: shot.order,
+      kind,
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -115,7 +136,7 @@ export async function dropScreenFrames(benchmarkId: string): Promise<void> {
   const dir = benchmarkDir(benchmarkId);
   const entries = await readdir(dir).catch(() => [] as string[]);
   for (const name of entries) {
-    if (/^screen-\d+\.jpg$/.test(name)) await unlink(path.join(dir, name)).catch(() => {});
+    if (/^screen-\d+(?:-late)?\.jpg$/.test(name)) await unlink(path.join(dir, name)).catch(() => {});
   }
 }
 
@@ -133,19 +154,38 @@ interface PassOrigin {
   provider: string;
 }
 
+/** 一镜送去看的两张图。判画面只用 mid，判动作要两张比着看 */
+interface ShotFrames {
+  mid: WorkflowImage;
+  late: WorkflowImage;
+}
+
 /**
- * 全部镜头的大帧读成可直接送模型的形状；读不到的镜头不在表里。
+ * 全部镜头的大帧读成可直接送模型的形状；中段那张都读不到的镜头不在表里。
  *
- * 限并发跑：每一镜没缓存时都是一次 ffmpeg 定位抽帧，34 镜串着跑要三秒多，
- * 六路并行半秒出头。并发数与拆片时抽缩略图那处取同一个数，理由也一样——
+ * 限并发跑：每一镜没缓存时都是一次 ffmpeg 定位抽帧，34 镜两个位置串着跑要六七秒，
+ * 六路并行一秒出头。并发数与拆片时抽缩略图那处取同一个数，理由也一样——
  * 再往上加收益就被同一个源文件的读竞争吃掉了。
+ *
+ * 末段那张抽不出来（源片没了、镜头太短）就拿中段那张顶上，让「每镜两张」这条
+ * 对得死死的：图数一旦随镜头浮动，模型的镜号映射就没法在服务端算了。
+ * 两张一模一样在判据上是安全的一侧——看不出位移就不会标精细动作。
  */
-async function readScreenImages(id: string, shots: BenchmarkShot[]): Promise<Map<number, WorkflowImage>> {
+async function readScreenImages(id: string, shots: BenchmarkShot[]): Promise<Map<number, ShotFrames>> {
   const dir = benchmarkDir(id);
-  const bytes = await mapLimited(shots, FRAME_CONCURRENCY, (shot) => readScreenFrame(id, dir, shot));
-  const images = new Map<number, WorkflowImage>();
-  for (const [index, buffer] of bytes.entries()) {
-    if (buffer) images.set(shots[index].order, { mimeType: "image/jpeg", base64: buffer.toString("base64") });
+  const pairs = await mapLimited(shots, FRAME_CONCURRENCY, async (shot) => ({
+    mid: await readScreenFrame(id, dir, shot, "mid"),
+    late: await readScreenFrame(id, dir, shot, "late"),
+  }));
+  const toImage = (buffer: Buffer): WorkflowImage => ({
+    mimeType: "image/jpeg",
+    base64: buffer.toString("base64"),
+  });
+  const images = new Map<number, ShotFrames>();
+  for (const [index, pair] of pairs.entries()) {
+    if (!pair.mid) continue;
+    const mid = toImage(pair.mid);
+    images.set(shots[index].order, { mid, late: pair.late ? toImage(pair.late) : mid });
   }
   return images;
 }
@@ -167,7 +207,11 @@ interface RoutePass extends PassOrigin {
  * try/catch 必须留在 task 里面：漏到 mapLimited 外面的话，一批抛错会经 Promise.all
  * 把整趟带崩，「只丢那一批」就没了。
  */
-async function runRoutePass(shots: BenchmarkShot[], images: Map<number, WorkflowImage>): Promise<RoutePass> {
+async function runRoutePass(
+  shots: BenchmarkShot[],
+  images: Map<number, ShotFrames>,
+  speaking: Set<number> | null,
+): Promise<RoutePass> {
   const batches = chunkShotsForRoute(shots);
   const done = await mapLimited(batches, ROUTE_CONCURRENCY, async (batch) => {
     try {
@@ -175,11 +219,15 @@ async function runRoutePass(shots: BenchmarkShot[], images: Map<number, Workflow
         action: "videoFactory.replicability.route",
         prompt: buildRoutePrompt(batch),
         fallback: { shots: [] },
-        images: batch.map((shot) => images.get(shot.order)!),
+        // 顺序必须是「镜1中、镜1末、镜2中、镜2末……」，提示词里的镜号映射照着它算
+        images: batch.flatMap((shot) => {
+          const pair = images.get(shot.order)!;
+          return [pair.mid, pair.late];
+        }),
         // 一批 12 镜只回风险和一句话，比内容那一趟轻得多
         maxTokens: 3000,
       });
-      return { risks: normalizeRoutes(ai.result, batch), origin: ai, error: null as unknown };
+      return { risks: normalizeRoutes(ai.result, batch, speaking), origin: ai, error: null as unknown };
     } catch (error) {
       console.warn("[VideoFactory] 这一批镜头判路线失败，其余照跑", {
         action: "videoFactory.replicability.route",
@@ -211,14 +259,15 @@ interface ContentPass extends PassOrigin {
 async function runContentPass(
   id: string,
   screened: BenchmarkShot[],
-  images: Map<number, WorkflowImage>,
+  images: Map<number, ShotFrames>,
 ): Promise<ContentPass> {
   try {
     const ai = await generateWorkflowJson<Parameters<typeof normalizeScreening>[0]>({
       action: "videoFactory.replicability.content",
       prompt: buildContentPrompt(screened),
       fallback: {},
-      images: screened.map((shot) => images.get(shot.order)!),
+      // 内容判的是景别和色调，一镜一张中段帧就够，不跟着路线那趟送两张
+      images: screened.map((shot) => images.get(shot.order)!.mid),
       // 逐镜四段内容 + 实体清单，3000 会在镜头多时被截断成半条 JSON
       maxTokens: 8000,
     });
@@ -259,7 +308,7 @@ export async function runScreening(id: string, rhythm: BenchmarkRhythm): Promise
   const screened = pickFramesToScreen(available);
   // 内容那一趟不依赖路线的任何结果，串着跑纯属白等——最重的那次调用没必要排在队尾
   const [route, content] = await Promise.all([
-    runRoutePass(available, images),
+    runRoutePass(available, images, speakingShots(rhythm)),
     runContentPass(id, screened, images),
   ]);
 

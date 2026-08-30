@@ -686,6 +686,31 @@ export function clipsAllowed(rhythm: BenchmarkRhythm): boolean {
   return rhythm.source?.origin === "extractor" || Boolean(rhythm.source?.confirmedAt);
 }
 
+/**
+ * 画面里有人在说话的镜号，按转写时间码与镜头区间**有重叠**算。
+ *
+ * 不能直接看 shot.voiceover 有没有词：转写段落是按**中点**归属到某一镜的，
+ * 一句话横跨三镜时只有中间那镜挂着词，首尾两镜的 voiceover 是空的，
+ * 可人在这三镜里一直在说。按重叠算才对得上画面。
+ *
+ * 返回 null 表示这条片子**压根没转写过**（没装 whisper、原片无音轨、转写失败）。
+ * 这时一个字都没有，不代表没人说话——和「测不了就标测不了」一个规矩，
+ * 判不了就说判不了，不能拿它去否定任何东西。
+ */
+export function speakingShots(rhythm: BenchmarkRhythm): Set<number> | null {
+  const spoken = rhythm.shots
+    .map((shot) => shot.voiceover)
+    .filter((line): line is BenchmarkShotVoiceover => Boolean(line?.text));
+  if (!spoken.length) return null;
+  return new Set(
+    rhythm.shots
+      .filter((shot) =>
+        spoken.some((line) => line.startSec < shot.endSec && line.endSec > shot.startSec),
+      )
+      .map((shot) => shot.order),
+  );
+}
+
 /** 已经切出原片段的镜号。界面上标出来，也是编辑通道的实际可用清单。 */
 export function clippedShots(rhythm: BenchmarkRhythm): number[] {
   return rhythm.shots.filter((shot) => shot.clip).map((shot) => shot.order);
