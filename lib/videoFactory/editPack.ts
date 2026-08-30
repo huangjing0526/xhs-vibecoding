@@ -56,7 +56,7 @@ function describeShot(
   const steps = risk ? shotSteps(risk) : [];
   if (steps.length) lines.push(`**要做**：${steps.map((step) => STEP_LABEL[step]).join(" + ")}`);
 
-  const here = entitiesInShot(cast, shot.order);
+  const here = entitiesInShot(cast, [shot.order]);
   if (here.length) {
     lines.push(
       `**这一镜要换**：${here

@@ -37,7 +37,6 @@ import {
   stageOfShot,
   stockShots,
   formatTimecode,
-  rhythmShotCount,
   riskyShots,
   routeByShot,
   shotRoute,
@@ -946,7 +945,7 @@ export default function RhythmBoard({
                 </span>
               </p>
             )}
-            <ShotElements cast={entitiesInShot(rhythm.cast, selectedShot.order)} />
+            <ShotElements cast={entitiesInShot(rhythm.cast, [selectedShot.order])} />
             <MeasuredStructure metrics={selectedShot.metrics} />
             <ShotContentBlock content={selectedShot.content} names={castNames} />
             {selectedShot.voiceover?.text && (
@@ -1042,7 +1041,9 @@ export default function RhythmBoard({
 
       {applied && (
         <Callout tone="ok" className="mt-3">
-          去「脚本改写」那步点「拆成分镜表」，就会按这 {rhythmShotCount(rhythm)} 段的时长切你自己的口播。
+          去「脚本改写」那步点「拆成分镜表」，就会按这条节奏切你自己的口播。
+          同一阶段里连着的短镜头会并成一次生成（引擎最短一档 6 秒，逐镜下单四分之三都剪掉了），
+          切点原样保留成剪辑指令，成片的碎切一刀不少。
         </Callout>
       )}
     </Card>

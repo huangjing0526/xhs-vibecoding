@@ -75,7 +75,10 @@ import {
   estimateDurationSec,
   secondsToChars,
   replanRhythm,
-  rhythmShotCount,
+  describeUnitPlan,
+  planGenerationUnits,
+  shotParts,
+  shotSourceOrders,
   storyboardDurationSec,
   type BenchmarkRhythm,
   type BenchmarkSkeleton,
@@ -721,6 +724,31 @@ export default function VideoFactory({
   };
 
   /**
+   * 改某一刀的文案。
+   *
+   * 套了对标节奏的镜头文案在 cuts 里，没套的还在镜头本身上——两种存法在这里收口，
+   * 界面那边只管「第几镜第几刀」，不用跟着判 cuts 在不在。
+   * 时间码不给改：那是按引擎档位算出来的，改了这一刀就取不到对应的画面了。
+   */
+  const patchPart = (order: number, cutIndex: number, patch: { voiceover?: string; subtitle?: string }) => {
+    setProject((current) => {
+      const shots = current.storyboard?.shots;
+      if (!shots) return current;
+      return {
+        ...current,
+        storyboard: {
+          ...current.storyboard!,
+          shots: shots.map((shot) => {
+            if (shot.order !== order) return shot;
+            if (!shot.cuts) return { ...shot, ...patch };
+            return { ...shot, cuts: shot.cuts.map((cut, at) => (at === cutIndex ? { ...cut, ...patch } : cut)) };
+          }),
+        },
+      };
+    });
+  };
+
+  /**
    * 贴一条抖音/小红书链接就地拆。
    *
    * 走的是「链接拆片」那条现成的链：本机 services/video-renderer 抓无水印视频 + whisper 转写，
@@ -985,9 +1013,10 @@ export default function VideoFactory({
       formData.append("cast", JSON.stringify(project.cast));
       // 这一镜单独绑了素材就带上，服务端会把它排在项目级参考图前面
       if (shot.material) formData.append("material", JSON.stringify(shot.material));
-      // 这一镜对应的对标实体绑了谁，按 sourceShotOrder 现算——绑定是单一事实来源，
-      // 不在项目目录里再拷一份「展开后的每镜素材」，那要维护三份一致性
-      const entityRefs = shotCastRefs(project.rhythm?.cast, project.castBinding, shot.sourceShotOrder);
+      // 这一镜对应的对标实体绑了谁，按它覆盖的对标镜号现算——绑定是单一事实来源，
+      // 不在项目目录里再拷一份「展开后的每镜素材」，那要维护三份一致性。
+      // 并了镜的要把几刀里出现的实体凑齐：只按第一镜取，后面几刀的货就没有参考图
+      const entityRefs = shotCastRefs(project.rhythm?.cast, project.castBinding, shotSourceOrders(shot));
       if (entityRefs.length) {
         formData.append(
           "castEntities",
@@ -1037,7 +1066,7 @@ export default function VideoFactory({
       onNotice({
         type: "success",
         message: extended.length
-          ? `已合成 ${data.finalCut.durationSec.toFixed(1)} 秒；第 ${extended.map((item) => item.shotOrder).join("、")} 镜为放下口播延长了画面`
+          ? `已合成 ${data.finalCut.durationSec.toFixed(1)} 秒；${extended.length} 处为放下口播延长了画面`
           : `已合成 ${data.finalCut.durationSec.toFixed(1)} 秒成片`,
       });
     } catch (error) {
@@ -1294,13 +1323,24 @@ export default function VideoFactory({
     return storyboard.shots
       .map((shot) => {
         const clip = project.clips.find((item) => item.shotOrder === shot.order);
+        // 并了镜的一镜在成片里是好几刀，逐刀写清从第几秒取——
+        // 只写「这一镜 4.6 秒」的话，拿着清单去剪映的人不知道那是跳着取的三段
+        const parts = shotParts(shot);
+        const cuts =
+          parts.length < 2
+            ? [`字幕：${parts[0].subtitle || parts[0].voiceover || "（无）"}`]
+            : parts.map(
+                (part) =>
+                  `  第 ${part.cutIndex + 1} 刀：取 ${part.fromSec.toFixed(1)}–${(part.fromSec + part.durationSec).toFixed(1)} 秒` +
+                  ` · 字幕：${part.subtitle || part.voiceover || "（无）"}`,
+              );
         return [
           `第 ${shot.order} 镜 · ${
             shot.trimToSec !== undefined && shot.trimToSec < shot.durationSec
               ? `生成 ${shot.durationSec} 秒，剪到 ${shot.trimToSec} 秒`
               : `${shot.durationSec} 秒`
           } · ${shot.shotSize || "未标景别"} · ${shot.cameraMove || "未标运镜"}`,
-          `字幕：${shot.subtitle || shot.voiceover || "（无）"}`,
+          ...cuts,
           `成片：${clip?.videoPath || "（未生成）"}`,
         ].join("\n");
       })
@@ -1356,6 +1396,14 @@ export default function VideoFactory({
    * 分辨率与比例不在这里改，交给上面那个 effect 统一收——载入项目那条路也要走同样的校正。
    */
   const selectGenProvider = (next: VideoGenProviderId) => {
+    // 并了镜的切点是按旧引擎的档位铺开的：10 秒档上铺的三刀，换到最长 8 秒的引擎之后
+    // 最后一刀会落在片子外面。这里不悄悄改它——切点重排等于重排整张分镜表
+    if (project.storyboard?.shots.some((shot) => shot.cuts && shot.cuts.length > 1)) {
+      onNotice({
+        type: "info",
+        message: "这张分镜表有并镜，切点是按原引擎的时长档铺开的，换引擎后要「重拆」一次才对得上",
+      });
+    }
     setProject((current) => ({
       ...current,
       genProvider: next,
@@ -1663,7 +1711,7 @@ export default function VideoFactory({
                 title="拆分镜"
                 description={
                   project.rhythm
-                    ? `照对标「${project.rhythm.sourceLabel}」的节奏切，${rhythmShotCount(project.rhythm)} 段，时长一秒不改`
+                    ? `照对标「${project.rhythm.sourceLabel}」的节奏切：${describeUnitPlan(planGenerationUnits(project.rhythm, genProvider))}，时长一秒不改`
                     : `每镜只能是 ${durationOptions.join(" 或 ")} 秒——这是 ${selectedProvider?.name || "出片引擎"} 的硬约束`
                 }
                 action={
@@ -1740,6 +1788,7 @@ export default function VideoFactory({
                   {shot.trimToSec !== undefined && shot.trimToSec < shot.durationSec && (
                     <Badge tone="warn">剪到 {shot.trimToSec} 秒</Badge>
                   )}
+                  {shot.cuts && shot.cuts.length > 1 && <Badge tone="brand">并了 {shot.cuts.length} 镜</Badge>}
                   {shot.shotSize && <span className="text-xs text-faint">{shot.shotSize}</span>}
                 </div>
 
@@ -1788,26 +1837,56 @@ export default function VideoFactory({
                   </div>
                 </div>
 
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <FieldLabel>口播</FieldLabel>
-                    <Textarea
-                      rows={2}
-                      className="mt-1"
-                      value={shot.voiceover}
-                      onChange={(event) => patchShot(shot.order, { voiceover: event.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <FieldLabel>字幕</FieldLabel>
-                    <Textarea
-                      rows={2}
-                      className="mt-1"
-                      value={shot.subtitle}
-                      onChange={(event) => patchShot(shot.order, { subtitle: event.target.value })}
-                    />
-                  </div>
-                </div>
+                {(() => {
+                  // 一镜展开成刀。一刀就照旧摆两个框，多刀才逐刀列——
+                  // 数据只有一条路径（shotParts），分叉的只是怎么摆
+                  const parts = shotParts(shot);
+                  const text = (part: (typeof parts)[number]) => (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <FieldLabel>口播</FieldLabel>
+                        <Textarea
+                          rows={2}
+                          className="mt-1"
+                          value={part.voiceover}
+                          onChange={(event) => patchPart(shot.order, part.cutIndex, { voiceover: event.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel>字幕</FieldLabel>
+                        <Textarea
+                          rows={2}
+                          className="mt-1"
+                          value={part.subtitle}
+                          onChange={(event) => patchPart(shot.order, part.cutIndex, { subtitle: event.target.value })}
+                        />
+                      </div>
+                    </div>
+                  );
+                  if (parts.length < 2) return <div className="mt-3">{text(parts[0])}</div>;
+                  return (
+                    <div className="mt-3 rounded-xl border border-line bg-canvas p-3">
+                      <p className="text-[11px] leading-5 text-faint">
+                        这一镜画面是<b className="text-ink">一次生成</b>的，成片里再从这 {shot.durationSec} 秒里
+                        跳着取 {parts.length} 刀接起来——切口是剪出来的，所以主体不会换脸，
+                        对标那几刀的碎切节奏也一刀不少。时间码按引擎档位算好了，只用填文案。
+                      </p>
+                      {parts.map((part) => (
+                        <div
+                          key={part.cutIndex}
+                          className="mt-2.5 border-t border-line pt-2.5 first:border-t-0 first:pt-0"
+                        >
+                          <p className="text-[11px] font-bold text-faint">
+                            第 {part.cutIndex + 1} 刀 · 取第 {part.fromSec.toFixed(1)}–
+                            {(part.fromSec + part.durationSec).toFixed(1)} 秒（{part.durationSec} 秒）
+                            {part.sourceShotOrder ? ` · 对标第 ${part.sourceShotOrder} 镜` : ""}
+                          </p>
+                          <div className="mt-1.5">{text(part)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
 
                 <ShotMaterialSlot
                   projectId={project.id}
@@ -1905,7 +1984,9 @@ export default function VideoFactory({
                     {clip && <Badge tone="ok">已出片</Badge>}
                   </div>
 
-                  <p className="mt-2 text-sm leading-6 text-muted">{shot.visual || shot.voiceover || "（这一镜没写画面）"}</p>
+                  <p className="mt-2 text-sm leading-6 text-muted">
+                    {shot.visual || shotParts(shot)[0].voiceover || "（这一镜没写画面）"}
+                  </p>
 
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <Button
@@ -2131,7 +2212,11 @@ export default function VideoFactory({
                   <Callout tone="info" className="mb-3">
                     这几镜为放下口播突破了对标节奏：
                     {project.finalCut.extendedShots
-                      .map((item) => `第 ${item.shotOrder} 镜 ${item.plannedSec}s → ${item.actualSec}s`)
+                      .map(
+                        (item) =>
+                          `第 ${item.shotOrder} 镜${item.cutIndex ? `第 ${item.cutIndex + 1} 刀` : ""} ` +
+                          `${item.plannedSec}s → ${item.actualSec}s`,
+                      )
                       .join("；")}
                   </Callout>
                 )}

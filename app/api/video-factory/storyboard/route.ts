@@ -4,7 +4,9 @@ import { generateWorkflowJson } from "@/lib/workflowAi";
 import {
   buildStoryboardPrompt,
   createFallbackStoryboard,
+  describeUnitPlan,
   normalizeStoryboard,
+  planGenerationUnits,
   replanRhythm,
   VIDEO_GEN_PROVIDERS,
   type BenchmarkRhythm,
@@ -43,25 +45,32 @@ export async function POST(request: NextRequest) {
     // 否则提示词里会写着「这一镜生成 10 秒」而该引擎最长只有 8 秒
     const rhythm = body.rhythm ? replanRhythm(body.rhythm, genProvider) : null;
 
+    // 一个阶段里连着的、都能直接生成的短镜头并成一次生成，成片再从那一段里跳着取回原本的几刀。
+    // 34 镜逐镜下单是 34 次生成、每次 6 秒只用 1.5 秒；并完是十来次，档位用满，
+    // 而且同一次生成出来的主体天然一致。切点一刀不少，只是从"生成边界"变成了"剪辑指令"
+    const units = rhythm ? planGenerationUnits(rhythm, genProvider) : null;
+
     const fallback = createFallbackStoryboard(script, genProvider);
     const ai = await generateWorkflowJson<Storyboard>({
       action: "videoFactory.storyboard",
       prompt: buildStoryboardPrompt(script, {
         visualStyle: body.visualStyle,
         rhythm,
+        units,
         castBinding: body.castBinding,
       }),
       fallback,
-      maxTokens: 4000,
+      // 并镜之后每镜还要逐刀给字幕和口播，4000 会在镜头多时被截断成半条 JSON
+      maxTokens: 8000,
     });
-    const storyboard = normalizeStoryboard(ai.result, fallback, genProvider, rhythm);
+    const storyboard = normalizeStoryboard(ai.result, fallback, genProvider, units);
 
     return apiOk(
       { storyboard, usedFallback: ai.usedFallback, provider: ai.provider },
       ai.usedFallback
         ? "未配置 AI，已按脚本分段一段一镜，提示词请手动补"
-        : rhythm
-          ? `已按对标节奏拆成 ${storyboard.shots.length} 个镜头`
+        : units
+          ? `已按对标节奏排成 ${describeUnitPlan(units)}`
           : `已拆成 ${storyboard.shots.length} 个镜头`
     );
   } catch (error) {

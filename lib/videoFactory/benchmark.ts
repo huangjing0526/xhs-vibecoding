@@ -479,23 +479,6 @@ export function formatTimecode(seconds: number): string {
   return `${minutes}:${String(rest).padStart(2, "0")}.${Math.round((seconds - whole) * 10)}`;
 }
 
-/** 节奏模板套进分镜时，喂给模型的那份时长清单。 */
-export function rhythmToPlanLines(rhythm: BenchmarkRhythm): string {
-  return rhythm.shots
-    .flatMap((shot) =>
-      shot.plan.segments > 1
-        ? Array.from({ length: shot.plan.segments }, (_, index) => {
-            // 长镜头拆成多段，最后一段承担余数
-            const used = index === shot.plan.segments - 1
-              ? Math.round((shot.durationSec - shot.plan.generateSec * index) * 10) / 10
-              : shot.plan.generateSec;
-            return `第 ${shot.order}-${index + 1} 镜：成片 ${used} 秒`;
-          })
-        : [`第 ${shot.order} 镜：成片 ${shot.plan.trimToSec} 秒`],
-    )
-    .join("\n");
-}
-
 /** 套用节奏后总共要切多少镜——长镜头拆过段，和对标镜头数不是一回事。 */
 export function rhythmShotCount(rhythm: BenchmarkRhythm): number {
   return rhythm.shots.reduce((sum, shot) => sum + shot.plan.segments, 0);
@@ -549,8 +532,8 @@ export function shotMetricsToPrompt(shot: BenchmarkShot): string {
   const m = shot.metrics;
   if (!m) return "";
   const lines: string[] = [];
-  if (m.cameraMotion === "fixed") lines.push("机位固定，全程不推不拉不摇");
-  if (m.cameraMotion === "moving") lines.push("机位移动，跟随主体");
+  const camera = CAMERA_MOTION_PROMPT[m.cameraMotion];
+  if (camera) lines.push(camera);
   if (m.subjectScaleRatio) lines.push(`主体${describeSubjectScale(m.subjectScaleRatio)}`);
   if (m.tempo) {
     lines.push(
@@ -561,6 +544,18 @@ export function shotMetricsToPrompt(shot: BenchmarkShot): string {
   }
   return lines.join("；");
 }
+
+/**
+ * 机位量出来之后，写给模型听的那句硬约束。
+ * 只有量准了的两种有话说；slight 和 unknown 一个字都不提——
+ * 写占位符模型会拿它当真去编。并镜那边（unit.ts）也照这份写，别各写一句。
+ */
+export const CAMERA_MOTION_PROMPT: Record<CameraMotion, string> = {
+  fixed: "机位固定，全程不推不拉不摇",
+  moving: "机位移动，跟随主体",
+  slight: "",
+  unknown: "",
+};
 
 /** 占位符长这样：{角色1}、{产品2}。花括号里只允许没有嵌套的一段。 */
 const CAST_TOKEN_PATTERN = /\{([^{}]+)\}/g;
@@ -600,15 +595,6 @@ export function shotContentToPrompt(content: BenchmarkShotContent, names: Map<st
     content.scene && `场景：${resolveCastTokens(content.scene, names)}`,
   ].filter(Boolean);
   return parts.join("；");
-}
-
-/**
- * 没描述到的镜号。
- * 抽样上限之外的镜头就是没看到，得说出来——和 metrics「测不了就标测不了」同一条规矩，
- * 不然分镜表会拿一份缺了几镜的底稿假装完整。
- */
-export function undescribedShots(rhythm: BenchmarkRhythm): number[] {
-  return rhythm.shots.filter((shot) => !shot.content).map((shot) => shot.order);
 }
 
 /**

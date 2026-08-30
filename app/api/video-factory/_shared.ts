@@ -149,9 +149,15 @@ export function shotMaterialPath(projectId: string, shotOrder: number, extension
   return path.join(projectDir(projectId), `shot-${String(shotOrder).padStart(2, "0")}-material${extension}`);
 }
 
-/** 某一镜配音的落点。重配覆盖同名文件，不留旧的。 */
-export function voiceoverPath(projectId: string, shotOrder: number): string {
-  return path.join(projectDir(projectId), `vo-${String(shotOrder).padStart(2, "0")}.mp3`);
+/**
+ * 某一镜某一刀配音的落点。重配覆盖同名文件，不留旧的。
+ *
+ * 第 0 刀沿用不带刀号的老文件名——并镜之前一镜就是一刀，
+ * 改名会让存量项目里所有配音一次性失效，白重配一遍。
+ */
+export function voiceoverPath(projectId: string, shotOrder: number, cutIndex = 0): string {
+  const stem = `vo-${String(shotOrder).padStart(2, "0")}${cutIndex > 0 ? `-${cutIndex}` : ""}`;
+  return path.join(projectDir(projectId), `${stem}.mp3`);
 }
 
 /** 合成出来的成片。重跑覆盖，永远只有一份「最新的成片」。 */

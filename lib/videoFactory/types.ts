@@ -7,6 +7,8 @@
 
 // 只取类型，运行时不成环：benchmark.ts 反过来要用这里的 SHOT_DURATIONS 常量
 import type { BenchmarkRhythm } from "./benchmark";
+// 同上，unit.ts 运行时要用这里的 PROVIDER_CAPS
+import type { UnitCut } from "./unit";
 
 /**
  * 生成引擎。照 SHOT_DURATIONS 的路子从常量数组派生类型，
@@ -103,6 +105,23 @@ export interface ScriptDraft {
   borrowedStructure: string;
 }
 
+/**
+ * 一镜在成片里的一刀。
+ *
+ * 并了镜的镜头，画面是**一次**生成出来的一整段，成片里却要按对标原本的切点
+ * 跳着取好几段接起来——那几刀就在这里。时间码由服务端按引擎档位算好，模型碰不到；
+ * 模型只写每一刀配什么字幕、念哪一句。
+ *
+ * 有 cuts 时字幕和口播**全在这里**，Shot 上那两个字段留空：
+ * 同一句话存两份迟早对不上，而对不上的时候没人说得清该信哪一份。
+ */
+export interface ShotCut extends UnitCut {
+  /** 这一刀压的字幕 */
+  subtitle: string;
+  /** 这一刀念的口播原文切片 */
+  voiceover: string;
+}
+
 /** 分镜表里的一个镜头。 */
 export interface Shot {
   /** 从 1 开始的镜号 */
@@ -121,19 +140,22 @@ export interface Shot {
   cameraMove: string;
   /** 画面里发生什么 */
   visual: string;
-  /** 这一镜配的口播原文（从 ScriptDraft 切下来） */
+  /** 这一镜配的口播原文（从 ScriptDraft 切下来）。**有 cuts 时留空，文案在每一刀里** */
   voiceover: string;
-  /** 压在画面上的字幕，通常比口播短 */
+  /** 压在画面上的字幕，通常比口播短。**有 cuts 时留空，文案在每一刀里** */
   subtitle: string;
   /** 喂给图片工厂的第一帧提示词 */
   framePrompt: string;
   /** 喂给图生视频模型的运动提示词，只描述「怎么动」，画面内容由首帧承载 */
   videoPrompt: string;
   /**
-   * 这一镜对应对标片的第几镜。套了节奏模板才有。
-   * 留着是为了能回去看这一镜的实测结构，也为了生成完能拿实测值验收。
+   * 成片里这一镜要切的那几刀，也是它和对标镜头的唯一对应关系。
+   *
+   * 套了对标节奏就一定有，至少一刀；没套对标节奏（模型自己定切几镜）就没有。
+   * 不另存一个单数的 sourceShotOrder：并了镜的一镜对着对标好几镜，
+   * 存一个「第一镜」是有损的，而下一个读它的人不会知道自己读到的是残缺值。
    */
-  sourceShotOrder?: number;
+  cuts?: ShotCut[];
   /**
    * 这一镜单独指定的素材。可选——不填就用项目级的角色/产品/场景。
    *
@@ -349,6 +371,11 @@ export interface VideoGenProviderStatus {
  */
 export interface ShotVoiceover {
   shotOrder: number;
+  /**
+   * 这一镜里的第几刀，从 0 起。没并镜就是 0。
+   * 老项目没有这一项，读的时候当它是 0——那时一镜就是一刀。
+   */
+  cutIndex?: number;
   text: string;
   /** 落在项目目录里的绝对路径 */
   path: string;
@@ -384,7 +411,7 @@ export interface FinalCut {
   withSubtitles: boolean;
   withVoiceover: boolean;
   createdAt: string;
-  extendedShots: Array<{ shotOrder: number; plannedSec: number; actualSec: number }>;
+  extendedShots: Array<{ shotOrder: number; cutIndex: number; plannedSec: number; actualSec: number }>;
 }
 
 /** 一次图生视频的产出。 */

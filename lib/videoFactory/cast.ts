@@ -32,13 +32,19 @@ export function castNameMap(
   return names;
 }
 
-/** 出现在对标第 N 镜的实体。 */
+/**
+ * 出现在对标这几镜里的实体，去重。
+ *
+ * 收一个数组而不是一个镜号：并了镜之后，成片里的一镜对着对标的好几镜，
+ * 只按第一镜取参考图的话，后面那几刀里出现的货就没有参考图，生成出来是另一件东西。
+ */
 export function entitiesInShot(
   cast: BenchmarkCastEntity[] | undefined,
-  sourceShotOrder: number | undefined,
+  sourceShotOrders: number[] | undefined,
 ): BenchmarkCastEntity[] {
-  if (!sourceShotOrder) return [];
-  return (cast || []).filter((entity) => entity.shots.includes(sourceShotOrder));
+  const orders = sourceShotOrders || [];
+  if (!orders.length) return [];
+  return (cast || []).filter((entity) => entity.shots.some((order) => orders.includes(order)));
 }
 
 /**
@@ -50,9 +56,9 @@ export function entitiesInShot(
 export function shotCastRefs(
   cast: BenchmarkCastEntity[] | undefined,
   binding: CastBinding | undefined,
-  sourceShotOrder: number | undefined,
+  sourceShotOrders: number[] | undefined,
 ): Array<{ entity: BenchmarkCastEntity; ref: CastRef }> {
-  return entitiesInShot(cast, sourceShotOrder)
+  return entitiesInShot(cast, sourceShotOrders)
     .map((entity) => {
       const ref = binding?.[castToken(entity)];
       return ref ? { entity, ref } : null;
