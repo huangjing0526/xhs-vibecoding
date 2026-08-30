@@ -26,7 +26,8 @@ import {
 // 跑本机 ffmpeg / ffprobe，必须 nodejs runtime。
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+// 拆片之后要串着跑「全量判路线」的几批调用，再加拆实体和归组，300 秒不够
+export const maxDuration = 1200;
 
 const COMMAND_TIMEOUT_MS = 4 * 60 * 1000;
 /** 超过这个镜头数就不逐镜抽帧了：再多也看不过来，还白等 */

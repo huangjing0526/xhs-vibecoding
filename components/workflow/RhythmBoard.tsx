@@ -17,6 +17,7 @@ import {
   RISK_STEPS,
   RISK_WHY,
   ROUTE_LABEL,
+  ROUTE_UNAVAILABLE_LABEL,
   ROUTE_WHY,
   STEP_LABEL,
   STEP_WHY,
@@ -502,12 +503,18 @@ function ReplicabilityPanel({
 
   const tally = tallySteps(report);
   const risky = riskyShots(report);
-  // 镜头多于抽样上限时只看了一部分，没看的不能算进「直接生成」
-  const unscreened = Math.max(0, rhythm.shots.length - report.shots.length);
+  // 没判出路线的镜头由报告自己记着原因，不做减法——差出来的数字说不出是没抽到帧还是模型没回话。
+  // 老报告没有这一项，那时路线跟着内容一起守抽样上限，差集就是被抽样漏掉的那些
+  const unrouted =
+    report.unrouted ??
+    rhythm.shots
+      .filter((shot) => !report.shots.some((item) => item.order === shot.order))
+      .map((shot) => ({ order: shot.order, reason: "not-sampled" as const }));
   const clippedSet = new Set(clippedShots(rhythm));
   const allowed = clipsAllowed(rhythm);
   // 各项不互斥：一镜既要切片又要贴字，两边都会数上，所以逐项说而不是拼成一句分配式
   const stockCount = stockShots(rhythm).length;
+  const describedCount = rhythm.shots.filter((shot) => shot.content).length;
   const counts = [
     stockCount && `${stockCount} 镜可用实拍`,
     tally.generate && `${tally.generate} 镜直接生成`,
@@ -524,7 +531,7 @@ function ReplicabilityPanel({
           <Badge tone={VERDICT_TONE[report.verdict]}>{VERDICT_LABEL[report.verdict]}</Badge>
           <span className="text-[11px] font-bold text-faint">
             {counts.join(" · ")}
-            {unscreened > 0 && ` · 另 ${unscreened} 镜没抽到`}
+            {unrouted.length > 0 && ` · 另 ${unrouted.length} 镜没判出路线`}
           </span>
         </div>
         <Button size="sm" variant="ghost" onClick={onScreen} loading={screening}>
@@ -649,9 +656,18 @@ function ReplicabilityPanel({
         </Callout>
       )}
 
+      {/* 没判出路线的那几镜要说清是为什么——「没抽到帧」和「模型没回话」处置办法完全不同 */}
+      {unrouted.length > 0 && (
+        <p className="mt-2 text-[11px] leading-5 text-warn">
+          第 {unrouted.map((item) => item.order).join("、")} 镜没判出路线（
+          {[...new Set(unrouted.map((item) => ROUTE_UNAVAILABLE_LABEL[item.reason]))].join(" · ")}
+          ），这几镜暂时按「直接生成」之外未定处理，重看一次可能就有了。
+        </p>
+      )}
+
       {/* 报告是跟着这份节奏存的，换项目也还在 */}
       <p className="mt-3 text-[10px] text-faint">
-        看了 {report.shots.length} 张关键帧（节奏 {rhythm.id.slice(0, 8)}），结论已随模板存下。
+        判了 {report.shots.length} 镜的路线，{describedCount} 镜写了画面（节奏 {rhythm.id.slice(0, 8)}），结论已随模板存下。
       </p>
     </div>
   );
