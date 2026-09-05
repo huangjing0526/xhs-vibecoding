@@ -1,3 +1,6 @@
+import type { AreaId } from "@/lib/capabilities";
+import { DAOKU_PANBIELI } from "@/lib/daoku";
+
 export interface BloggerProfile {
   id: string;
   name: string;
@@ -23,9 +26,45 @@ export interface BloggerSample {
   };
 }
 
+/**
+ * 复刻一条道库要你自己补的东西。道给判断路径，槽位说清拿什么填。
+ * 没有槽位的蒸馏结果只是「别人怎么做的」，不是模板——这条由类型把守，字段必填。
+ */
+export interface DaokuSlot {
+  id: string;
+  label: string;
+  /** 一句话说清要补什么，卡片和空态都用它 */
+  hint: string;
+  /** 去哪个区取料——「照这个做」直接 openArea 它，不另立一套取料口名字；不填表示手写 */
+  source?: AreaId;
+}
+
+/** 每条道库都要的三个。借道不借皮——皮必须是自己的。别在别处手写这三条。 */
+export const DAOKU_BASE_SLOTS: DaokuSlot[] = [
+  {
+    id: "material",
+    label: "你的真事",
+    hint: "一条自己的事件 / 踩坑 / 做法，替掉博主的案例",
+    source: "library",
+  },
+  { id: "painPoint", label: "读者痛点", hint: "这条要戳谁的哪个卡点" },
+  { id: "asset", label: "可收藏资产", hint: "读者能存下来的清单、框架或步骤" },
+];
+
+/** 某一家的道额外要的料，蒸馏时按命中哪条道往基座上追加。同一个槽位只在这里写一次。 */
+export const DAOKU_EXTRA_SLOTS = {
+  situation: { id: "situation", label: "读者处境", hint: "让读者照见自己的那个具体处境，不是泛泛的人群" },
+  tool: { id: "tool", label: "主流工具名", hint: "读者真会用的那个工具，冷门的换掉" },
+  contrast: { id: "contrast", label: "反差点", hint: "一句“你以为很难，其实够得着”的落差" },
+} satisfies Record<string, DaokuSlot>;
+
 export interface BloggerDistillation {
+  /** 一位博主一份道库：id 按 bloggerId 定死，重蒸馏就是更新它，不会在模板目录里堆出好几份 */
   id: string;
   bloggerId: string;
+  /** 模板卡上显示的名字：博主名，或拆自哪条视频 */
+  sourceLabel: string;
+  createdAt: string;
   coreDao: string;
   topicDao: string[];
   titlePatterns: string[];
@@ -34,6 +73,8 @@ export interface BloggerDistillation {
   toneRules: string[];
   boundaries: string[];
   adaptationNotes: string[];
+  /** 基座三槽 + 这位博主的道额外要的料；道不同，要补的东西就不同 */
+  slots: DaokuSlot[];
 }
 
 export const DEMO_BLOGGER_PROFILES: BloggerProfile[] = [
@@ -93,8 +134,10 @@ export const DEMO_BLOGGER_SAMPLES: BloggerSample[] = [
 
 export const DEMO_BLOGGER_DISTILLATIONS: BloggerDistillation[] = [
   {
-    id: "distill-xiao-a",
+    id: "distill-blogger-xiao-a",
     bloggerId: "blogger-xiao-a",
+    sourceLabel: "小A学财经",
+    createdAt: "2026-08-01T00:00:00.000Z",
     coreDao: "让读者在内容里照见自己的处境，而不是只获得一条知识。",
     topicDao: [
       "从读者真实困惑进入，不从工具功能进入。",
@@ -130,6 +173,7 @@ export const DEMO_BLOGGER_DISTILLATIONS: BloggerDistillation[] = [
       "迁移到 AI Coding 账号时，要把“处境”换成开发协作、选题、Prompt、代码审查等真实场景。",
       "标题可借反差结构，但案例必须来自当前素材。",
     ],
+    slots: [...DAOKU_BASE_SLOTS, DAOKU_EXTRA_SLOTS.situation],
   },
 ];
 
@@ -148,8 +192,10 @@ export function createFallbackBloggerDistillation(
   const hasReflection = /明白|不是|真正|处境|判断/.test(text);
 
   return {
-    id: `distill-${profile.id}-${Date.now().toString(36)}`,
+    id: `distill-${profile.id}`,
     bloggerId: profile.id,
+    sourceLabel: profile.name,
+    createdAt: new Date().toISOString(),
     coreDao: hasReflection
       ? "先让读者照见自己的真实处境，再给出可判断、可照做的方法。"
       : "把高表现内容拆成具体场景、冲突判断和可复用动作。",
@@ -187,6 +233,112 @@ export function createFallbackBloggerDistillation(
       "迁移到当前账号时，用 AI Coding 的真实素材替换博主案例。",
       "借判断路径，不借具体皮肤和口头禅。",
     ],
+    slots: [
+      ...DAOKU_BASE_SLOTS,
+      ...(hasTool ? [DAOKU_EXTRA_SLOTS.tool] : []),
+      ...(hasReflection ? [DAOKU_EXTRA_SLOTS.situation] : []),
+    ],
+  };
+}
+
+/**
+ * AI 蒸馏只出「道」，外加「这位博主的道还额外要补什么料」。
+ * id、名字、时间和基座三槽由服务端补——那几样不该交给模型编。
+ */
+export interface DistilledDao {
+  coreDao: string;
+  topicDao: string[];
+  titlePatterns: string[];
+  contentPatterns: string[];
+  visualPatterns: string[];
+  toneRules: string[];
+  boundaries: string[];
+  adaptationNotes: string[];
+  /** 从 DAOKU_EXTRA_SLOTS 里挑的 id，挑不出就空数组 */
+  extraSlots: string[];
+}
+
+type ExtraSlotId = keyof typeof DAOKU_EXTRA_SLOTS;
+
+/** 把模型挑的 id 换成真正的槽位。不认识的一律丢掉——槽位的说法只有 DAOKU_EXTRA_SLOTS 一处，不让它自己造。 */
+export function resolveExtraSlots(ids: string[] | undefined): DaokuSlot[] {
+  return (ids || [])
+    .filter((id): id is ExtraSlotId => id in DAOKU_EXTRA_SLOTS)
+    .map((id) => DAOKU_EXTRA_SLOTS[id]);
+}
+
+/** 蒸馏 prompt。额外槽位那张菜单从 DAOKU_EXTRA_SLOTS 派生，改常量就跟着改，不在这里再抄一遍。 */
+export function buildBloggerDistillPrompt(profile: BloggerProfile, samples: BloggerSample[]): string {
+  const menu = Object.entries(DAOKU_EXTRA_SLOTS)
+    .map(([id, slot]) => `- ${id}（${slot.label}）：${slot.hint}`)
+    .join("\n");
+  const sampleText = samples.length
+    ? samples
+        .map(
+          (sample, index) =>
+            `${index + 1}. 标题：${sample.title}\n   正文：${sample.content}\n   封面：${sample.coverDescription || "未记录"}\n   数据：${sample.metrics?.views || 0} 阅读 / ${sample.metrics?.saves || 0} 收藏`,
+        )
+        .join("\n")
+    : "（没有样本，只能按定位推断，宁可少写也别编）";
+
+  return `你是内容蒸馏师。从这位博主的代表作里提炼「道」——他判断一条内容能不能成立的路径，不是他的皮（口头禅、人设、具体案例、原句）。
+
+## 博主
+- 名字：${profile.name}（${profile.platform}）
+- 定位：${profile.positioning}
+
+## 代表作
+${sampleText}
+
+## 硬要求
+1. 借道不借皮：标题句式写成带 X / Y 占位的模板，不许照抄原标题；正文道写"怎么组织"，不写"他写了什么"。
+2. 每一条道都要过判别力测：
+${DAOKU_PANBIELI}
+3. 复刻这套道时，除了「你的真事 / 读者痛点 / 可收藏资产」这三样人人都要补的，这位博主的道还额外要求补什么？
+   从下面这张表里挑 0-2 个 id，挑不出就给空数组，不要自己造新的：
+${menu}
+
+## 输出（严格 JSON，不要多余文字）
+{
+  "coreDao": "一句话说清他的判断路径",
+  "topicDao": ["选题怎么挑，2-4 条"],
+  "titlePatterns": ["带占位的标题句式，2-4 条"],
+  "contentPatterns": ["正文怎么组织，2-4 条"],
+  "visualPatterns": ["封面与配图的规律，1-3 条"],
+  "toneRules": ["语气边界，2-3 条"],
+  "boundaries": ["迁移时的禁区，2-3 条"],
+  "adaptationNotes": ["换到「用 AI 的元技能·成长号」要怎么改，1-3 条"],
+  "extraSlots": ["从上表里挑的 id，0-2 个"]
+}
+
+全程中文。`;
+}
+
+/**
+ * 模型出的道盖到启发式骨架上：空字段一律留骨架的，不让一次拉胯的返回把整条道库掏空。
+ * 槽位只有模型真挑出额外的那几个才动，基座三槽永远在。
+ */
+export function mergeDistilledDao(
+  base: BloggerDistillation,
+  dao: Partial<DistilledDao> | null,
+): BloggerDistillation {
+  if (!dao) return base;
+  const list = (next: string[] | undefined, fallback: string[]) => {
+    const cleaned = (next || []).map((item) => String(item).trim()).filter(Boolean);
+    return cleaned.length ? cleaned : fallback;
+  };
+  const extra = resolveExtraSlots(dao.extraSlots);
+  return {
+    ...base,
+    coreDao: dao.coreDao?.trim() || base.coreDao,
+    topicDao: list(dao.topicDao, base.topicDao),
+    titlePatterns: list(dao.titlePatterns, base.titlePatterns),
+    contentPatterns: list(dao.contentPatterns, base.contentPatterns),
+    visualPatterns: list(dao.visualPatterns, base.visualPatterns),
+    toneRules: list(dao.toneRules, base.toneRules),
+    boundaries: list(dao.boundaries, base.boundaries),
+    adaptationNotes: list(dao.adaptationNotes, base.adaptationNotes),
+    slots: extra.length ? [...DAOKU_BASE_SLOTS, ...extra] : base.slots,
   };
 }
 

@@ -6,7 +6,6 @@ import Button from "@/components/ui/Button";
 import EmptyState from "@/components/ui/EmptyState";
 import { Input, Textarea } from "@/components/ui/Field";
 import {
-  createFallbackBloggerDistillation,
   DEMO_BLOGGER_PROFILES,
   DEMO_BLOGGER_SAMPLES,
   getDistillationForBlogger,
@@ -14,11 +13,15 @@ import {
   type BloggerDistillation,
   type BloggerProfile,
   type BloggerSample,
+  type DaokuSlot,
 } from "@/lib/bloggerWorkflow";
+import { distillBlogger } from "@/lib/workflowClient";
+import type { Notice } from "@/components/workflow/types";
 
 interface BloggerResearchProps {
   selectedDistillation: BloggerDistillation | null;
   onDistillationChange: (distillation: BloggerDistillation) => void;
+  onNotice: (notice: Notice) => void;
 }
 
 function metricText(sample: BloggerSample): string {
@@ -42,15 +45,36 @@ function PatternList({ title, items }: { title: string; items: string[] }) {
   );
 }
 
+/** 槽位单独一栏：道说「怎么判断」，槽位说「拿你的什么去填」，缺了它这条蒸馏就不是模板。 */
+function SlotList({ slots }: { slots: DaokuSlot[] }) {
+  return (
+    <section className="rounded-2xl border border-line bg-soft p-4">
+      <h4 className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">
+        槽位 · 复刻时你要补的
+      </h4>
+      <ul className="mt-2 space-y-1.5">
+        {slots.map((slot) => (
+          <li key={slot.id} className="text-sm leading-6 text-ink">
+            <span className="font-bold">{slot.label}</span>
+            <span className="text-muted"> · {slot.hint}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export default function BloggerResearch({
   selectedDistillation,
   onDistillationChange,
+  onNotice,
 }: BloggerResearchProps) {
   const [profiles] = useState<BloggerProfile[]>(DEMO_BLOGGER_PROFILES);
   const [samples, setSamples] = useState<BloggerSample[]>(DEMO_BLOGGER_SAMPLES);
   const [selectedBloggerId, setSelectedBloggerId] = useState(profiles[0]?.id || "");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftContent, setDraftContent] = useState("");
+  const [distilling, setDistilling] = useState(false);
 
   const selectedProfile = profiles.find((profile) => profile.id === selectedBloggerId) || profiles[0];
   const visibleSamples = useMemo(
@@ -77,10 +101,27 @@ export default function BloggerResearch({
     setDraftContent("");
   };
 
-  const handleDistill = () => {
-    if (!selectedProfile) return;
-    const fallback = createFallbackBloggerDistillation(selectedProfile, visibleSamples);
-    onDistillationChange(fallback);
+  // 蒸馏走服务端：本机没配 AI 时后端自己落到关键词骨架，这里只管把结果交上去
+  const handleDistill = async () => {
+    if (!selectedProfile || distilling) return;
+    setDistilling(true);
+    try {
+      const { distillation: distilled, usedFallback } = await distillBlogger(selectedProfile, visibleSamples);
+      onDistillationChange(distilled);
+      if (usedFallback) {
+        onNotice({ type: "info", message: "未检测到 AI 配置，这版道是按关键词规则出的骨架，建议人工过一遍" });
+      }
+    } catch (error) {
+      console.error("[BloggerResearch] 蒸馏失败", {
+        userId: "local",
+        action: "daoku.distill",
+        bloggerId: selectedProfile.id,
+        error,
+      });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "蒸馏失败，稍后再试" });
+    } finally {
+      setDistilling(false);
+    }
   };
 
   return (
@@ -159,8 +200,8 @@ export default function BloggerResearch({
               <h3 className="text-[15px] font-bold text-ink">蒸馏结果</h3>
               <p className="mt-1 text-xs text-faint">借道不借皮，只沉淀判断路径。</p>
             </div>
-            <Button variant="ai" onClick={handleDistill} icon={<Radar size={15} />}>
-              蒸馏博主
+            <Button variant="ai" onClick={handleDistill} loading={distilling} icon={<Radar size={15} />}>
+              {distilling ? "蒸馏中" : "蒸馏博主"}
             </Button>
           </div>
 
@@ -170,6 +211,7 @@ export default function BloggerResearch({
                 <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-brand-600">核心道</div>
                 <p className="mt-2 text-sm font-semibold leading-6 text-ink">{distillation.coreDao}</p>
               </div>
+              <SlotList slots={distillation.slots} />
               <div className="grid gap-3 md:grid-cols-2">
                 <PatternList title="选题道" items={distillation.topicDao} />
                 <PatternList title="标题道" items={distillation.titlePatterns} />
