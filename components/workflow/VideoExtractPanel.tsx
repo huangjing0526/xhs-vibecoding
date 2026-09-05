@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
@@ -12,6 +12,7 @@ import {
   VIDEO_PLATFORM_LABEL,
   type VideoExtractResult,
 } from "@/lib/videoExtract";
+import { analysisToSkeleton, type BenchmarkSkeleton } from "@/lib/videoFactory";
 import type { BloggerDistillation } from "@/lib/bloggerWorkflow";
 import type { Notice } from "./types";
 
@@ -21,6 +22,11 @@ interface VideoExtractPanelProps {
   onSinkToDaoku: (distillation: BloggerDistillation) => void;
   /** 沉淀后跳到对标拆解页 */
   onGoBlogger: () => void;
+  /** 把结构骨架送进视频工厂，接着写自己的脚本 */
+  onSendToVideoFactory: (skeleton: BenchmarkSkeleton) => void;
+  /** 首页那句话里抠出来的链接，进来即填进输入框 */
+  incomingUrl?: string | null;
+  onUrlConsumed?: () => void;
 }
 
 function formatDuration(sec: number): string {
@@ -41,7 +47,15 @@ const FieldLabel = ({ children }: { children: React.ReactNode }) => (
 );
 
 /** 拆片结果展示：result 存在即 video/analysis 齐全（皆为必填字段），无需再逐个判空。 */
-function ResultView({ result, onSink }: { result: VideoExtractResult; onSink: () => void }) {
+function ResultView({
+  result,
+  onSink,
+  onSendToVideoFactory,
+}: {
+  result: VideoExtractResult;
+  onSink: () => void;
+  onSendToVideoFactory: () => void;
+}) {
   const { video, analysis } = result;
   return (
     <div className="space-y-5">
@@ -85,9 +99,14 @@ function ResultView({ result, onSink }: { result: VideoExtractResult; onSink: ()
       <Card>
         <div className="flex items-center justify-between gap-3">
           <SectionTitle>脚本结构拆解</SectionTitle>
-          <Button variant="secondary" onClick={onSink}>
-            沉淀进对标拆解道库
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            <Button variant="secondary" onClick={onSink}>
+              沉淀进对标拆解道库
+            </Button>
+            <Button variant="primary" onClick={onSendToVideoFactory}>
+              送进视频工厂
+            </Button>
+          </div>
         </div>
 
         {analysis.hook && (
@@ -136,13 +155,46 @@ function ResultView({ result, onSink }: { result: VideoExtractResult; onSink: ()
   );
 }
 
-export default function VideoExtractPanel({ onNotice, onSinkToDaoku, onGoBlogger }: VideoExtractPanelProps) {
+export default function VideoExtractPanel({
+  onNotice,
+  onSinkToDaoku,
+  onGoBlogger,
+  onSendToVideoFactory,
+  incomingUrl,
+  onUrlConsumed,
+}: VideoExtractPanelProps) {
   const [input, setInput] = useState("");
   const [result, setResult] = useState<VideoExtractResult | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
 
-  const handleExtract = async () => {
-    const text = input.trim();
+  /**
+   * 首页带来的链接：填进去并直接开跑。
+   *
+   * 只填不跑的话，首页那句「说一句就开工」等于没兑现——人说完一句话被换到一个新页面，
+   * 还得自己再找一次按钮。拆片是本机跑的、不花钱，自动执行没有代价。
+   *
+   * 输入框里已经有东西就什么都不做：手上那条没拆完，不该被顶掉，更不该替他重跑一遍。
+   */
+  /**
+   * 已经开跑过的链接。
+   * 父组件的 onUrlConsumed 是行内箭头函数，每次渲染都是新引用，effect 会跟着反复触发；
+   * React 严格模式在开发下还会再双调一次。没有这道闸，一条链接会被抓两遍。
+   */
+  const startedUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!incomingUrl || startedUrlRef.current === incomingUrl) return;
+    startedUrlRef.current = incomingUrl;
+    onUrlConsumed?.();
+    if (input.trim()) return;
+    setInput(incomingUrl);
+    void runExtract(incomingUrl);
+    // runExtract 只读 state 不进依赖，否则每次输入都会重跑一遍
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomingUrl, onUrlConsumed]);
+
+  const runExtract = async (rawText: string) => {
+    const text = rawText.trim();
     if (!text) {
       onNotice({ type: "error", message: "请粘贴一条抖音/小红书视频链接或分享口令" });
       return;
@@ -166,11 +218,26 @@ export default function VideoExtractPanel({ onNotice, onSinkToDaoku, onGoBlogger
     }
   };
 
+  const handleExtract = () => runExtract(input);
+
   const handleSink = () => {
     if (!result) return;
     onSinkToDaoku(scriptAnalysisToDistillation(result.video, result.analysis));
     onNotice({ type: "success", message: "已沉淀进对标拆解道库" });
     onGoBlogger();
+  };
+
+  /** 只把结构送下游：原句和原画面留在这一页，不进改写环节。 */
+  const handleSendToVideoFactory = () => {
+    if (!result) return;
+    onSendToVideoFactory(
+      analysisToSkeleton(result.analysis, {
+        platform: VIDEO_PLATFORM_LABEL[result.video.platform],
+        author: result.video.author,
+        title: result.video.title,
+        videoUrl: result.video.videoUrl,
+      }),
+    );
   };
 
   return (
@@ -194,7 +261,7 @@ export default function VideoExtractPanel({ onNotice, onSinkToDaoku, onGoBlogger
         </div>
       </Card>
 
-      {result && <ResultView result={result} onSink={handleSink} />}
+      {result && <ResultView result={result} onSink={handleSink} onSendToVideoFactory={handleSendToVideoFactory} />}
     </div>
   );
 }

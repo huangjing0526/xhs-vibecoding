@@ -28,7 +28,8 @@ import {
 } from "@/lib/imageWorkflow";
 import { hasGeneratedCover, type ContentCard, type DraftNote } from "@/lib/xhsWorkflow";
 
-type ImageMode = "cover" | "content";
+/** 封面 / 内容配图两种产出，页面级的切换也复用这个类型。 */
+export type ImageMode = "cover" | "content";
 
 interface CoverStudioProps {
   topics: ContentCard[];
@@ -37,6 +38,7 @@ interface CoverStudioProps {
   selectedDraft: DraftNote | null;
   coverConfig: CoverConfig;
   coverPlan: CoverPlan | null;
+  /** 由页面级的三段切换决定，工作台内部不再自己切。 */
   imageMode: ImageMode;
   contentImageTemplate: ContentImageTemplateType;
   contentImagePlan: ContentImagePlan | null;
@@ -50,7 +52,6 @@ interface CoverStudioProps {
   onSelectDraft: (draft: DraftNote) => void;
   onConfigChange: (config: CoverConfig) => void;
   onCoverGenerated: (dataUrl: string) => void;
-  onImageModeChange: (mode: ImageMode) => void;
   onContentTemplateChange: (templateType: ContentImageTemplateType) => void;
   onContentImageGenerated: (dataUrl: string) => void;
 }
@@ -330,7 +331,6 @@ export default function CoverStudio({
   onSelectDraft,
   onConfigChange,
   onCoverGenerated,
-  onImageModeChange,
   onContentTemplateChange,
   onContentImageGenerated,
 }: CoverStudioProps) {
@@ -407,23 +407,6 @@ export default function CoverStudio({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3 lg:border-l lg:border-t-0">
-          <div className="grid grid-cols-2 gap-1 rounded-2xl bg-soft p-1">
-            {([
-              { id: "cover", label: "封面图" },
-              { id: "content", label: "内容配图" },
-            ] as const).map((mode) => (
-              <button
-                key={mode.id}
-                type="button"
-                onClick={() => onImageModeChange(mode.id)}
-                className={`rounded-xl px-3.5 py-1.5 text-sm font-bold transition-all ${
-                  imageMode === mode.id ? "bg-surface text-ink shadow-card" : "text-muted hover:text-ink"
-                }`}
-              >
-                {mode.label}
-              </button>
-            ))}
-          </div>
           <Button
             variant="ai"
             onClick={imageMode === "cover" ? onGenerateCover : onGenerateContentImage}

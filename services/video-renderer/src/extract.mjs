@@ -45,6 +45,22 @@ function ytdlpCookieArgs() {
   return [];
 }
 
+/**
+ * 抖音的搜索/推荐页链接（如 /jingxuan/search/...?modal_id=xxx）yt-dlp 不认，
+ * 但视频 id 就在 modal_id 里，归一成 /video/<id> 后即可正常下载。
+ */
+function normalizeUrl(url) {
+  if (!/douyin\.com/i.test(url)) return url;
+  try {
+    const parsed = new URL(url);
+    const modalId = parsed.searchParams.get("modal_id");
+    if (modalId && /^\d+$/.test(modalId)) return `https://www.douyin.com/video/${modalId}`;
+  } catch {
+    // 不是合法 URL（可能是分享口令原文），交给 yt-dlp 自行判断
+  }
+  return url;
+}
+
 function detectPlatform(url, extractorKey) {
   const key = (extractorKey || "").toLowerCase();
   if (key.includes("douyin") || /douyin\.com|iesdouyin\.com/i.test(url)) return "douyin";
@@ -162,8 +178,9 @@ async function transcribe(wavPath, outDir, id) {
  * @param {{ url: string, outDir: string, publicUrl: string, id: string }} opts
  */
 export async function extractVideo({ url, outDir, publicUrl, id }) {
-  const { info, videoPath } = await downloadVideo(url, outDir, id);
-  const platform = detectPlatform(url, info.extractor_key);
+  const targetUrl = normalizeUrl(url);
+  const { info, videoPath } = await downloadVideo(targetUrl, outDir, id);
+  const platform = detectPlatform(targetUrl, info.extractor_key);
 
   let transcript = "";
   let transcriptNote = "";

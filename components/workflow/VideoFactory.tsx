@@ -1,0 +1,2256 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Check,
+  Clapperboard,
+  Copy,
+  Film,
+  ImagePlus,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+  Upload,
+  Wand2,
+} from "lucide-react";
+import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
+import Callout from "@/components/ui/Callout";
+import Card, { CardHeader } from "@/components/ui/Card";
+import EmptyState from "@/components/ui/EmptyState";
+import { Field, Input, Textarea } from "@/components/ui/Field";
+import ModalOverlay from "@/components/ui/ModalOverlay";
+import PipelineRail from "@/components/ui/PipelineRail";
+import BenchmarkCastBoard from "@/components/workflow/BenchmarkCastBoard";
+import CastBoard from "@/components/workflow/CastBoard";
+import RhythmBoard from "@/components/workflow/RhythmBoard";
+import ShotMaterialSlot from "@/components/workflow/ShotMaterialSlot";
+import type { LibraryKind } from "@/lib/imageFactory";
+import SegmentedControl from "@/components/workflow/SegmentedControl";
+import ProviderButton from "@/components/ui/ProviderButton";
+import { cachedProbe, pickUsableProvider } from "@/lib/enginePreference";
+import {
+  analyzeStoryboard,
+  attachShotClip,
+  bindCastEntity,
+  bindProjectCast,
+  bindShotMaterial,
+  clearCastEntity,
+  clearProjectCast,
+  clearShotMaterial,
+  composeFinalCut,
+  deleteBenchmarkRhythm,
+  deleteVideoProject,
+  detectBenchmarkRhythm,
+  extractVideo,
+  generateShotClip,
+  generateShotFrame,
+  getVideoGenProviders,
+  listBenchmarkRhythms,
+  listFrameCandidates,
+  listVideoProjects,
+  rewriteVideoScript,
+  saveVideoProject,
+  confirmBenchmarkSource,
+  screenReplicability,
+} from "@/lib/workflowClient";
+import {
+  CAMERA_MOVES,
+  CAST_SLOTS,
+  DEFAULT_VOICE,
+  DEFAULT_VOICE_RATE,
+  VOICE_OPTIONS,
+  clipUrl,
+  describeProjectProgress,
+  DEFAULT_TARGET_DURATION_SEC,
+  EMPTY_CAST,
+  PROVIDER_CAPS,
+  SHOT_DURATIONS,
+  isGenerativeProvider,
+  snapShotDuration,
+  VIDEO_FACTORY_STEPS,
+  applyCameraMove,
+  checkScriptDuration,
+  estimateDurationSec,
+  secondsToChars,
+  replanRhythm,
+  describeUnitPlan,
+  planGenerationUnits,
+  shotParts,
+  shotSourceOrders,
+  storyboardDurationSec,
+  type BenchmarkRhythm,
+  type BenchmarkSkeleton,
+  type CameraMove,
+  analysisToSkeleton,
+  castToken,
+  pruneCastBinding,
+  shotCastRefs,
+  unusedCastTokens,
+  type BenchmarkCastEntity,
+  type BenchmarkShotContent,
+  type CastSlot,
+  type ScriptDraft,
+  type Shot,
+  type ShotAspectRatio,
+  type ShotDuration,
+  type ShotResolution,
+  type VideoFactoryStepId,
+  type VideoGenProviderId,
+  type VideoGenProviderStatus,
+  type VideoProject,
+} from "@/lib/videoFactory";
+import type { Notice } from "./types";
+
+interface VideoFactoryProps {
+  onNotice: (notice: Notice) => void;
+  /** 从「链接拆片」送过来的结构骨架；消费后由父级清空，避免切回来又灌一次。 */
+  incomingSkeleton: BenchmarkSkeleton | null;
+  /** 模板目录点「照这个做」带来的整条节奏，接住即开新项目并套上。 */
+  incomingRhythm?: BenchmarkRhythm | null;
+  onRhythmConsumed?: () => void;
+  onSkeletonConsumed: () => void;
+  /** 首页那句话判成「做视频」时带过来的要求，填进「这条视频讲什么」的主题 */
+  incomingTopic?: string | null;
+  onTopicConsumed?: () => void;
+  /** 项目页/⌘K 点开的视频项目，整条对象直接带进来；消费后由父级清空。 */
+  incomingProject?: VideoProject | null;
+  onProjectConsumed?: () => void;
+  /** 全局「创建 → 视频项目」的一次性信号：开一条全新的项目。 */
+  incomingFresh?: boolean;
+  onFreshConsumed?: () => void;
+}
+
+interface FrameCandidate {
+  path: string;
+  label: string;
+  createdAt: string;
+}
+
+/**
+ * 换一份节奏（重测灵敏度、重看一次片、套另一条对标）时统一走这里。
+ *
+ * 必须顺手清掉指向已消失实体的绑定：重看一次片会重拆实体清单，
+ * 上一版的「产品3」这次可能压根不存在，留着不报错，但「已换 5 个」会虚高，
+ * 而那个数字正是用户判断「还差谁没换」的唯一依据。
+ */
+function applyRhythm(project: VideoProject, rhythm: BenchmarkRhythm): VideoProject {
+  return { ...project, rhythm, castBinding: pruneCastBinding(rhythm.cast, project.castBinding) };
+}
+
+const EMPTY_PROJECT: VideoProject = {
+  id: "",
+  title: "",
+  createdAt: "",
+  updatedAt: "",
+  genProvider: "grok-cli",
+  skeleton: null,
+  topic: { topic: "", product: "", sellingPoints: "", audience: "" },
+  targetDurationSec: DEFAULT_TARGET_DURATION_SEC,
+  rhythm: null,
+  cast: EMPTY_CAST,
+  castBinding: {},
+  script: null,
+  storyboard: null,
+  clips: [],
+  voiceovers: [],
+  finalCut: null,
+};
+
+const DURATION_OPTIONS = [
+  { value: "30", label: "30 秒" },
+  { value: "45", label: "45 秒" },
+  { value: "60", label: "60 秒" },
+  { value: "90", label: "90 秒" },
+];
+
+const SectionTitle = ({ children }: { children: React.ReactNode }) => (
+  <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">{children}</div>
+);
+
+const FieldLabel = ({ children }: { children: React.ReactNode }) => (
+  <div className="text-xs font-bold text-muted">{children}</div>
+);
+
+/**
+ * 运镜。
+ *
+ * 运镜是拍摄手艺，不该当成一道必答题摆在用户面前——AI 本来就已经替这一镜选好了
+ * （模型偏爱「静止」，光靠 prompt 压不住，所以 CAMERA_MOVES 既是词表也是可点的选项）。
+ * 从前八个按钮一字排开、选中的只是变黑，看着像「你必须挑一个」，而唯一的解释
+ * 藏在 title 里——鼠标悬停才出来，手机上永远看不到。
+ *
+ * 所以默认只显示选好的那一个，连它「什么时候用」一起说出来；想换才展开。
+ * 展开后每行都带上那句话，把「选一种运镜技术」变成「挑一句像我这情况的话」——
+ * 这句话 CAMERA_MOVES 里一直有，只是没给人看过。
+ */
+function CameraMovePicker({
+  value,
+  onPick,
+}: {
+  value: string;
+  onPick: (move: CameraMove) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = CAMERA_MOVES.find((move) => move.label === value);
+
+  if (!open) {
+    return (
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {/* 认得出的运镜才做成实心胶囊：模型没填时旁边已经有一条「未定运镜」的告警，
+            这里再摆一个笃定的黑底标签，会看着像已经选好了 */}
+        <span
+          className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+            current ? "bg-ink text-white" : "bg-soft text-faint"
+          }`}
+        >
+          {current?.label || value || "未定"}
+        </span>
+        {current && <span className="min-w-0 text-[11px] text-faint">{current.use}</span>}
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="shrink-0 rounded-lg px-1.5 py-0.5 text-[11px] font-bold text-brand-600 hover:bg-brand-50"
+        >
+          换一个
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full rounded-2xl border border-line bg-surface p-1.5">
+      {CAMERA_MOVES.map((move) => {
+        const active = value === move.label;
+        return (
+          <button
+            key={move.id}
+            type="button"
+            onClick={() => {
+              onPick(move);
+              setOpen(false);
+            }}
+            aria-pressed={active}
+            className={`flex w-full items-baseline gap-2 rounded-xl px-2.5 py-1.5 text-left transition-colors ${
+              active ? "bg-brand-50" : "hover:bg-soft"
+            }`}
+          >
+            <span className={`shrink-0 text-[11px] font-bold ${active ? "text-brand-700" : "text-ink"}`}>
+              {move.label}
+            </span>
+            <span className="min-w-0 text-[11px] leading-4 text-faint">{move.use}</span>
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        className="mt-0.5 w-full rounded-xl px-2.5 py-1 text-[11px] font-bold text-faint hover:bg-soft"
+      >
+        收起
+      </button>
+    </div>
+  );
+}
+
+/** 复制按钮：提示词要拿去别的平台粘贴，这是这一页最高频的动作。 */
+function CopyButton({ text, label = "复制" }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    if (!text.trim()) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch (error) {
+      console.error("[VideoFactory] 复制失败", { action: "videoFactory.copy", error });
+    }
+  };
+  return (
+    <Button size="sm" variant="ghost" onClick={handleCopy} disabled={!text.trim()} icon={copied ? <Check size={13} /> : <Copy size={13} />}>
+      {copied ? "已复制" : label}
+    </Button>
+  );
+}
+
+
+/**
+ * 出片引擎与它的参数。
+ *
+ * 摆在拆分镜之前：每镜能切几秒由引擎决定（grok 6/10、Veo 4/6/8），
+ * 先拆好再选引擎的话，拆出来的分镜有一半时长是非法的。
+ * 拆完之后仍然允许改——改了会把已有分镜的时长吸附到新引擎的档位上。
+ */
+function EngineChooser({
+  providers,
+  value,
+  model,
+  resolution,
+  aspectRatio,
+  isLoading,
+  onSelectProvider,
+  onSelectModel,
+  onSelectResolution,
+  onSelectAspectRatio,
+  onRefresh,
+}: {
+  providers: VideoGenProviderStatus[];
+  value: VideoGenProviderId;
+  model: string;
+  resolution: ShotResolution;
+  aspectRatio: ShotAspectRatio | "";
+  isLoading: boolean;
+  onSelectProvider: (id: VideoGenProviderId) => void;
+  onSelectModel: (id: string) => void;
+  onSelectResolution: (value: ShotResolution) => void;
+  onSelectAspectRatio: (value: ShotAspectRatio) => void;
+  onRefresh: () => void;
+}) {
+  const caps = PROVIDER_CAPS[value];
+  const current = providers.find((item) => item.id === value);
+  const models = current?.models || [];
+  const durationHint = caps.durations.length
+    ? `每镜 ${caps.durations.join(" / ")} 秒`
+    : "片子在别处生成好再传回来，不受档位约束";
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-bold text-ink">出片引擎</h2>
+          <p className="mt-0.5 text-[11px] text-faint">
+            {durationHint}
+            {caps.resolutions.length ? `，${caps.resolutions.join(" / ")}` : ""}
+            {caps.aspectRatios.length ? `，可指定比例` : "，比例跟首帧图走"}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={isLoading}
+          className="rounded-xl p-2 text-faint hover:bg-soft hover:text-ink"
+          aria-label="刷新引擎状态"
+        >
+          <RefreshCw size={15} className={isLoading ? "animate-spin" : ""} />
+        </button>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {providers.map((item) => (
+          <ProviderButton key={item.id} provider={item} selected={value === item.id} onSelect={onSelectProvider} />
+        ))}
+      </div>
+
+      {(models.length > 0 || caps.resolutions.length > 0 || caps.aspectRatios.length > 0) && (
+        <div className="mt-3 flex flex-wrap gap-4">
+          {models.length > 0 && (
+            <Field label="模型">
+              <select
+                value={model}
+                onChange={(event) => onSelectModel(event.target.value)}
+                className="rounded-xl border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink"
+              >
+                {/* 留空表示跟随探测到的第一个正式版，服务端会自己解析 */}
+                <option value="">默认模型</option>
+                {models.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          {caps.resolutions.length > 0 && (
+            <Field label="分辨率">
+              <SegmentedControl
+                ariaLabel="分辨率"
+                compact
+                value={resolution}
+                options={caps.resolutions.map((item) => ({ value: item, label: item }))}
+                onChange={(next) => onSelectResolution(next as ShotResolution)}
+              />
+            </Field>
+          )}
+          {caps.aspectRatios.length > 0 && (
+            <Field label="比例">
+              <SegmentedControl
+                ariaLabel="比例"
+                compact
+                value={aspectRatio}
+                options={caps.aspectRatios.map((item) => ({ value: item, label: item }))}
+                onChange={(next) => onSelectAspectRatio(next as ShotAspectRatio)}
+              />
+            </Field>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** 从图片工厂的产物里挑一张当首帧。 */
+function FramePicker({
+  frames,
+  loading,
+  onPick,
+  onClose,
+}: {
+  frames: FrameCandidate[];
+  loading: boolean;
+  onPick: (frame: FrameCandidate) => void;
+  onClose: () => void;
+}) {
+  return (
+    <ModalOverlay onClose={onClose} maxWidthClass="max-w-3xl" ariaLabel="选择首帧图">
+      <Card>
+        <CardHeader
+          title="从图片工厂选一张首帧"
+          description="列的是 .local/image-factory 里最近的产物，最新的在前"
+          action={<Button size="sm" variant="ghost" onClick={onClose}>关闭</Button>}
+        />
+        {loading ? (
+          <div className="flex items-center gap-2 rounded-2xl bg-soft p-6 text-xs text-faint">
+            <Loader2 size={14} className="animate-spin" />
+            正在读图片工厂的产物
+          </div>
+        ) : frames.length === 0 ? (
+          <EmptyState
+            bare
+            icon={<ImagePlus size={22} />}
+            title="图片工厂里还没有产物"
+            description="先去图片工厂按这一镜的首帧提示词生成一张 9:16 的图，再回来挑。"
+          />
+        ) : (
+          <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-auto sm:grid-cols-4">
+            {frames.map((frame) => (
+              <button
+                key={frame.path}
+                type="button"
+                onClick={() => onPick(frame)}
+                className="overflow-hidden rounded-2xl border border-line bg-soft text-left transition-all hover:border-brand-300"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/api/video-factory/frames/image?path=${encodeURIComponent(frame.path)}`}
+                  alt={frame.label}
+                  className="aspect-square w-full object-cover"
+                />
+                <span className="block truncate px-2 py-1.5 text-[10px] font-semibold text-faint">{frame.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+    </ModalOverlay>
+  );
+}
+
+export default function VideoFactory({
+  onNotice,
+  incomingSkeleton,
+  onSkeletonConsumed,
+  incomingRhythm,
+  onRhythmConsumed,
+  incomingTopic,
+  onTopicConsumed,
+  incomingProject,
+  onProjectConsumed,
+  incomingFresh,
+  onFreshConsumed,
+}: VideoFactoryProps) {
+  const [project, setProject] = useState<VideoProject>(EMPTY_PROJECT);
+  const [projects, setProjects] = useState<VideoProject[]>([]);
+  const [step, setStep] = useState<VideoFactoryStepId>("source");
+  const [visualStyle, setVisualStyle] = useState("");
+
+  /** 刚拆出来、还没套用的节奏；套用后以 project.rhythm 为准 */
+  const [detectedRhythm, setDetectedRhythm] = useState<BenchmarkRhythm | null>(null);
+  const [isDetectingRhythm, setIsDetectingRhythm] = useState(false);
+  const [savedRhythms, setSavedRhythms] = useState<BenchmarkRhythm[]>([]);
+  const [isScreening, setIsScreening] = useState(false);
+  const [isConfirmingSource, setIsConfirmingSource] = useState(false);
+
+  const [isWritingScript, setIsWritingScript] = useState(false);
+  const [isCuttingShots, setIsCuttingShots] = useState(false);
+
+  const [providers, setProviders] = useState<VideoGenProviderStatus[]>([]);
+  const [isLoadingProviders, setIsLoadingProviders] = useState(false);
+  /**
+   * 分辨率与比例存的是「偏好」，不是权威值——权威值在渲染时按当前引擎的能力表夹一次。
+   * 存权威值的话，每一条能改 genProvider 的路径（手动换、探测顶替、切项目）都得记得同步重置，
+   * 漏一条就是界面显示 480p、请求也发 480p，而 Veo 根本没这一档。
+   */
+  const [preferredResolution, setPreferredResolution] = useState<ShotResolution>("480p");
+  const [preferredAspectRatio, setPreferredAspectRatio] = useState<ShotAspectRatio | "">("");
+  /** 引擎下的驱动模型（目前只有 Veo 有多个），留空跟随服务端解析出的第一个正式版 */
+  const [genModel, setGenModel] = useState("");
+
+  const [frames, setFrames] = useState<FrameCandidate[]>([]);
+  const [isLoadingFrames, setIsLoadingFrames] = useState(false);
+  const [pickingShot, setPickingShot] = useState<number | null>(null);
+  const [pendingFrames, setPendingFrames] = useState<Record<number, { path?: string; file?: File; label: string }>>({});
+  const [generatingShot, setGeneratingShot] = useState<number | null>(null);
+  const [castBusySlot, setCastBusySlot] = useState<CastSlot | null>(null);
+  /** 正在绑的对标实体 token，绑定期间那一行转圈 */
+  const [castEntityBusy, setCastEntityBusy] = useState<string | null>(null);
+  /** 拆解当前忙在哪一步。贴链接是取视频和切镜两段，各要几分钟，得分开说 */
+  const [detectHint, setDetectHint] = useState("");
+  /** 正在绑素材的镜号。每镜一个槽，同时只会有一个在转 */
+  const [materialBusyShot, setMaterialBusyShot] = useState<number | null>(null);
+  /** 合成参数。字幕和配音默认都开——不带这两样的成片基本不能直接发 */
+  const [withSubtitles, setWithSubtitles] = useState(true);
+  const [withVoiceover, setWithVoiceover] = useState(true);
+  const [voice, setVoice] = useState(DEFAULT_VOICE);
+  const [voiceRate, setVoiceRate] = useState(DEFAULT_VOICE_RATE);
+  const [isComposing, setIsComposing] = useState(false);
+  /** 重新合成会覆盖同一个 final.mp4，预览要绕开缓存 */
+  const [finalVersion, setFinalVersion] = useState(0);
+  /** 生成首帧用的生图 CLI，和出片引擎是两码事，各选各的 */
+  const [frameProvider, setFrameProvider] = useState<"codex" | "grok">("codex");
+  const [framingShot, setFramingShot] = useState<number | null>(null);
+  /** 重新生成首帧会覆盖同名文件，缩略图要绕开缓存 */
+  const [frameVersion, setFrameVersion] = useState<Record<number, number>>({});
+  /** 成片预览要绕开浏览器缓存：同一镜重跑会覆盖同名文件 */
+  const [clipVersion, setClipVersion] = useState<Record<number, number>>({});
+
+  const savedRef = useRef("");
+  /** 存盘串成一条链：整份覆盖的接口不能并发，但也不能因为「正在存」就把新编辑丢掉。 */
+  const saveChainRef = useRef<Promise<unknown>>(Promise.resolve());
+
+  const script = project.script;
+  const storyboard = project.storyboard;
+  /** 已绑上参考图的槽位，首帧那一段的文案与提醒都按它算，别再写死角色和产品 */
+  const boundCastSlots = CAST_SLOTS.filter((slot) => project.cast[slot.id]);
+  const benchmarkCast = useMemo(() => project.rhythm?.cast || [], [project.rhythm]);
+  /**
+   * 清单里列了、却没有任何一镜描述引用到的实体。
+   * 模型偶尔会认出个东西又从不在描述里用它——这种实体绑了素材也换不到任何地方，
+   * 界面上得点名，不然人会以为绑了就生效了。
+   */
+  const unusedCastTokenList = useMemo(
+    () =>
+      unusedCastTokens(
+        benchmarkCast,
+        (project.rhythm?.shots || [])
+          .map((shot) => shot.content)
+          .filter((content): content is BenchmarkShotContent => Boolean(content)),
+      ),
+    [benchmarkCast, project.rhythm],
+  );
+
+  /**
+   * 开一条全新的项目。
+   * 这套动作有四个调用点（两处外部送进来、删掉当前项目、手点「新建一条」），
+   * 其中 savedRef.current = "" 是承重的——漏掉它，自动存盘会以为这条崭新的项目已经存过。
+   */
+  const startFreshProject = useCallback(
+    (patch: Partial<VideoProject>, rhythm: BenchmarkRhythm | null, message?: string) => {
+      setProject({ ...EMPTY_PROJECT, ...patch });
+      setDetectedRhythm(rhythm);
+      setStep("source");
+      savedRef.current = "";
+      if (message) onNotice({ type: "success", message });
+    },
+    [onNotice],
+  );
+
+  /** 切到一条已存在的项目：恢复它进度所在的步，标记已存盘，清掉未套用的拆片节奏。 */
+  const selectProject = useCallback((item: VideoProject) => {
+    setProject(item);
+    setDetectedRhythm(null);
+    savedRef.current = JSON.stringify({ ...item, updatedAt: "" });
+    setStep(item.storyboard ? "storyboard" : item.script ? "script" : "source");
+  }, []);
+
+  // 拆片页送过来的结构骨架：直接开一个新项目接住，不覆盖手上正在做的那条
+  useEffect(() => {
+    if (!incomingSkeleton) return;
+    startFreshProject(
+      {
+        title: incomingSkeleton.title ? `对标《${incomingSkeleton.title}》` : "未命名视频",
+        skeleton: incomingSkeleton,
+      },
+      null,
+      "结构骨架已送进视频工厂，填一下你自己的选题",
+    );
+    onSkeletonConsumed();
+  }, [incomingSkeleton, onSkeletonConsumed, startFreshProject]);
+
+  // 模板目录点「照这个做」：开一个新项目，直接套上这条节奏
+  useEffect(() => {
+    if (!incomingRhythm) return;
+    startFreshProject(
+      { title: `照《${incomingRhythm.sourceLabel}》的节奏`, rhythm: incomingRhythm },
+      incomingRhythm,
+      "已套用这条节奏，填一下你自己的选题——只借结构，画面和原句都要换成自己的",
+    );
+    onRhythmConsumed?.();
+  }, [incomingRhythm, onRhythmConsumed, startFreshProject]);
+
+  // 首页带来的要求填进主题。已经填过的不覆盖，也不新开项目——它只是一句话，不值得顶掉手上那条。
+  useEffect(() => {
+    if (!incomingTopic) return;
+    setProject((current) =>
+      current.topic.topic.trim()
+        ? current
+        : { ...current, topic: { ...current.topic, topic: incomingTopic } },
+    );
+    setStep("source");
+    onTopicConsumed?.();
+  }, [incomingTopic, onTopicConsumed]);
+
+  // 项目页/⌘K 点开某条视频项目：父级手上就有整条对象，直接切过去，不再拉一次列表
+  useEffect(() => {
+    if (!incomingProject) return;
+    selectProject(incomingProject);
+    onProjectConsumed?.();
+  }, [incomingProject, onProjectConsumed, selectProject]);
+
+  // 全局「创建 → 视频项目」：开一条全新的
+  useEffect(() => {
+    if (!incomingFresh) return;
+    startFreshProject({}, null);
+    onFreshConsumed?.();
+  }, [incomingFresh, onFreshConsumed, startFreshProject]);
+
+  const refreshProviders = useCallback(async (force = false) => {
+    setIsLoadingProviders(true);
+    try {
+      // 探一次要 spawn 两个 grok 子进程（其中一个还联网）+ 一次 Gemini ListModels，
+      // 而工作台里来回切页会反复卸载重挂这个组件。刷新按钮走 force，那是真要看当前状态。
+      const providerList = await cachedProbe(
+        "video",
+        async () => (await getVideoGenProviders()).providers,
+        force,
+      );
+      const data = { providers: providerList };
+      setProviders(data.providers);
+      // 只在项目当前选的这个用不了时才换：人选过的引擎不该被一次探测悄悄改掉
+      setProject((current) => {
+        const next = pickUsableProvider(data.providers, current.genProvider ?? "grok-cli");
+        return next === current.genProvider ? current : { ...current, genProvider: next };
+      });
+    } catch (error) {
+      console.error("[VideoFactory] 引擎状态检查失败", { action: "videoFactory.providers", error });
+    } finally {
+      setIsLoadingProviders(false);
+    }
+  }, []);
+
+  const refreshRhythms = useCallback(async () => {
+    try {
+      const data = await listBenchmarkRhythms();
+      setSavedRhythms(data.rhythms);
+    } catch (error) {
+      console.error("[VideoFactory] 节奏模板读取失败", { action: "videoFactory.benchmark.list", error });
+    }
+  }, []);
+
+  const refreshProjects = useCallback(async () => {
+    try {
+      const data = await listVideoProjects();
+      setProjects(data.projects);
+    } catch (error) {
+      console.error("[VideoFactory] 项目列表读取失败", { action: "videoFactory.projects", error });
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshProviders();
+    refreshProjects();
+    refreshRhythms();
+  }, [refreshProviders, refreshProjects, refreshRhythms]);
+
+  /** 存盘：整份覆盖。返回带 id 的项目，生成环节要靠这个 id 定产物目录。 */
+  const persist = useCallback(
+    async (next: VideoProject, options?: { resetClips?: boolean }): Promise<VideoProject> => {
+      const { project: saved } = await saveVideoProject(next, options);
+      savedRef.current = JSON.stringify({ ...saved, updatedAt: "" });
+      setProject((current) => ({
+        ...current,
+        id: current.id || saved.id,
+        createdAt: current.id ? current.createdAt : saved.createdAt,
+        // clips 归服务端所有，存盘时不上送，这里再把盘上那份接回来——
+        // 否则扩展推进来的片子在页面上永远不出现，得手动重选项目才看得到
+        clips: saved.clips,
+      }));
+      return saved;
+    },
+    [],
+  );
+
+  // 自动存盘：脚本、分镜、每一处编辑都算数据，刷新不该丢
+  useEffect(() => {
+    if (!project.script && !project.skeleton && !project.topic.topic.trim()) return;
+    const payload = JSON.stringify({ ...project, updatedAt: "" });
+    if (payload === savedRef.current) return;
+
+    const timer = setTimeout(() => {
+      saveChainRef.current = saveChainRef.current
+        .then(() => persist(project))
+        .then(() => refreshProjects())
+        .catch((error) => {
+          console.error("[VideoFactory] 自动保存失败", { action: "videoFactory.autosave", projectId: project.id, error });
+        });
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [project, persist, refreshProjects]);
+
+  const patchTopic = (key: keyof VideoProject["topic"], value: string) => {
+    setProject((current) => ({ ...current, topic: { ...current.topic, [key]: value } }));
+  };
+
+  /** 改脚本的任意字段都要顺带重算时长，收在一处，避免三个输入框各抄一遍。 */
+  const patchScript = (patch: Partial<Pick<ScriptDraft, "hook" | "cta" | "segments">>) => {
+    setProject((current) => {
+      if (!current.script) return current;
+      const next = { ...current.script, ...patch };
+      return { ...current, script: { ...next, estimatedDurationSec: estimateDurationSec(next) } };
+    });
+  };
+
+  const patchShot = (order: number, patch: Partial<Shot>) => {
+    setProject((current) => {
+      if (!current.storyboard) return current;
+      return {
+        ...current,
+        storyboard: {
+          ...current.storyboard,
+          shots: current.storyboard.shots.map((shot) => (shot.order === order ? { ...shot, ...patch } : shot)),
+        },
+      };
+    });
+  };
+
+  /**
+   * 改某一刀的文案。
+   *
+   * 套了对标节奏的镜头文案在 cuts 里，没套的还在镜头本身上——两种存法在这里收口，
+   * 界面那边只管「第几镜第几刀」，不用跟着判 cuts 在不在。
+   * 时间码不给改：那是按引擎档位算出来的，改了这一刀就取不到对应的画面了。
+   */
+  const patchPart = (order: number, cutIndex: number, patch: { voiceover?: string; subtitle?: string }) => {
+    setProject((current) => {
+      const shots = current.storyboard?.shots;
+      if (!shots) return current;
+      return {
+        ...current,
+        storyboard: {
+          ...current.storyboard!,
+          shots: shots.map((shot) => {
+            if (shot.order !== order) return shot;
+            if (!shot.cuts) return { ...shot, ...patch };
+            return { ...shot, cuts: shot.cuts.map((cut, at) => (at === cutIndex ? { ...cut, ...patch } : cut)) };
+          }),
+        },
+      };
+    });
+  };
+
+  /**
+   * 贴一条抖音/小红书链接就地拆。
+   *
+   * 走的是「链接拆片」那条现成的链：本机 services/video-renderer 抓无水印视频 + whisper 转写，
+   * 再由模型拆出脚本结构。所以顺手把 skeleton 也存进项目——
+   * 用户贴链接的意图是「整条对标拿进来」，只取视频不要脚本等于白跑一遍 ASR。
+   *
+   * 两段耗时都不短（取视频要转写、切镜要抽帧看片），所以分段报进度，
+   * 不然用户会以为卡死了。
+   */
+  const handleDetectFromLink = async (raw: string) => {
+    const input = raw.trim();
+    if (!input) return;
+    setIsDetectingRhythm(true);
+    setDetectHint("正在取无水印视频和口播稿，这一步要转写，慢");
+    try {
+      const extracted = await extractVideo(input);
+      const videoUrl = extracted.video.videoUrl;
+      if (!videoUrl) {
+        onNotice({ type: "error", message: "拆片服务没给出视频地址，这条可能取不到无水印源" });
+        return;
+      }
+
+      const skeleton = analysisToSkeleton(extracted.analysis, {
+        platform: extracted.video.platform,
+        author: extracted.video.author,
+        title: extracted.video.title,
+        videoUrl,
+      });
+      // 先落盘：拆节奏要几分钟，中途关页面也不该把刚拆出来的脚本结构丢了
+      const saved = await persist({ ...project, skeleton });
+      setProject((current) => ({ ...current, id: saved.id, skeleton }));
+
+      setDetectHint("正在切镜、逐镜抽帧、看画面内容");
+      // 认得出是谁的哪条才叫得出名字；两样都没有就别硬拼一个「@未知作者《未命名》」
+      const named = extracted.video.author || extracted.video.title;
+      const formData = new FormData();
+      formData.append("threshold", "0.3");
+      formData.append("videoUrl", videoUrl);
+      formData.append(
+        "sourceLabel",
+        named ? `@${extracted.video.author || "未知作者"}《${extracted.video.title || "未命名"}》` : "对标视频",
+      );
+
+      const data = await detectBenchmarkRhythm(formData);
+      setDetectedRhythm(data.rhythm);
+      refreshRhythms();
+      const described = data.rhythm.shots.filter((shot) => shot.content).length;
+      onNotice({
+        type: "success",
+        message: described
+          ? `切出 ${data.rhythm.shots.length} 个镜头，${described} 镜有画面描述，口播结构也一并拆好了`
+          : `切出 ${data.rhythm.shots.length} 个镜头`,
+      });
+    } catch (error) {
+      console.error("[VideoFactory] 链接拆节奏失败", { action: "videoFactory.benchmark.link", error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "这条链接拆不动" });
+    } finally {
+      setIsDetectingRhythm(false);
+      setDetectHint("");
+    }
+  };
+
+  const handleDetectRhythm = async ({
+    file,
+    threshold,
+    reuseId,
+  }: {
+    file?: File;
+    threshold: number;
+    reuseId?: string;
+  }) => {
+    setIsDetectingRhythm(true);
+    try {
+      const formData = new FormData();
+      formData.append("threshold", String(threshold));
+      if (reuseId) formData.append("id", reuseId);
+      if (file) formData.append("videoFile", file);
+      else if (project.skeleton?.videoUrl) formData.append("videoUrl", project.skeleton.videoUrl);
+      formData.append(
+        "sourceLabel",
+        file?.name || (project.skeleton ? `@${project.skeleton.author}《${project.skeleton.title}》` : "对标视频"),
+      );
+
+      const data = await detectBenchmarkRhythm(formData);
+      setDetectedRhythm(data.rhythm);
+      // 重测灵敏度时项目里那份也要跟着换，不然套用的还是旧节奏
+      setProject((current) => (current.rhythm?.id === data.rhythm.id ? applyRhythm(current, data.rhythm) : current));
+      refreshRhythms();
+      onNotice({ type: "success", message: `切出 ${data.rhythm.shots.length} 个镜头` });
+    } catch (error) {
+      console.error("[VideoFactory] 节奏拆解失败", { action: "videoFactory.benchmark", error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "节奏拆解失败" });
+    } finally {
+      setIsDetectingRhythm(false);
+    }
+  };
+
+  /** 绑定角色或产品。项目还没落盘就先存一次——参考图要拷进项目目录，得先有 id。 */
+  const handleBindCast = async (slot: CastSlot, source: { assetId?: string; label: string; file?: File }) => {
+    setCastBusySlot(slot);
+    try {
+      const saved = project.id ? project : await persist(project);
+      const formData = new FormData();
+      formData.append("projectId", saved.id);
+      formData.append("slot", slot);
+      formData.append("label", source.label);
+      if (source.file) formData.append("file", source.file);
+      else if (source.assetId) formData.append("assetId", source.assetId);
+
+      const data = await bindProjectCast(formData);
+      setProject((current) => ({ ...current, id: saved.id, cast: { ...current.cast, [slot]: data.cast } }));
+      onNotice({ type: "success", message: `已绑定${slot === "role" ? "角色" : "产品"}` });
+    } catch (error) {
+      console.error("[VideoFactory] 绑定参考图失败", { action: "videoFactory.cast.bind", slot, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "绑定参考图失败" });
+    } finally {
+      setCastBusySlot(null);
+    }
+  };
+
+  /**
+   * 给某一镜单独绑素材。绑了这一镜就以它为准，没绑的镜头继续吃项目级参考图。
+   * 和角色/产品是覆盖关系不是取代关系——项目级槽位仍然是跨镜不换脸的抓手。
+   */
+  const handleBindShotMaterial = async (
+    shotOrder: number,
+    source: { assetId?: string; library?: LibraryKind; label: string; file?: File },
+  ) => {
+    setMaterialBusyShot(shotOrder);
+    try {
+      const saved = project.id ? project : await persist(project);
+      const formData = new FormData();
+      formData.append("projectId", saved.id);
+      formData.append("shotOrder", String(shotOrder));
+      formData.append("label", source.label);
+      if (source.file) formData.append("file", source.file);
+      else if (source.assetId) {
+        formData.append("assetId", source.assetId);
+        formData.append("library", source.library || "products");
+      }
+
+      const data = await bindShotMaterial(formData);
+      setProject((current) => ({ ...current, id: saved.id }));
+      patchShot(shotOrder, { material: data.material });
+      onNotice({ type: "success", message: `第 ${shotOrder} 镜已绑定素材` });
+    } catch (error) {
+      console.error("[VideoFactory] 绑定分镜素材失败", {
+        action: "videoFactory.shotMaterial.bind",
+        shotOrder,
+        error,
+      });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "绑定分镜素材失败" });
+    } finally {
+      setMaterialBusyShot(null);
+    }
+  };
+
+  const handleClearShotMaterial = async (shotOrder: number) => {
+    if (!project.id) return;
+    setMaterialBusyShot(shotOrder);
+    try {
+      await clearShotMaterial(project.id, shotOrder);
+      patchShot(shotOrder, { material: undefined });
+    } catch (error) {
+      console.error("[VideoFactory] 取消分镜素材失败", {
+        action: "videoFactory.shotMaterial.clear",
+        shotOrder,
+        error,
+      });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "取消绑定失败" });
+    } finally {
+      setMaterialBusyShot(null);
+    }
+  };
+
+  const handleClearCast = async (slot: CastSlot) => {
+    if (!project.id) return;
+    setCastBusySlot(slot);
+    try {
+      await clearProjectCast(project.id, slot);
+      setProject((current) => ({ ...current, cast: { ...current.cast, [slot]: null } }));
+    } catch (error) {
+      console.error("[VideoFactory] 取消绑定失败", { action: "videoFactory.cast.clear", slot, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "取消绑定失败" });
+    } finally {
+      setCastBusySlot(null);
+    }
+  };
+
+  /**
+   * 把对标里的一个实体换成自己的素材。
+   * 和项目级槽位并存：实体绑定按镜生效（一件外套只管它出现的那两镜），
+   * 项目级槽位管所有没被实体覆盖到的镜头。
+   */
+  const handleBindCastEntity = async (
+    entity: BenchmarkCastEntity,
+    source: { assetId?: string; library?: LibraryKind; label: string; file?: File },
+  ) => {
+    const token = castToken(entity);
+    setCastEntityBusy(token);
+    try {
+      const saved = project.id ? project : await persist(project);
+      const formData = new FormData();
+      formData.append("projectId", saved.id);
+      formData.append("token", token);
+      formData.append("label", source.label);
+      if (source.file) formData.append("file", source.file);
+      else if (source.assetId) {
+        formData.append("assetId", source.assetId);
+        formData.append("library", source.library || "products");
+      }
+
+      const data = await bindCastEntity(formData);
+      setProject((current) => ({
+        ...current,
+        id: saved.id,
+        castBinding: { ...current.castBinding, [token]: data.ref },
+      }));
+      onNotice({ type: "success", message: `「${token}」已换成你的素材` });
+    } catch (error) {
+      console.error("[VideoFactory] 绑定对标实体失败", { action: "videoFactory.castEntity.bind", token, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "绑定素材失败" });
+    } finally {
+      setCastEntityBusy(null);
+    }
+  };
+
+  const handleClearCastEntity = async (entity: BenchmarkCastEntity) => {
+    if (!project.id) return;
+    const token = castToken(entity);
+    setCastEntityBusy(token);
+    try {
+      await clearCastEntity(project.id, token);
+      setProject((current) => {
+        const next = { ...current.castBinding };
+        delete next[token];
+        return { ...current, castBinding: next };
+      });
+    } catch (error) {
+      console.error("[VideoFactory] 取消实体绑定失败", { action: "videoFactory.castEntity.clear", token, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "取消绑定失败" });
+    } finally {
+      setCastEntityBusy(null);
+    }
+  };
+
+  /** 按分镜提示词生成一镜首帧，自动带上绑定的角色与产品。返回是否成功，批量时据此中断。 */
+  const runFrame = async (shot: Shot): Promise<boolean> => {
+    if (!shot.framePrompt.trim()) {
+      onNotice({ type: "error", message: `第 ${shot.order} 镜还没有首帧提示词` });
+      return false;
+    }
+    setFramingShot(shot.order);
+    try {
+      const saved = project.id ? project : await persist(project);
+      const formData = new FormData();
+      formData.append("projectId", saved.id);
+      formData.append("shotOrder", String(shot.order));
+      formData.append("framePrompt", shot.framePrompt);
+      formData.append("continuityNote", storyboard?.continuityNote || "");
+      formData.append("provider", frameProvider);
+      formData.append("cast", JSON.stringify(project.cast));
+      // 这一镜单独绑了素材就带上，服务端会把它排在项目级参考图前面
+      if (shot.material) formData.append("material", JSON.stringify(shot.material));
+      // 这一镜对应的对标实体绑了谁，按它覆盖的对标镜号现算——绑定是单一事实来源，
+      // 不在项目目录里再拷一份「展开后的每镜素材」，那要维护三份一致性。
+      // 并了镜的要把几刀里出现的实体凑齐：只按第一镜取，后面几刀的货就没有参考图
+      const entityRefs = shotCastRefs(project.rhythm?.cast, project.castBinding, shotSourceOrders(shot));
+      if (entityRefs.length) {
+        formData.append(
+          "castEntities",
+          JSON.stringify(entityRefs.map(({ entity, ref }) => ({ kind: entity.kind, label: ref.label, path: ref.path }))),
+        );
+      }
+
+      await generateShotFrame(formData);
+      setProject((current) => ({ ...current, id: saved.id }));
+      setFrameVersion((current) => ({ ...current, [shot.order]: (current[shot.order] || 0) + 1 }));
+      // 刚生成的首帧已经落在项目目录，出片时不用再选图
+      setPendingFrames((current) => {
+        const next = { ...current };
+        delete next[shot.order];
+        return next;
+      });
+      return true;
+    } catch (error) {
+      console.error("[VideoFactory] 首帧生成失败", { action: "videoFactory.frame", shotOrder: shot.order, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "首帧生成失败" });
+      return false;
+    } finally {
+      setFramingShot(null);
+    }
+  };
+
+  const handleGenerateFrame = async (shot: Shot) => {
+    if (await runFrame(shot)) onNotice({ type: "success", message: `第 ${shot.order} 镜首帧已生成` });
+  };
+
+  /** 批量出首帧：一张一分多钟，跑到哪算哪，中途失败就停下，别让人干等一串错。 */
+  const handleCompose = async () => {
+    if (!project.id) return;
+    setIsComposing(true);
+    try {
+      const data = await composeFinalCut({
+        projectId: project.id,
+        withSubtitles,
+        withVoiceover,
+        voice,
+        rate: voiceRate,
+      });
+      // voiceovers / finalCut 归服务端所有，直接用返回那份覆盖，别自己拼
+      setProject((current) => ({ ...current, voiceovers: data.project.voiceovers, finalCut: data.project.finalCut }));
+      setFinalVersion((current) => current + 1);
+      const extended = data.finalCut.extendedShots;
+      onNotice({
+        type: "success",
+        message: extended.length
+          ? `已合成 ${data.finalCut.durationSec.toFixed(1)} 秒；${extended.length} 处为放下口播延长了画面`
+          : `已合成 ${data.finalCut.durationSec.toFixed(1)} 秒成片`,
+      });
+    } catch (error) {
+      console.error("[VideoFactory] 合成失败", { action: "videoFactory.compose", projectId: project.id, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "合成失败" });
+    } finally {
+      setIsComposing(false);
+    }
+  };
+
+  const handleGenerateAllFrames = async () => {
+    if (!storyboard) return;
+    const pending = storyboard.shots.filter((shot) => shot.framePrompt.trim());
+    onNotice({ type: "info", message: `开始生成 ${pending.length} 张首帧，每张约 1~2 分钟` });
+    let done = 0;
+    for (const shot of pending) {
+      if (!(await runFrame(shot))) break;
+      done += 1;
+    }
+    onNotice({
+      type: done === pending.length ? "success" : "info",
+      message: done === pending.length ? `${done} 张首帧全部生成` : `已生成 ${done} 张，剩下的可以单独重试`,
+    });
+  };
+
+  const handleScreenRhythm = async () => {
+    const target = detectedRhythm || project.rhythm;
+    if (!target) return;
+    setIsScreening(true);
+    onNotice({ type: "info", message: "正在看关键帧，约半分钟" });
+    try {
+      const data = await screenReplicability(target.id);
+      setDetectedRhythm(data.rhythm);
+      // 项目里套用的是同一份就一并更新，否则报告只存在于模板里、项目侧看不到
+      setProject((current) => (current.rhythm?.id === data.rhythm.id ? applyRhythm(current, data.rhythm) : current));
+      refreshRhythms();
+      onNotice({
+        type: data.usedFallback ? "info" : "success",
+        message: data.usedFallback ? "未配置 AI，看不了画面" : "可复刻性结论已出",
+      });
+    } catch (error) {
+      console.error("[VideoFactory] 可复刻性筛查失败", { action: "videoFactory.replicability", error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "可复刻性筛查失败" });
+    } finally {
+      setIsScreening(false);
+    }
+  };
+
+  /**
+   * 确认（或撤销）这条原片没水印。
+   * 确认之后服务端立刻把要走编辑通道的镜头切出来，撤销则连已切的一起删——
+   * 所以这里必须把返回的节奏整个换掉，不能只改本地那个布尔值。
+   */
+  const handleConfirmSource = async (watermarkFree: boolean) => {
+    const target = detectedRhythm || project.rhythm;
+    if (!target) return;
+    setIsConfirmingSource(true);
+    try {
+      const data = await confirmBenchmarkSource(target.id, watermarkFree);
+      setDetectedRhythm(data.rhythm);
+      setProject((current) => (current.rhythm?.id === data.rhythm.id ? applyRhythm(current, data.rhythm) : current));
+      refreshRhythms();
+      onNotice({ type: "success", message: watermarkFree ? "已确认无水印，原片段已切出" : "已撤销确认，原片段已删除" });
+    } catch (error) {
+      console.error("[VideoFactory] 水印确认失败", { action: "videoFactory.benchmark.source", error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "水印确认失败" });
+    } finally {
+      setIsConfirmingSource(false);
+    }
+  };
+
+  const handleDeleteRhythm = async (rhythmId: string) => {
+    try {
+      await deleteBenchmarkRhythm(rhythmId);
+      // 正在用的那条被删了就一并解除套用，别让分镜按一份已经不存在的节奏切
+      if (project.rhythm?.id === rhythmId) setProject((current) => ({ ...current, rhythm: null }));
+      if (detectedRhythm?.id === rhythmId) setDetectedRhythm(null);
+      refreshRhythms();
+      onNotice({ type: "success", message: "节奏模板已删除" });
+    } catch (error) {
+      console.error("[VideoFactory] 节奏模板删除失败", { action: "videoFactory.benchmark.delete", rhythmId, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "节奏模板删除失败" });
+    }
+  };
+
+  const handleWriteScript = async () => {
+    setIsWritingScript(true);
+    try {
+      const data = await rewriteVideoScript({
+        skeleton: project.skeleton,
+        topic: project.topic,
+        targetDurationSec: project.targetDurationSec,
+      });
+      setProject((current) => ({
+        ...current,
+        title: current.title || data.script.title,
+        script: data.script,
+        // 脚本换了，旧分镜和旧成片就对不上了，一并作废，免得拿着过期的镜头去生成
+        storyboard: null,
+        clips: [],
+      }));
+      setStep("script");
+      onNotice({
+        type: data.usedFallback ? "info" : "success",
+        message: data.usedFallback ? "未配置 AI，已铺好结构空位，口播稿请手写" : "已按对标结构写出新脚本",
+      });
+    } catch (error) {
+      console.error("[VideoFactory] 脚本改写失败", { action: "videoFactory.script", error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "脚本改写失败" });
+    } finally {
+      setIsWritingScript(false);
+    }
+  };
+
+  const handleCutShots = async () => {
+    if (!script) return;
+    setIsCuttingShots(true);
+    try {
+      const data = await analyzeStoryboard({
+        script,
+        visualStyle,
+        rhythm: project.rhythm,
+        castBinding: project.castBinding,
+        genProvider,
+      });
+      // 新分镜作废了旧片子。clips 归服务端所有，自动存盘不带它，
+      // 所以这里要显式存一次说清「清空」，否则旧 clips 会留在盘上对不上新镜头
+      const next: VideoProject = { ...project, storyboard: data.storyboard, clips: [] };
+      setProject(next);
+      if (next.id) await persist(next, { resetClips: true });
+      setStep("storyboard");
+      onNotice({
+        type: data.usedFallback ? "info" : "success",
+        message: data.usedFallback
+          ? "未配置 AI，已按脚本分段一段一镜，提示词请手动补"
+          : `已拆成 ${data.storyboard.shots.length} 个镜头`,
+      });
+    } catch (error) {
+      console.error("[VideoFactory] 分镜拆解失败", { action: "videoFactory.storyboard", error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "分镜拆解失败" });
+    } finally {
+      setIsCuttingShots(false);
+    }
+  };
+
+  const openFramePicker = async (shotOrder: number) => {
+    setPickingShot(shotOrder);
+    setIsLoadingFrames(true);
+    try {
+      const data = await listFrameCandidates();
+      setFrames(data.frames);
+    } catch (error) {
+      console.error("[VideoFactory] 首帧图列表读取失败", { action: "videoFactory.frames", error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "首帧图列表读取失败" });
+    } finally {
+      setIsLoadingFrames(false);
+    }
+  };
+
+  const handleGenerateShot = async (shot: Shot) => {
+    const pending = pendingFrames[shot.order];
+    const existing = project.clips.find((clip) => clip.shotOrder === shot.order);
+    const framePath = pending?.path || existing?.framePath || "";
+    // 三种来源都没有时，服务端还会去认盘上已生成的首帧，所以这里只拦「一次都没出过图」的
+    if (!pending?.file && !framePath && !frameVersion[shot.order]) {
+      onNotice({ type: "error", message: `第 ${shot.order} 镜还没有首帧图，点「生成首帧」或从图片工厂选一张` });
+      return;
+    }
+
+    setGeneratingShot(shot.order);
+    onNotice({ type: "info", message: `第 ${shot.order} 镜生成中，一般 1~3 分钟` });
+    try {
+      // 生成要往项目目录里落产物，先确保项目已经有 id
+      const saved = project.id ? project : await persist(project);
+
+      const formData = new FormData();
+      formData.append("projectId", saved.id);
+      formData.append("shotOrder", String(shot.order));
+      formData.append("videoPrompt", shot.videoPrompt);
+      formData.append("durationSec", String(shot.durationSec));
+      formData.append("resolution", resolution);
+      // 送 genProvider 而不是 project.genProvider：老项目那个字段是空的，
+      // 裸值会被 String() 成 "undefined" 送出去，服务端只好回一个「引擎不能出片」
+      formData.append("provider", genProvider);
+      // 没手动选就用探测时已经拿到的默认模型：服务端拿到空串会自己再拉一次模型目录，
+      // 那份数据探测时就取过了，逐镜重拉纯属白跑一趟网络
+      const model = genModel || selectedProvider?.defaultModel || "";
+      if (model) formData.append("model", model);
+      // 界面上比例控件在没选时显示的就是首档，这里跟着送同一个值，
+      // 否则「看着是 9:16、出来是 16:9」
+      if (aspectRatio) formData.append("aspectRatio", aspectRatio);
+      if (pending?.file) formData.append("frameFile", pending.file);
+      else if (framePath) formData.append("framePath", framePath);
+      // 两者都没有时不传，交给服务端去认项目目录里已生成的那张
+
+      const data = await generateShotClip(formData);
+      setProject((current) => ({
+        ...current,
+        id: saved.id,
+        clips: [...current.clips.filter((clip) => clip.shotOrder !== shot.order), data.clip].sort(
+          (a, b) => a.shotOrder - b.shotOrder,
+        ),
+      }));
+      setClipVersion((current) => ({ ...current, [shot.order]: (current[shot.order] || 0) + 1 }));
+      onNotice({ type: "success", message: `第 ${shot.order} 镜已生成` });
+    } catch (error) {
+      console.error("[VideoFactory] 图生视频失败", { action: "videoFactory.generate", shotOrder: shot.order, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "图生视频失败" });
+    } finally {
+      setGeneratingShot(null);
+    }
+  };
+
+  const handleAttachClip = async (shot: Shot, file: File) => {
+    try {
+      const saved = project.id ? project : await persist(project);
+      const formData = new FormData();
+      formData.append("projectId", saved.id);
+      formData.append("shotOrder", String(shot.order));
+      formData.append("durationSec", String(shot.durationSec));
+      formData.append("clipFile", file);
+
+      const data = await attachShotClip(formData);
+      setProject((current) => ({
+        ...current,
+        id: saved.id,
+        clips: [...current.clips.filter((clip) => clip.shotOrder !== shot.order), data.clip].sort(
+          (a, b) => a.shotOrder - b.shotOrder,
+        ),
+      }));
+      setClipVersion((current) => ({ ...current, [shot.order]: (current[shot.order] || 0) + 1 }));
+      onNotice({ type: "success", message: `第 ${shot.order} 镜已挂上` });
+    } catch (error) {
+      console.error("[VideoFactory] 成片上传失败", { action: "videoFactory.attach", shotOrder: shot.order, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "成片上传失败" });
+    }
+  };
+
+  const handleDeleteProject = async (projectId: string) => {
+    try {
+      await deleteVideoProject(projectId);
+      if (projectId === project.id) startFreshProject({}, null);
+      refreshProjects();
+      onNotice({ type: "success", message: "项目已删除" });
+    } catch (error) {
+      console.error("[VideoFactory] 项目删除失败", { action: "videoFactory.delete", projectId, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "项目删除失败" });
+    }
+  };
+
+  /** 剪映拼片要的清单：镜号、时长、字幕、文件路径。 */
+  const shotListText = useMemo(() => {
+    if (!storyboard) return "";
+    return storyboard.shots
+      .map((shot) => {
+        const clip = project.clips.find((item) => item.shotOrder === shot.order);
+        // 并了镜的一镜在成片里是好几刀，逐刀写清从第几秒取——
+        // 只写「这一镜 4.6 秒」的话，拿着清单去剪映的人不知道那是跳着取的三段
+        const parts = shotParts(shot);
+        const cuts =
+          parts.length < 2
+            ? [`字幕：${parts[0].subtitle || parts[0].voiceover || "（无）"}`]
+            : parts.map(
+                (part) =>
+                  `  第 ${part.cutIndex + 1} 刀：取 ${part.fromSec.toFixed(1)}–${(part.fromSec + part.durationSec).toFixed(1)} 秒` +
+                  ` · 字幕：${part.subtitle || part.voiceover || "（无）"}`,
+              );
+        return [
+          `第 ${shot.order} 镜 · ${
+            shot.trimToSec !== undefined && shot.trimToSec < shot.durationSec
+              ? `生成 ${shot.durationSec} 秒，剪到 ${shot.trimToSec} 秒`
+              : `${shot.durationSec} 秒`
+          } · ${shot.shotSize || "未标景别"} · ${shot.cameraMove || "未标运镜"}`,
+          ...cuts,
+          `成片：${clip?.videoPath || "（未生成）"}`,
+        ].join("\n");
+      })
+      .join("\n\n");
+  }, [storyboard, project.clips]);
+
+  const steps = VIDEO_FACTORY_STEPS.map((item) => ({
+    id: item.id,
+    label: item.label,
+    done:
+      item.id === "source"
+        ? Boolean(project.skeleton || project.topic.topic.trim())
+        : item.id === "script"
+          ? Boolean(script)
+          : item.id === "storyboard"
+            ? Boolean(storyboard)
+            : project.clips.length > 0 && project.clips.length === (storyboard?.shots.length || 0),
+    onSelect: () => setStep(item.id),
+  }));
+
+  const plannedDuration = storyboard ? storyboardDurationSec(storyboard) : 0;
+  const durationCheck = checkScriptDuration(script?.estimatedDurationSec || 0, project.targetDurationSec);
+  // 刚拆出来的优先显示；没有就显示项目里已经套用的那份。
+  // 按当前引擎重算一遍 plan——模板里存的那份是切镜时按默认引擎算的，
+  // 直接拿来显示的话，选了 Veo 时「切成 N 段」和真正拆出来的镜头数会是两个数
+  const shownRhythm = useMemo(() => {
+    const raw = detectedRhythm || project.rhythm;
+    return raw ? replanRhythm(raw, project.genProvider ?? "grok-cli") : null;
+  }, [detectedRhythm, project.rhythm, project.genProvider]);
+  // 老项目的 JSON 里没有这个字段，服务端读取时已就地补过一次，这里再兜一道：
+  // 项目还可能从新建、扩展推送等别的路径进来，少一个 ?? 就是一次白屏
+  const genProvider = project.genProvider ?? "grok-cli";
+  const selectedProvider = providers.find((item) => item.id === genProvider);
+  const providerReady = Boolean(selectedProvider?.available && selectedProvider.authenticated);
+  const genCaps = PROVIDER_CAPS[genProvider];
+  /** 档位为空的是回传通道，时长仍要能设（进提示词用），这时退回全量并集 */
+  const durationOptions = genCaps.durations.length ? genCaps.durations : SHOT_DURATIONS;
+
+
+  // 界面显示的和请求里送的都取这两个，所以「显示了却没送」这类不一致在这里就被消掉了
+  const resolution = genCaps.resolutions.includes(preferredResolution)
+    ? preferredResolution
+    : genCaps.resolutions[0] ?? preferredResolution;
+  const aspectRatio =
+    preferredAspectRatio && genCaps.aspectRatios.includes(preferredAspectRatio)
+      ? preferredAspectRatio
+      : genCaps.aspectRatios[0] ?? "";
+
+  /**
+   * 换引擎。
+   * 已拆好的分镜要跟着吸附到新引擎的档位上——按 grok 切的 10 秒镜头改用 Veo 时会变成 8 秒，
+   * 不吸附的话这些镜头会带着一个该引擎根本不接受的时长走到生成那一步。
+   * 分辨率与比例不在这里改，交给上面那个 effect 统一收——载入项目那条路也要走同样的校正。
+   */
+  const selectGenProvider = (next: VideoGenProviderId) => {
+    // 并了镜的切点是按旧引擎的档位铺开的：10 秒档上铺的三刀，换到最长 8 秒的引擎之后
+    // 最后一刀会落在片子外面。这里不悄悄改它——切点重排等于重排整张分镜表
+    if (project.storyboard?.shots.some((shot) => shot.cuts && shot.cuts.length > 1)) {
+      onNotice({
+        type: "info",
+        message: "这张分镜表有并镜，切点是按原引擎的时长档铺开的，换引擎后要「重拆」一次才对得上",
+      });
+    }
+    setProject((current) => ({
+      ...current,
+      genProvider: next,
+      storyboard: current.storyboard
+        ? {
+            ...current.storyboard,
+            shots: current.storyboard.shots.map((shot) => ({
+              ...shot,
+              durationSec: snapShotDuration(shot.durationSec, next),
+            })),
+          }
+        : current.storyboard,
+    }));
+    // 模型是跟着引擎走的，换引擎必须清掉，否则会把 grok 的模型名塞给 Veo。
+    // 分辨率与比例不用管，它们在渲染时按新引擎的能力表夹。
+    setGenModel("");
+  };
+
+  /** 拆分镜前后各挂一次，同一份 props——写两遍迟早会漏掉其中一处的新参数 */
+  const engineChooser = (
+    <EngineChooser
+      providers={providers}
+      value={genProvider}
+      model={genModel}
+      resolution={resolution}
+      aspectRatio={aspectRatio}
+      isLoading={isLoadingProviders}
+      onSelectProvider={selectGenProvider}
+      onSelectModel={setGenModel}
+      onSelectResolution={setPreferredResolution}
+      onSelectAspectRatio={setPreferredAspectRatio}
+      onRefresh={() => refreshProviders(true)}
+    />
+  );
+
+  return (
+    <div className="space-y-5">
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <PipelineRail steps={steps} />
+          <div className="flex items-center gap-2">
+            {project.id && <Badge tone="neutral">已存盘</Badge>}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => startFreshProject({}, null)}
+            >
+              新建一条
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {step === "source" && (
+        <>
+          {project.skeleton ? (
+            <Card>
+              <CardHeader
+                title="对标结构骨架"
+                description={`来自 ${project.skeleton.platform} @${project.skeleton.author || "未知作者"}`}
+              />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <FieldLabel>钩子的设计思路</FieldLabel>
+                  <p className="mt-1 text-sm leading-6 text-ink">{project.skeleton.hook || "（未拆出）"}</p>
+                </div>
+                <div>
+                  <FieldLabel>戳中的痛点</FieldLabel>
+                  <p className="mt-1 text-sm leading-6 text-ink">{project.skeleton.painPoint || "（未拆出）"}</p>
+                </div>
+              </div>
+              {project.skeleton.stages.length > 0 && (
+                <ol className="mt-3 space-y-1.5">
+                  {project.skeleton.stages.map((stage, index) => (
+                    <li key={`${stage.stage}-${index}`} className="rounded-xl bg-soft px-3 py-2 text-sm">
+                      <span className="font-bold text-brand-600">{stage.stage || `第 ${index + 1} 段`}</span>
+                      {stage.purpose && <span className="ml-2 text-muted">{stage.purpose}</span>}
+                    </li>
+                  ))}
+                </ol>
+              )}
+              <Callout tone="warn" className="mt-3">
+                只借结构，不借画面和原句。案例、数据、场景都要换成你自己的。
+              </Callout>
+            </Card>
+          ) : (
+            <Callout tone="info">
+              没有对标来源也能做：直接填下面的选题，从零写一条。想借结构的话，把链接贴进下面那个框，或者传个 mp4。
+            </Callout>
+          )}
+
+          <RhythmBoard
+            rhythm={shownRhythm}
+            busy={isDetectingRhythm}
+            sourceUrl={project.skeleton?.videoUrl}
+            busyHint={detectHint}
+            onDetectLink={handleDetectFromLink}
+            saved={savedRhythms}
+            onPickSaved={(item) => setDetectedRhythm(item)}
+            onDeleteSaved={handleDeleteRhythm}
+            onReset={() => {
+              setDetectedRhythm(null);
+              setProject((current) => ({ ...current, rhythm: null }));
+            }}
+            onDetect={handleDetectRhythm}
+            applied={Boolean(shownRhythm && project.rhythm?.id === shownRhythm.id)}
+            onApply={() => {
+              if (!shownRhythm) return;
+              setProject((current) => applyRhythm(current, shownRhythm));
+              onNotice({ type: "success", message: "已套用这条节奏，拆分镜时会照它切" });
+            }}
+            onClear={() => setProject((current) => ({ ...current, rhythm: null }))}
+            onScreen={handleScreenRhythm}
+            screening={isScreening}
+            onConfirmSource={handleConfirmSource}
+            confirmingSource={isConfirmingSource}
+            projectId={project.id || undefined}
+          />
+
+          <BenchmarkCastBoard
+            projectId={project.id}
+            cast={benchmarkCast}
+            binding={project.castBinding}
+            busyToken={castEntityBusy}
+            unusedTokens={unusedCastTokenList}
+            onBind={handleBindCastEntity}
+            onClear={handleClearCastEntity}
+            onGoFillTopic={() => setStep("script")}
+          />
+
+          <CastBoard
+            projectId={project.id}
+            cast={project.cast}
+            busySlot={castBusySlot}
+            onPickAsset={(slot, asset) => handleBindCast(slot, { assetId: asset.id, label: asset.name })}
+            onUpload={(slot, file) => handleBindCast(slot, { label: file.name.replace(/\.[^.]+$/, ""), file })}
+            onClear={handleClearCast}
+          />
+
+          <Card>
+            <CardHeader title="这条视频讲什么" description="这里填的东西会全部进脚本，缺的地方模型不会替你编" />
+            <div className="grid gap-4">
+              <Field label="主题" hint="一句话说清这条视频要讲的事">
+                <Input
+                  value={project.topic.topic}
+                  onChange={(event) => patchTopic("topic", event.target.value)}
+                  placeholder="例：夏天出汗也不脱妆的底妆手法"
+                />
+              </Field>
+              <Field label="产品 / 服务" hint="没有就留空，留空时脚本不会带货">
+                <Input
+                  value={project.topic.product}
+                  onChange={(event) => patchTopic("product", event.target.value)}
+                  placeholder="例：XX 控油散粉"
+                />
+              </Field>
+              <Field label="卖点 / 核心观点" hint="一行一条。这是模型唯一能用的事实来源">
+                <Textarea
+                  rows={4}
+                  value={project.topic.sellingPoints}
+                  onChange={(event) => patchTopic("sellingPoints", event.target.value)}
+                  placeholder={"例：\n上妆后 8 小时不氧化\n实测 35 度户外\n不卡纹，敏感肌可用"}
+                />
+              </Field>
+              <Field label="目标观众">
+                <Input
+                  value={project.topic.audience}
+                  onChange={(event) => patchTopic("audience", event.target.value)}
+                  placeholder="例：20-30 岁油皮女生"
+                />
+              </Field>
+              <Field label="目标时长" hint="口播按每秒 4.5 字估算，决定后面切几个镜头">
+                <SegmentedControl
+                  ariaLabel="目标时长"
+                  value={String(project.targetDurationSec)}
+                  options={DURATION_OPTIONS}
+                  onChange={(value) =>
+                    setProject((current) => ({ ...current, targetDurationSec: Number(value) }))
+                  }
+                  compact
+                />
+              </Field>
+            </div>
+            <div className="mt-4">
+              <Button
+                variant="ai"
+                onClick={handleWriteScript}
+                loading={isWritingScript}
+                disabled={!project.topic.topic.trim() && !project.topic.sellingPoints.trim()}
+                icon={<Wand2 size={14} />}
+              >
+                {isWritingScript ? "写稿中" : "写脚本"}
+              </Button>
+            </div>
+          </Card>
+
+          {projects.length > 0 && (
+            <Card>
+              <CardHeader title="最近的项目" description="点一条接着做，四步进度都在里面" />
+              <div className="space-y-2">
+                {projects.slice(0, 8).map((item) => (
+                  <div
+                    key={item.id}
+                    className={`flex items-center gap-3 rounded-2xl border px-4 py-2.5 ${
+                      item.id === project.id ? "border-brand-300 bg-brand-50" : "border-line bg-surface"
+                    }`}
+                  >
+                    <button type="button" onClick={() => selectProject(item)} className="min-w-0 flex-1 text-left">
+                      <span className="block truncate text-sm font-bold text-ink">{item.title}</span>
+                      <span className="mt-0.5 block text-[11px] text-faint">{describeProjectProgress(item)}</span>
+                    </button>
+                    <Button size="sm" variant="danger" onClick={() => handleDeleteProject(item.id)} icon={<Trash2 size={13} />}>
+                      删除
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+
+      {step === "script" && (
+        script ? (
+          <>
+            <Card>
+              <CardHeader
+                title={script.title}
+                description={`估算时长 ${script.estimatedDurationSec} 秒 · 目标 ${project.targetDurationSec} 秒`}
+                action={
+                  <div className="flex gap-2">
+                    <CopyButton
+                      label="复制全稿"
+                      text={[script.hook, ...script.segments.map((s) => s.voiceover), script.cta]
+                        .filter(Boolean)
+                        .join("\n\n")}
+                    />
+                    <Button size="sm" variant="secondary" onClick={handleWriteScript} loading={isWritingScript}>
+                      重写一版
+                    </Button>
+                  </div>
+                }
+              />
+              {durationCheck.status !== "ok" && (
+                <Callout tone={durationCheck.status === "over" ? "warn" : "info"} className="mb-3">
+                  {durationCheck.status === "over"
+                    ? `比目标长了 ${durationCheck.deltaSec} 秒，大约要删 ${secondsToChars(durationCheck.deltaSec)} 字。不删的话分镜会多切出好几个镜头，每镜都是一次生成。`
+                    : `比目标短了 ${-durationCheck.deltaSec} 秒，大约还能加 ${secondsToChars(durationCheck.deltaSec)} 字，够补一个案例或一句细节。`}
+                </Callout>
+              )}
+
+              {script.borrowedStructure && (
+                <Callout tone="info" className="mb-4">
+                  {script.borrowedStructure}
+                </Callout>
+              )}
+
+              <div className="space-y-3">
+                <div>
+                  <FieldLabel>开头钩子</FieldLabel>
+                  <Textarea
+                    rows={2}
+                    className="mt-1"
+                    value={script.hook}
+                    onChange={(event) => patchScript({ hook: event.target.value })}
+                  />
+                </div>
+
+                {script.segments.map((segment, index) => (
+                  <div key={`${segment.stage}-${index}`} className="rounded-2xl border border-line bg-soft p-3.5">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xs font-bold text-brand-600">{segment.stage || `第 ${index + 1} 段`}</span>
+                      {segment.purpose && <span className="text-xs text-muted">{segment.purpose}</span>}
+                    </div>
+                    <Textarea
+                      rows={3}
+                      className="mt-2"
+                      value={segment.voiceover}
+                      onChange={(event) =>
+                        patchScript({
+                          segments: script.segments.map((item, i) =>
+                            i === index ? { ...item, voiceover: event.target.value } : item,
+                          ),
+                        })
+                      }
+                    />
+                  </div>
+                ))}
+
+                <div>
+                  <FieldLabel>行动号召</FieldLabel>
+                  <Textarea
+                    rows={2}
+                    className="mt-1"
+                    value={script.cta}
+                    onChange={(event) => patchScript({ cta: event.target.value })}
+                  />
+                </div>
+              </div>
+            </Card>
+            {engineChooser}
+
+            <Card>
+              <CardHeader
+                title="拆分镜"
+                description={
+                  project.rhythm
+                    ? `照对标「${project.rhythm.sourceLabel}」的节奏切：${describeUnitPlan(planGenerationUnits(project.rhythm, genProvider))}，时长一秒不改`
+                    : `每镜只能是 ${durationOptions.join(" 或 ")} 秒——这是 ${selectedProvider?.name || "出片引擎"} 的硬约束`
+                }
+                action={
+                  project.rhythm ? (
+                    <Badge tone="brand">套了对标节奏</Badge>
+                  ) : (
+                    <Button size="sm" variant="ghost" onClick={() => setStep("source")}>
+                      去拆个节奏
+                    </Button>
+                  )
+                }
+              />
+              <Field label="画面风格" hint="选填。留空则由模型定一个统一风格并写进一致性说明">
+                <Input
+                  value={visualStyle}
+                  onChange={(event) => setVisualStyle(event.target.value)}
+                  placeholder="例：日系清透、自然光、冷调；或 赛博霓虹、强对比"
+                />
+              </Field>
+              <div className="mt-4">
+                <Button variant="ai" onClick={handleCutShots} loading={isCuttingShots} icon={<Clapperboard size={14} />}>
+                  {isCuttingShots ? "拆解中" : "拆成分镜表"}
+                </Button>
+              </div>
+            </Card>
+          </>
+        ) : (
+          <EmptyState
+            icon={<Wand2 size={22} />}
+            title="还没有脚本"
+            description="回上一步填好选题，点「写脚本」。"
+            action={<Button variant="primary" onClick={() => setStep("source")}>回去填选题</Button>}
+          />
+        )
+      )}
+
+      {step === "storyboard" && (
+        storyboard ? (
+          <>
+            <Card>
+              <CardHeader
+                title={`分镜表 · ${storyboard.shots.length} 镜`}
+                description={
+                  project.rhythm
+                    ? `成片 ${plannedDuration} 秒，对标 ${project.rhythm.totalDurationSec} 秒`
+                    : `总时长 ${plannedDuration} 秒，脚本估算 ${script?.estimatedDurationSec || 0} 秒`
+                }
+                action={
+                  <Button size="sm" variant="secondary" onClick={handleCutShots} loading={isCuttingShots}>
+                    重拆
+                  </Button>
+                }
+              />
+              {storyboard.continuityNote && <Callout tone="info">{storyboard.continuityNote}</Callout>}
+              {script && !project.rhythm && Math.abs(plannedDuration - script.estimatedDurationSec) > 12 && (
+                <Callout tone="warn" className="mt-3">
+                  分镜总时长和脚本估算差了 {Math.abs(plannedDuration - script.estimatedDurationSec)} 秒，
+                  要么改镜头时长，要么回去删几句口播。
+                </Callout>
+              )}
+            </Card>
+
+            {storyboard.shots.map((shot) => (
+              <Card key={shot.order}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone="brand">第 {shot.order} 镜</Badge>
+                  <SegmentedControl
+                    ariaLabel={`第 ${shot.order} 镜时长`}
+                    compact
+                    value={String(shot.durationSec)}
+                    options={durationOptions.map((value) => ({ value: String(value), label: `${value} 秒` }))}
+                    onChange={(value) => patchShot(shot.order, { durationSec: Number(value) as ShotDuration })}
+                  />
+                  {shot.trimToSec !== undefined && shot.trimToSec < shot.durationSec && (
+                    <Badge tone="warn">剪到 {shot.trimToSec} 秒</Badge>
+                  )}
+                  {shot.cuts && shot.cuts.length > 1 && <Badge tone="brand">并了 {shot.cuts.length} 镜</Badge>}
+                  {shot.shotSize && <span className="text-xs text-faint">{shot.shotSize}</span>}
+                </div>
+
+                <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] font-bold text-faint">运镜</span>
+                  <CameraMovePicker
+                    value={shot.cameraMove}
+                    onPick={(move) =>
+                      patchShot(shot.order, {
+                        cameraMove: move.label,
+                        videoPrompt: applyCameraMove(shot.videoPrompt, move),
+                      })
+                    }
+                  />
+                  {!shot.cameraMove && <span className="text-[11px] text-warn">未定运镜</span>}
+                </div>
+
+                {shot.visual && <p className="mt-2.5 text-sm leading-6 text-ink">{shot.visual}</p>}
+
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <FieldLabel>第一帧提示词</FieldLabel>
+                      <CopyButton text={shot.framePrompt} />
+                    </div>
+                    <Textarea
+                      rows={4}
+                      className="mt-1"
+                      value={shot.framePrompt}
+                      onChange={(event) => patchShot(shot.order, { framePrompt: event.target.value })}
+                      placeholder="拿去图片工厂生成 9:16 首帧图"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <FieldLabel>运动提示词</FieldLabel>
+                      <CopyButton text={shot.videoPrompt} />
+                    </div>
+                    <Textarea
+                      rows={4}
+                      className="mt-1"
+                      value={shot.videoPrompt}
+                      onChange={(event) => patchShot(shot.order, { videoPrompt: event.target.value })}
+                      placeholder="只写怎么动，画面内容交给首帧图"
+                    />
+                  </div>
+                </div>
+
+                {(() => {
+                  // 一镜展开成刀。一刀就照旧摆两个框，多刀才逐刀列——
+                  // 数据只有一条路径（shotParts），分叉的只是怎么摆
+                  const parts = shotParts(shot);
+                  const text = (part: (typeof parts)[number]) => (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <FieldLabel>口播</FieldLabel>
+                        <Textarea
+                          rows={2}
+                          className="mt-1"
+                          value={part.voiceover}
+                          onChange={(event) => patchPart(shot.order, part.cutIndex, { voiceover: event.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel>字幕</FieldLabel>
+                        <Textarea
+                          rows={2}
+                          className="mt-1"
+                          value={part.subtitle}
+                          onChange={(event) => patchPart(shot.order, part.cutIndex, { subtitle: event.target.value })}
+                        />
+                      </div>
+                    </div>
+                  );
+                  if (parts.length < 2) return <div className="mt-3">{text(parts[0])}</div>;
+                  return (
+                    <div className="mt-3 rounded-xl border border-line bg-canvas p-3">
+                      <p className="text-[11px] leading-5 text-faint">
+                        这一镜画面是<b className="text-ink">一次生成</b>的，成片里再从这 {shot.durationSec} 秒里
+                        跳着取 {parts.length} 刀接起来——切口是剪出来的，所以主体不会换脸，
+                        对标那几刀的碎切节奏也一刀不少。时间码按引擎档位算好了，只用填文案。
+                      </p>
+                      {parts.map((part) => (
+                        <div
+                          key={part.cutIndex}
+                          className="mt-2.5 border-t border-line pt-2.5 first:border-t-0 first:pt-0"
+                        >
+                          <p className="text-[11px] font-bold text-faint">
+                            第 {part.cutIndex + 1} 刀 · 取第 {part.fromSec.toFixed(1)}–
+                            {(part.fromSec + part.durationSec).toFixed(1)} 秒（{part.durationSec} 秒）
+                            {part.sourceShotOrder ? ` · 对标第 ${part.sourceShotOrder} 镜` : ""}
+                          </p>
+                          <div className="mt-1.5">{text(part)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                <ShotMaterialSlot
+                  projectId={project.id}
+                  shotOrder={shot.order}
+                  material={shot.material}
+                  busy={materialBusyShot === shot.order}
+                  onPickAsset={(library, asset) =>
+                    handleBindShotMaterial(shot.order, { assetId: asset.id, library, label: asset.name })
+                  }
+                  onUpload={(file) =>
+                    handleBindShotMaterial(shot.order, { label: file.name.replace(/\.[^.]+$/, ""), file })
+                  }
+                  onClear={() => handleClearShotMaterial(shot.order)}
+                />
+              </Card>
+            ))}
+
+            <Card>
+              <Button variant="primary" onClick={() => setStep("generate")} icon={<Film size={14} />}>
+                去生成视频
+              </Button>
+            </Card>
+          </>
+        ) : (
+          <EmptyState
+            icon={<Clapperboard size={22} />}
+            title="还没有分镜表"
+            description="回上一步，点「拆成分镜表」。"
+            action={<Button variant="primary" onClick={() => setStep("script")}>回去拆分镜</Button>}
+          />
+        )
+      )}
+
+      {step === "generate" && (
+        storyboard ? (
+          <>
+            {engineChooser}
+
+            <Card>
+              <CardHeader
+                title="首帧图"
+                description={
+                  boundCastSlots.length
+                    ? `按每镜提示词生成，自动带上${boundCastSlots.map((slot) => slot.label).join("、")}参考图`
+                    : "还没绑角色、产品和场景——现在生成的话，每镜的人、货和地方都会不一样"
+                }
+                action={
+                  <Button
+                    variant="ai"
+                    size="sm"
+                    onClick={handleGenerateAllFrames}
+                    loading={framingShot !== null}
+                    disabled={framingShot !== null || generatingShot !== null}
+                    icon={<ImagePlus size={13} />}
+                  >
+                    {framingShot !== null ? `第 ${framingShot} 镜出图中` : `把 ${storyboard.shots.length} 镜首帧全生成`}
+                  </Button>
+                }
+              />
+              <div className="flex flex-wrap items-center gap-3">
+                <Field label="生图 CLI">
+                  <SegmentedControl
+                    ariaLabel="生图 CLI"
+                    compact
+                    value={frameProvider}
+                    options={[
+                      { value: "codex", label: "Codex" },
+                      { value: "grok", label: "Grok" },
+                    ]}
+                    onChange={(value) => setFrameProvider(value as "codex" | "grok")}
+                  />
+                </Field>
+                {boundCastSlots.length === 0 && (
+                  <Button size="sm" variant="ghost" onClick={() => setStep("source")}>
+                    去绑参考图
+                  </Button>
+                )}
+              </div>
+            </Card>
+
+            {storyboard.shots.map((shot) => {
+              const clip = project.clips.find((item) => item.shotOrder === shot.order);
+              const pending = pendingFrames[shot.order];
+              const frameLabel = pending?.label || (clip?.framePath ? "已用上次的首帧" : "");
+              const busy = generatingShot === shot.order;
+
+              return (
+                <Card key={shot.order}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone="brand">第 {shot.order} 镜</Badge>
+                    <span className="text-xs text-faint">
+                      生成 {shot.durationSec} 秒
+                      {shot.trimToSec !== undefined && shot.trimToSec < shot.durationSec && ` · 剪到 ${shot.trimToSec} 秒`}
+                    </span>
+                    {clip && <Badge tone="ok">已出片</Badge>}
+                  </div>
+
+                  <p className="mt-2 text-sm leading-6 text-muted">
+                    {shot.visual || shotParts(shot)[0].voiceover || "（这一镜没写画面）"}
+                  </p>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="ai"
+                      onClick={() => handleGenerateFrame(shot)}
+                      loading={framingShot === shot.order}
+                      disabled={framingShot !== null || generatingShot !== null}
+                      icon={<Sparkles size={13} />}
+                    >
+                      {framingShot === shot.order ? "出图中" : "生成首帧"}
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => openFramePicker(shot.order)} icon={<ImagePlus size={13} />}>
+                      从图片工厂选
+                    </Button>
+                    <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-xl border border-line-strong bg-surface px-3 text-xs font-bold text-ink transition-colors hover:border-brand-300 hover:bg-brand-50">
+                      <Upload size={13} />
+                      上传首帧
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) {
+                            setPendingFrames((current) => ({ ...current, [shot.order]: { file, label: file.name } }));
+                          }
+                          event.target.value = "";
+                        }}
+                      />
+                    </label>
+                    {frameLabel && <span className="truncate text-[11px] text-faint">{frameLabel}</span>}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {isGenerativeProvider(genProvider) ? (
+                      <Button
+                        variant="ai"
+                        size="sm"
+                        onClick={() => handleGenerateShot(shot)}
+                        loading={busy}
+                        disabled={!providerReady || generatingShot !== null}
+                        icon={<Film size={13} />}
+                      >
+                        {busy ? "生成中" : clip ? "重新生成" : "生成这一镜"}
+                      </Button>
+                    ) : (
+                      <>
+                        <CopyButton label="复制运动提示词" text={shot.videoPrompt} />
+                        <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-xl border border-line-strong bg-surface px-3 text-xs font-bold text-ink transition-colors hover:border-brand-300 hover:bg-brand-50">
+                          <Upload size={13} />
+                          回传 mp4
+                          <input
+                            type="file"
+                            accept="video/mp4"
+                            className="hidden"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) handleAttachClip(shot, file);
+                              event.target.value = "";
+                            }}
+                          />
+                        </label>
+                      </>
+                    )}
+                    {!providerReady && isGenerativeProvider(genProvider) && (
+                      <span className="text-[11px] font-semibold text-warn">{selectedProvider?.message}</span>
+                    )}
+                    {genProvider === "doubao" && (
+                      // 豆包这条路的回传由扩展自动完成，旁边那个「回传 mp4」只是手动兜底
+                      <span className="text-[11px] text-faint">
+                        提示词贴进豆包出片后，用「豆包下载器」的『送到工作台』直接挂上，不用手动回传
+                      </span>
+                    )}
+                  </div>
+
+                  {(frameVersion[shot.order] || clip?.framePath) && (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={`/api/video-factory/frame?projectId=${encodeURIComponent(project.id)}&shot=${shot.order}&v=${
+                        frameVersion[shot.order] || 1
+                      }`}
+                      alt={`第 ${shot.order} 镜首帧`}
+                      className="mt-3 h-40 w-[90px] rounded-xl border border-line bg-sunken object-cover"
+                    />
+                  )}
+
+                  {clip && (
+                    <video
+                      controls
+                      src={clipUrl(project.id, shot.order, clipVersion[shot.order] || 1)}
+                      className="mt-3 w-full max-w-[240px] rounded-2xl border border-line bg-black"
+                    />
+                  )}
+                </Card>
+              );
+            })}
+
+            <Card>
+              <CardHeader
+                title="拿去剪映拼片"
+                description="镜号、时长、字幕、文件路径，复制出去就能对着剪"
+                action={<CopyButton label="复制镜头清单" text={shotListText} />}
+              />
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-2xl bg-soft p-4 text-xs leading-6 text-muted">
+                {shotListText}
+              </pre>
+            </Card>
+          </>
+        ) : (
+          <EmptyState
+            icon={<Film size={22} />}
+            title="还没有分镜表"
+            description="生成是按镜头来的，先把分镜拆出来。"
+            action={<Button variant="primary" onClick={() => setStep("script")}>回去拆分镜</Button>}
+          />
+        )
+      )}
+
+      {step === "compose" && (
+        storyboard ? (
+          <>
+            <Card>
+              <CardHeader
+                title="字幕与成片"
+                description="按口播长度剪每一镜、压上字幕条、拼成一条可以直接发的片子"
+                action={
+                  <Button
+                    variant="ai"
+                    onClick={handleCompose}
+                    loading={isComposing}
+                    disabled={isComposing || project.clips.length === 0}
+                    icon={<Film size={14} />}
+                  >
+                    {project.finalCut ? "重新合成" : "合成成片"}
+                  </Button>
+                }
+              />
+
+              {project.clips.length < storyboard.shots.length && (
+                <Callout tone="warn" className="mb-3">
+                  还差 {storyboard.shots.length - project.clips.length} 镜没生成，合成前先把它们出完。
+                </Callout>
+              )}
+
+              <div className="flex flex-wrap items-end gap-3">
+                <Field label="字幕条">
+                  <SegmentedControl
+                    ariaLabel="字幕条"
+                    compact
+                    value={withSubtitles ? "on" : "off"}
+                    options={[{ value: "on", label: "压上" }, { value: "off", label: "不要" }]}
+                    onChange={(value) => setWithSubtitles(value === "on")}
+                  />
+                </Field>
+                <Field label="配音">
+                  <SegmentedControl
+                    ariaLabel="配音"
+                    compact
+                    value={withVoiceover ? "on" : "off"}
+                    options={[{ value: "on", label: "合成" }, { value: "off", label: "不要" }]}
+                    onChange={(value) => setWithVoiceover(value === "on")}
+                  />
+                </Field>
+                {withVoiceover && (
+                  <>
+                    <Field label="音色">
+                      <select
+                        aria-label="配音音色"
+                        value={voice}
+                        onChange={(event) => setVoice(event.target.value)}
+                        className="h-8 rounded-xl border border-line bg-surface px-3 text-xs font-bold text-ink outline-none transition focus:border-brand-300"
+                      >
+                        {VOICE_OPTIONS.map((item) => (
+                          <option key={item.id} value={item.id}>{item.label}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="语速">
+                      <SegmentedControl
+                        ariaLabel="语速"
+                        compact
+                        value={voiceRate}
+                        options={[
+                          { value: "+0%", label: "正常" },
+                          { value: "+15%", label: "偏快" },
+                          { value: "+30%", label: "快" },
+                        ]}
+                        onChange={setVoiceRate}
+                      />
+                    </Field>
+                  </>
+                )}
+              </div>
+
+              {withVoiceover && (
+                <p className="mt-3 text-[11px] leading-4 text-faint">
+                  每一镜的画面长度由它的口播长度定：说不完的镜头会自动延长，超过生成时长的会告诉你哪几镜要重出。
+                </p>
+              )}
+            </Card>
+
+            {project.finalCut && (
+              <Card>
+                <CardHeader
+                  title={`成片 · ${project.finalCut.durationSec.toFixed(1)} 秒`}
+                  description={[
+                    project.finalCut.withSubtitles ? "带字幕" : "无字幕",
+                    project.finalCut.withVoiceover ? "带配音" : "无配音",
+                    `${storyboard.shots.length} 镜`,
+                  ].join(" · ")}
+                  action={
+                    <a
+                      href={`/api/video-factory/compose?projectId=${encodeURIComponent(project.id)}&v=${finalVersion}`}
+                      download={`${project.title || "成片"}.mp4`}
+                      className="rounded-2xl border border-line px-4 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-line-strong"
+                    >
+                      下载成片
+                    </a>
+                  }
+                />
+                {project.finalCut.extendedShots.length > 0 && (
+                  <Callout tone="info" className="mb-3">
+                    这几镜为放下口播突破了对标节奏：
+                    {project.finalCut.extendedShots
+                      .map(
+                        (item) =>
+                          `第 ${item.shotOrder} 镜${item.cutIndex ? `第 ${item.cutIndex + 1} 刀` : ""} ` +
+                          `${item.plannedSec}s → ${item.actualSec}s`,
+                      )
+                      .join("；")}
+                  </Callout>
+                )}
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                <video
+                  key={finalVersion}
+                  src={`/api/video-factory/compose?projectId=${encodeURIComponent(project.id)}&v=${finalVersion}`}
+                  controls
+                  className="mx-auto max-h-[70vh] rounded-2xl bg-black"
+                />
+              </Card>
+            )}
+          </>
+        ) : (
+          <EmptyState
+            icon={<Film size={22} />}
+            title="还没有分镜表"
+            description="合成是按分镜来的，先把分镜拆出来。"
+            action={<Button variant="primary" onClick={() => setStep("script")}>回去拆分镜</Button>}
+          />
+        )
+      )}
+
+      {pickingShot !== null && (
+        <FramePicker
+          frames={frames}
+          loading={isLoadingFrames}
+          onClose={() => setPickingShot(null)}
+          onPick={(frame) => {
+            setPendingFrames((current) => ({ ...current, [pickingShot]: { path: frame.path, label: frame.label } }));
+            setPickingShot(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}

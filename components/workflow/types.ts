@@ -4,4 +4,6 @@ export type NoticeType = "success" | "error" | "info";
 export interface Notice {
   type: NoticeType;
   message: string;
+  /** 可选的承接动作：渲染成提示上的一个按钮，如「生成完了 → 去哪看」。 */
+  action?: { label: string; run: () => void };
 }

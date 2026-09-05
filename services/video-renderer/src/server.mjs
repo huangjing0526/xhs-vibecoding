@@ -118,6 +118,37 @@ app.post("/render", async (req, res) => {
   }
 });
 
+/**
+ * 单句配音：给一段文字返回一条 mp3 和它的真实时长。
+ *
+ * 视频工厂要按口播长度去定每一镜的画面长度，所以时长必须跟着音频一起回，
+ * 让调用方再去量一次文件等于把 ffprobe 的依赖散到两个工程里。
+ * 落盘复用 /out 静态目录，调用方按 url 取走。
+ */
+app.post("/tts", async (req, res) => {
+  const { text, voice, rate } = req.body || {};
+  if (!text || typeof text !== "string" || !text.trim()) {
+    return res.status(400).json({ error: "缺少 text" });
+  }
+
+  const id = `tts-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const outPath = path.join(OUT_DIR, `${id}.mp3`);
+  try {
+    await mkdir(OUT_DIR, { recursive: true });
+    const { durationSec } = await synthesizeToFile({
+      text: text.trim(),
+      ...(voice ? { voice } : {}),
+      ...(rate ? { rate } : {}),
+      outPath,
+    });
+    return res.json({ url: `${PUBLIC_URL}/out/${id}.mp3`, durationSec });
+  } catch (error) {
+    const message = normalizeError(error);
+    console.error("[video-renderer] tts failed", { action: "tts.synthesize", voice, message });
+    return res.status(500).json({ error: message });
+  }
+});
+
 // 抖音/小红书拆片：下无水印视频 + ffmpeg 抽音频 + ASR 转写口播脚本。下载文件复用 /out 静态目录对外提供。
 app.post("/extract", async (req, res) => {
   const { url } = req.body || {};

@@ -130,7 +130,7 @@ export default function NoteEditor({
         <EmptyState
           bare
           icon={<Sparkles size={22} />}
-          title="从左侧选一篇笔记开始"
+          title="还没选中项目"
           description="也可以点左上「新建」，或去素材库把攒下的素材提炼成选题。"
         />
       </div>
