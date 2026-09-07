@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Clapperboard, Copy, Download, Sparkles } from "lucide-react";
+import { Clapperboard, Copy, Download, Film, Sparkles } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
 import EmptyState from "@/components/ui/EmptyState";
@@ -30,6 +30,8 @@ interface VideoStudioProps {
   imageUrls?: string[];
   /** 成片状态回流给总览/上下文 */
   onRenderedChange?: (rendered: boolean) => void;
+  /** 一键将当前文案/脚本送往视频工厂 */
+  onSendToVideoFactory?: (topic: string) => void;
 }
 
 function formatLabel(format: VideoFormat): string {
@@ -46,6 +48,7 @@ export default function VideoStudio({
   onVideoPlanChange,
   imageUrls = [],
   onRenderedChange,
+  onSendToVideoFactory,
 }: VideoStudioProps) {
   const [format, setFormat] = useState<VideoFormat>("talking_head");
   const [duration, setDuration] = useState<VideoDuration>("60s");
@@ -242,6 +245,26 @@ export default function VideoStudio({
             <div className="rounded-xl bg-soft px-3 py-2">字幕</div>
             <div className="rounded-xl bg-soft px-3 py-2">生成 Prompt</div>
           </div>
+
+          {onSendToVideoFactory && (
+            <div className="mt-5 border-t border-line pt-4">
+              <Button
+                size="sm"
+                variant="secondary"
+                block
+                onClick={() => {
+                  const topicText = plan?.voiceover || input?.content || input?.title || "";
+                  onSendToVideoFactory(topicText);
+                }}
+                icon={<Film size={13} className="text-brand-500" />}
+              >
+                进视频工厂出片
+              </Button>
+              <p className="mt-1.5 text-center text-[10px] text-faint">
+                带当前文案进入视频工厂逐镜生成 AI 视频
+              </p>
+            </div>
+          )}
         </aside>
 
         <section className="rounded-3xl border border-line bg-surface p-5 shadow-card">

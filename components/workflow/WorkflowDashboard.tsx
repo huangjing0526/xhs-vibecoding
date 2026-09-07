@@ -1023,7 +1023,7 @@ export default function WorkflowDashboard() {
 
   const handleGenerateReview = useCallback(async () => {
     setIsReviewing(true);
-    setNotice({ type: "info", message: "正在复盘已发布笔记数据" });
+    setNotice({ type: "info", message: "正在复盘已发布项目数据" });
     try {
       const shouldWriteBack = workflowMode === "connected";
       const result = await generateReview({
@@ -1724,6 +1724,10 @@ export default function WorkflowDashboard() {
               onVideoPlanChange={setVideoPlan}
               imageUrls={[coverDataUrl, contentImageDataUrl].filter(Boolean)}
               onRenderedChange={setVideoRendered}
+              onSendToVideoFactory={(topicText) => {
+                setPendingVideoTopic(topicText);
+                openArea("videoFactory");
+              }}
             />
           </ToolPage>
         )}
