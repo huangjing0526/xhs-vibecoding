@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk, readJsonBody } from "@/app/api/feishu/_utils";
@@ -66,5 +66,19 @@ export async function GET() {
     return apiOk({ distillations }, `已有 ${distillations.length} 份道库模板`);
   } catch (error) {
     return apiError(error, "daoku.list", "道库模板读取失败");
+  }
+}
+
+/** 删掉一份道库模板。 */
+export async function DELETE(request: NextRequest) {
+  const id = new URL(request.url).searchParams.get("id") || "";
+  try {
+    if (!isSafeSegment(id)) return apiBadRequest("道库 id 不合法");
+    const file = entryFile(id);
+    await rm(file, { force: true });
+    console.info("[Daoku] 道库模板已删除", { action: "daoku.delete", id });
+    return apiOk({ id }, "道库模板已删除");
+  } catch (error) {
+    return apiError(error, "daoku.delete", "道库模板删除失败");
   }
 }

@@ -30,15 +30,12 @@ import {
   type TemplateBar,
   type TemplateCard,
 } from "@/lib/templates";
+import {
+  deleteBenchmarkRhythm,
+  deleteDaokuTemplate,
+} from "@/lib/workflowClient";
 import { SHOT_TONE_BAR } from "@/lib/videoFactory";
 import type { RecentEntry, RecentKind } from "@/lib/recentUsed";
-
-/**
- * 目录页：工具目录与模板目录共用一套版式——搜索、最近使用、分类锚点、分区大卡。
- * 两者真正的差别只有「卡片里画什么、点了去哪、右上角有什么动作」，所以版式只写一遍（Catalog），
- * 两种形态各自是一层薄壳，各管各的数据。从前用一个 kind 分支贯穿整页，
- * 结果是模板那半边的状态和弹窗在工具页也照样存在，只是从不生效。
- */
 
 interface CatalogItem {
   id: string;
@@ -47,24 +44,17 @@ interface CatalogItem {
   category: string;
   icon: LucideIcon;
   tint: string;
-  /** 模板跑出来的真实样例；没有就退回示意图。 */
   preview?: string;
   thumb?: ImageTemplateThumb;
-  /** 复刻这张模板要你补的自有素材。 */
   slots?: string[];
-  /** 没有样例图的模板（视频结构）用一条节奏条代替。 */
   bars?: TemplateBar[];
-  /** 道库既没有图也没有节奏条，样例就是它的标题句式。 */
   lines?: string[];
-  /** 悬停时露出的动作文案，如「照这个做 →」；不填就不露。 */
   cta?: string;
-  /** 自建的东西才给这两个；内置的不填，卡片上就不出现。 */
   onEdit?: () => void;
   onDelete?: () => void;
   onOpen: () => void;
 }
 
-/** 节奏条：每一镜一根，高度是时长占比，颜色是快慢。只有时间码，原视频的画面与音频一概不进这里。 */
 function RhythmBars({ bars }: { bars: TemplateBar[] }) {
   return (
     <div className="flex h-full items-end gap-[2px] px-3 pb-3 pt-6">
@@ -79,7 +69,6 @@ function RhythmBars({ bars }: { bars: TemplateBar[] }) {
   );
 }
 
-/** 道库的样例：几句标题句式。道库没有画面，能看的只有「照着它写会写成什么样」。 */
 function DaoLines({ lines }: { lines: string[] }) {
   return (
     <div className="flex h-full flex-col justify-center gap-1.5 px-4 py-3">
@@ -92,82 +81,86 @@ function DaoLines({ lines }: { lines: string[] }) {
   );
 }
 
-/** 一张目录卡：上面一块示意图，左下角压一个小图标，下面是名字与说明。 */
 function CatalogCard({ item }: { item: CatalogItem }) {
   const Icon = item.icon;
   const manageable = Boolean(item.onEdit || item.onDelete);
   return (
-    // 整张卡从前就是一个 button，改/删按钮塞不进去（button 不能嵌 button），所以外面包一层
-    <div className="group relative overflow-hidden rounded-3xl border border-line bg-surface transition-all duration-150 hover:border-brand-300 hover:shadow-raised">
-      {manageable && (
-        <div className="absolute right-2 top-2 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          {item.onEdit && (
-            <button
-              type="button"
-              onClick={item.onEdit}
-              aria-label={`编辑${item.name}`}
-              className="rounded-lg bg-surface/90 p-1.5 text-faint shadow-card hover:text-brand-600"
-            >
-              <Pencil size={12} />
-            </button>
-          )}
-          {item.onDelete && (
-            <button
-              type="button"
-              onClick={item.onDelete}
-              aria-label={`删除${item.name}`}
-              className="rounded-lg bg-surface/90 p-1.5 text-faint shadow-card hover:text-danger"
-            >
-              <Trash2 size={12} />
-            </button>
-          )}
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={item.onOpen}
-        className="block w-full text-left"
-      >
-      <div className={`relative aspect-[4/3] bg-gradient-to-br to-surface ${item.tint}`}>
-        {item.bars?.length ? (
-          <RhythmBars bars={item.bars} />
-        ) : item.lines?.length ? (
-          <DaoLines lines={item.lines} />
-        ) : item.preview || item.thumb ? (
-          <TemplatePreview template={item} sizes="260px" />
-        ) : (
-          <span className="flex h-full items-center justify-center text-brand-500/70">
-            <Icon size={44} strokeWidth={1.4} aria-hidden="true" />
+    <div className="group relative flex flex-col overflow-hidden rounded-3xl border border-line bg-surface text-left shadow-card transition-all duration-150 hover:border-brand-300 hover:shadow-lg">
+      <div className="relative aspect-[4/3] overflow-hidden bg-soft">
+        <button
+          type="button"
+          onClick={item.onOpen}
+          className="absolute inset-0 z-0 flex flex-col justify-between p-3.5"
+          aria-label={`打开${item.name}`}
+        >
+            {item.bars?.length ? (
+              <RhythmBars bars={item.bars} />
+            ) : item.lines?.length ? (
+              <DaoLines lines={item.lines} />
+            ) : item.preview || item.thumb ? (
+              <TemplatePreview template={item} sizes="260px" />
+            ) : (
+              <div className={`h-full w-full bg-gradient-to-br ${item.tint} to-transparent opacity-80`} />
+            )}
+          <span className="relative z-10 self-start rounded-xl border border-line bg-surface/90 p-2 shadow-sm backdrop-blur-sm">
+            <Icon size={16} strokeWidth={2.2} className="text-ink" aria-hidden="true" />
           </span>
+          {item.cta && (
+            <span className="relative z-10 self-end rounded-xl bg-ink/90 px-3 py-1.5 text-xs font-bold text-white opacity-0 shadow-sm backdrop-blur-sm transition-opacity duration-150 group-hover:opacity-100">
+              {item.cta}
+            </span>
+          )}
+        </button>
+
+        {manageable && (
+          <div className="pointer-events-none absolute right-2 top-2 z-10 flex gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100">
+            {item.onEdit && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  item.onEdit?.();
+                }}
+                className="rounded-lg border border-line bg-surface/95 p-1.5 text-muted shadow-sm backdrop-blur-sm transition-colors hover:border-brand-300 hover:text-ink"
+                aria-label={`编辑${item.name}`}
+              >
+                <Pencil size={13} strokeWidth={2.2} />
+              </button>
+            )}
+            {item.onDelete && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  item.onDelete?.();
+                }}
+                className="rounded-lg border border-line bg-surface/95 p-1.5 text-muted shadow-sm backdrop-blur-sm transition-colors hover:border-danger hover:text-danger"
+                aria-label={`删除${item.name}`}
+              >
+                <Trash2 size={13} strokeWidth={2.2} />
+              </button>
+            )}
+          </div>
         )}
-        <span className="absolute bottom-0 left-3 flex h-9 w-9 translate-y-1/2 items-center justify-center rounded-xl border border-line bg-surface text-brand-500 shadow-card">
-          <Icon size={16} strokeWidth={1.9} aria-hidden="true" />
-        </span>
       </div>
-      <div className="px-3.5 pb-3.5 pt-7">
-        <div className="truncate text-[14px] font-bold text-ink">{item.name}</div>
-        <p className="mt-1 line-clamp-2 text-xs leading-5 text-faint">{item.description}</p>
-        {/* 复刻前最该知道的是「我得先有什么」，所以槽位摆在卡片上，不等点进去才说 */}
+
+      <div className="flex flex-1 flex-col p-4">
+        <h3 className="line-clamp-1 text-[15px] font-bold text-ink">{item.name}</h3>
+        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">{item.description}</p>
         {item.slots && item.slots.length > 0 && (
-          <div className="mt-2 flex flex-wrap items-center gap-1">
-            <span className="text-[10px] font-bold text-faint">要你补</span>
+          <div className="mt-2.5 flex flex-wrap gap-1">
             {item.slots.map((slot) => (
-              <Badge key={slot}>{slot}</Badge>
+              <span key={slot} className="rounded-md bg-soft px-1.5 py-0.5 text-[10px] font-bold text-faint">
+                {slot}
+              </span>
             ))}
           </div>
         )}
-        {item.cta && (
-          <span className="mt-2 block text-[11px] font-bold text-brand-600 opacity-0 transition-opacity group-hover:opacity-100">
-            {item.cta}
-          </span>
-        )}
-        </div>
-      </button>
+      </div>
     </div>
   );
 }
 
-/** 目录版式本身：不关心装的是工具还是模板，只管搜、分区、锚点、最近使用。 */
 function Catalog({
   area,
   items,
@@ -177,74 +170,64 @@ function Catalog({
   action,
   children,
 }: {
-  area: AreaId;
+  area: "tools" | "templates";
   items: CatalogItem[];
   recent: RecentEntry[];
   recentKind: RecentKind;
   searchPlaceholder: string;
-  /** 搜索框右边的动作按钮 */
   action?: ReactNode;
-  /** 挂在页面上的弹层，如模板编辑器 */
   children?: ReactNode;
 }) {
   const [keyword, setKeyword] = useState("");
-  const [activeCategory, setActiveCategory] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string>("");
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
 
-  const visible = useMemo(() => {
-    const trimmed = keyword.trim().toLowerCase();
-    if (!trimmed) return items;
-    return items.filter((item) =>
-      `${item.name} ${item.description} ${item.category}`.toLowerCase().includes(trimmed)
+  const filtered = useMemo(() => {
+    const q = keyword.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (item) => item.name.toLowerCase().includes(q) || item.description.toLowerCase().includes(q)
     );
   }, [items, keyword]);
 
-  const sections = useMemo(() => groupInOrder(visible, (item) => item.category), [visible]);
+  const sections = useMemo(
+    () =>
+      groupInOrder(filtered, (item) => item.category).map((group) => ({
+        key: group.key,
+        items: group.items,
+      })),
+    [filtered]
+  );
 
+  useEffect(() => {
+    if (sections.length > 0 && !activeCategory) {
+      setActiveCategory(sections[0].key);
+    }
+  }, [sections, activeCategory]);
+
+  const itemMap = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const recentItems = useMemo(
     () =>
       recent
         .filter((entry) => entry.kind === recentKind)
-        .map((entry) => items.find((item) => item.id === entry.id))
+        .map((entry) => itemMap.get(entry.id))
         .filter((item): item is CatalogItem => Boolean(item)),
-    [items, recent, recentKind]
+    [recent, recentKind, itemMap]
   );
-
-  // 分类 tab 跟着滚动走：滚到哪个分区就高亮哪个，不用手动同步
-  useEffect(() => {
-    const nodes = sections
-      .map((section) => sectionRefs.current[section.key])
-      .filter((node): node is HTMLElement => Boolean(node));
-    if (nodes.length === 0) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const hit = entries.filter((entry) => entry.isIntersecting).sort(
-          (a, b) => a.boundingClientRect.top - b.boundingClientRect.top
-        )[0];
-        if (hit) setActiveCategory(hit.target.getAttribute("data-category") || "");
-      },
-      { rootMargin: "-72px 0px -60% 0px", threshold: 0 }
-    );
-    nodes.forEach((node) => observer.observe(node));
-    return () => observer.disconnect();
-  }, [sections]);
-
-  const meta = AREAS[area];
 
   return (
     <CanvasPage
-      title={meta.label}
-      subtitle={meta.subtitle}
+      title={AREAS[area].label}
+      subtitle={AREAS[area].subtitle}
       action={
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          <div className="relative w-full sm:w-72">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-56 sm:w-64">
             <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
             <Input
               value={keyword}
               onChange={(event) => setKeyword(event.target.value)}
               placeholder={searchPlaceholder}
-              className="bg-surface pl-9"
+              className="bg-surface pl-9 text-xs"
             />
           </div>
           {action}
@@ -252,8 +235,8 @@ function Catalog({
       }
     >
       {recentItems.length > 0 && !keyword.trim() && (
-        <section className="mt-6">
-          <h2 className="mb-2.5 text-[13px] font-bold text-muted">最近使用</h2>
+        <section className="mb-8">
+          <h2 className="mb-3 text-[13px] font-bold text-muted">最近使用</h2>
           <div className="flex flex-wrap gap-2">
             {recentItems.map((item) => {
               const Icon = item.icon;
@@ -262,10 +245,10 @@ function Catalog({
                   key={item.id}
                   type="button"
                   onClick={item.onOpen}
-                  className="flex items-center gap-2 rounded-2xl border border-line bg-surface px-3.5 py-2.5 transition-colors hover:border-brand-300"
+                  className="flex items-center gap-2 rounded-2xl border border-line bg-surface px-4 py-2.5 transition-colors hover:border-brand-300"
                 >
-                  <Icon size={16} strokeWidth={1.9} className="text-brand-500" aria-hidden="true" />
-                  <span className="text-[13px] font-bold text-ink">{item.name}</span>
+                  <Icon size={14} className="text-brand-500" />
+                  <span className="text-xs font-bold text-ink">{item.name}</span>
                 </button>
               );
             })}
@@ -274,15 +257,13 @@ function Catalog({
       )}
 
       {sections.length === 0 ? (
-        <div className="mt-8">
-          <EmptyState
-            icon={<Search size={22} />}
-            title={keyword.trim() ? `没有匹配「${keyword.trim()}」的结果` : "这里还是空的"}
-          />
-        </div>
+        <EmptyState
+          icon={<Search size={22} />}
+          title={keyword.trim() ? `没有匹配「${keyword.trim()}」的结果` : "这里还是空的"}
+        />
       ) : (
         <>
-          <div className="sticky top-0 z-10 -mx-5 mt-6 flex gap-4 overflow-x-auto bg-canvas px-5 pb-2 pt-2">
+          <div className="sticky top-0 z-10 -mx-5 mb-6 flex gap-6 overflow-x-auto bg-canvas px-5 pb-2 pt-2">
             {sections.map((section) => (
               <button
                 key={section.key}
@@ -290,15 +271,11 @@ function Catalog({
                 onClick={() =>
                   sectionRefs.current[section.key]?.scrollIntoView({ behavior: "smooth", block: "start" })
                 }
-                aria-current={activeCategory === section.key ? "true" : undefined}
-                className={`relative shrink-0 pb-1 text-[15px] font-bold tracking-tight transition-colors ${
+                className={`shrink-0 text-sm font-bold transition-colors ${
                   activeCategory === section.key ? "text-ink" : "text-faint hover:text-muted"
                 }`}
               >
                 {section.key}
-                {activeCategory === section.key && (
-                  <span className="absolute inset-x-0 -bottom-0.5 h-0.5 rounded-full bg-ink" aria-hidden="true" />
-                )}
               </button>
             ))}
           </div>
@@ -306,14 +283,13 @@ function Catalog({
           {sections.map((section) => (
             <section
               key={section.key}
-              data-category={section.key}
               ref={(node) => {
                 sectionRefs.current[section.key] = node;
               }}
-              className="scroll-mt-14 pt-5"
+              className="mb-10 scroll-mt-20"
             >
-              <h2 className="mb-3 text-[13px] font-bold text-muted">{section.key}</h2>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+              <h2 className="mb-4 text-[13px] font-bold text-muted">{section.key}</h2>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {section.items.map((item) => (
                   <CatalogCard key={item.id} item={item} />
                 ))}
@@ -328,7 +304,6 @@ function Catalog({
   );
 }
 
-/** 工具目录：全部动词能力，按用途分区。名词库不在这里——它们在侧栏下段。 */
 export function ToolsGallery({
   recent,
   onOpenArea,
@@ -348,6 +323,7 @@ export function ToolsGallery({
             category,
             icon: meta.icon,
             tint: meta.tint,
+            cta: "打开 →",
             onOpen: () => onOpenArea(id),
           };
         })
@@ -366,15 +342,14 @@ export function ToolsGallery({
   );
 }
 
-/** 模板目录：全站唯一的模板入口，出图模板与拆来的视频结构并在一处。 */
 export function TemplateGallery({
   recent,
-  onOpenArea,
   onOpenTemplate,
+  onOpenArea,
 }: {
   recent: RecentEntry[];
-  onOpenArea: (id: AreaId) => void;
   onOpenTemplate: (card: TemplateCard) => void;
+  onOpenArea: (id: AreaId) => void;
 }) {
   const [imageCards, setImageCards] = useState<TemplateCard[]>([]);
   const [diskCards, setDiskCards] = useState<TemplateCard[]>([]);
@@ -382,17 +357,14 @@ export function TemplateGallery({
   const [customTemplates, setCustomTemplates] = useState<ImageFactoryTemplate[]>([]);
   const [saveError, setSaveError] = useState("");
 
-  // 自建模板存在本机浏览器里，只能挂载后读
   useEffect(() => {
     setImageCards(imageTemplateCards());
     setCustomTemplates(loadCustomImageTemplates());
   }, []);
 
-  // 拆来的视频结构和蒸馏出来的道库都存在本机磁盘上，读回来并到同一份目录里。
-  // 两路各读各的：一路失败不该把另一路也拖没了，失败的那路记一笔，读到的照常摆出来。
-  useEffect(() => {
-    let ignore = false;
-    Promise.allSettled<TemplateCard[]>([rhythmTemplateCards(), daokuTemplateCards()]).then((results) => {
+  const loadDiskCards = useCallback(async () => {
+    try {
+      const results = await Promise.allSettled<TemplateCard[]>([rhythmTemplateCards(), daokuTemplateCards()]);
       for (const result of results) {
         if (result.status === "rejected") {
           console.error("[TemplateGallery] 磁盘模板读取失败", {
@@ -402,13 +374,15 @@ export function TemplateGallery({
         }
       }
       const loaded = results.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
-      // 一次全军覆没不该把上一次读到的清空，所以空结果只在真读到东西时才覆盖
-      if (!ignore && loaded.length) setDiskCards(loaded);
-    });
-    return () => {
-      ignore = true;
-    };
+      setDiskCards(loaded);
+    } catch (error) {
+      console.error("[TemplateGallery] 磁盘模板读取异常", { error });
+    }
   }, []);
+
+  useEffect(() => {
+    loadDiskCards();
+  }, [loadDiskCards]);
 
   const handleSaveTemplate = useCallback((template: ImageFactoryTemplate) => {
     try {
@@ -433,6 +407,25 @@ export function TemplateGallery({
     }
   }, []);
 
+  const handleDeleteDiskTemplate = useCallback(
+    async (card: TemplateCard) => {
+      const label = card.kind === "daoku" ? "道库模板" : "视频结构模板";
+      if (!window.confirm(`确认删除${label}「${card.name}」吗？`)) return;
+      try {
+        if (card.kind === "daoku") {
+          await deleteDaokuTemplate(card.id);
+        } else if (card.kind === "rhythm") {
+          await deleteBenchmarkRhythm(card.id);
+        }
+        await loadDiskCards();
+        setSaveError("");
+      } catch (error) {
+        setSaveError(error instanceof Error ? error.message : "模板没能从磁盘删掉");
+      }
+    },
+    [loadDiskCards]
+  );
+
   const items = useMemo<CatalogItem[]>(
     () =>
       [...imageCards, ...diskCards].map((card) => ({
@@ -440,7 +433,6 @@ export function TemplateGallery({
         name: card.name,
         description: card.description,
         category: card.category,
-        // 图标与配色跟着「这张模板打哪来」走，这里不数一共有几种模板
         icon: AREAS[templateOrigin(card)].icon,
         tint: AREAS[templateOrigin(card)].tint,
         preview: card.kind === "image" ? card.preview : undefined,
@@ -448,14 +440,17 @@ export function TemplateGallery({
         bars: card.kind === "rhythm" ? card.bars : undefined,
         lines: card.kind === "daoku" ? card.lines : undefined,
         slots: card.slots,
-        // 自建模板的改与删收在目录里：从前要绕「模板页→卡片→工厂→删→弹回模板页」
         onEdit: card.kind === "image" && !card.template.builtIn ? () => setEditingTemplate(card.template) : undefined,
         onDelete:
-          card.kind === "image" && !card.template.builtIn ? () => handleDeleteTemplate(card.template) : undefined,
+          card.kind === "image"
+            ? !card.template.builtIn
+              ? () => handleDeleteTemplate(card.template)
+              : undefined
+            : () => handleDeleteDiskTemplate(card),
         cta: "照这个做 →",
         onOpen: () => onOpenTemplate(card),
       })),
-    [imageCards, diskCards, onOpenTemplate, handleDeleteTemplate]
+    [imageCards, diskCards, onOpenTemplate, handleDeleteTemplate, handleDeleteDiskTemplate]
   );
 
   return (

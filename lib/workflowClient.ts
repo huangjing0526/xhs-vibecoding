@@ -678,6 +678,14 @@ export async function saveDaokuTemplate(distillation: BloggerDistillation): Prom
   await parseApiResponse<{ distillation: BloggerDistillation }>(response, "道库保存失败");
 }
 
+/** 删掉一份道库模板。 */
+export async function deleteDaokuTemplate(id: string): Promise<void> {
+  const response = await fetch(`/api/daoku?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  await parseApiResponse<{ id: string }>(response, "道库模板删除失败");
+}
+
 /** 可复用参考素材库（模特 / 产品 / 场景）：三种库同一套接口，只差路径。 */
 export async function listLibraryAssets(kind: LibraryKind): Promise<LibraryAssetEntry[]> {
   const response = await fetch(`/api/image-factory/${kind}`, { cache: "no-store" });
