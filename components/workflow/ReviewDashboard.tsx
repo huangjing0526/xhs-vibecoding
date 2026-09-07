@@ -6,6 +6,7 @@ import Button from "@/components/ui/Button";
 import EmptyState from "@/components/ui/EmptyState";
 import Stat from "@/components/ui/Stat";
 import type { ReviewActionLayer, ReviewMetric, ReviewResult } from "@/lib/xhsWorkflow";
+import { copyToClipboard } from "@/lib/clipboard";
 
 interface ReviewDashboardProps {
   metrics: ReviewMetric[];
@@ -30,14 +31,11 @@ function toPercent(value: number): string {
 }
 
 export default function ReviewDashboard({ metrics, review, onGenerate, onCancel, generating }: ReviewDashboardProps) {
-  const handleCarry = async (advice: string) => {
-    try {
-      await navigator.clipboard.writeText(advice);
-      toast.success("已复制下次优化建议，可粘贴进新笔记");
-    } catch (error) {
-      console.error("[ReviewDashboard] 复制失败", { action: "review.carryNextAction", error });
-      toast.error("复制失败，请手动选择文本");
-    }
+  const handleCarry = (advice: string) => {
+    void copyToClipboard(advice, {
+      successMessage: "已复制下次优化建议，可粘贴进新笔记",
+      action: "review.carryNextAction",
+    });
   };
 
   const sortedMetrics = [...metrics].sort((a, b) => b.reads - a.reads);

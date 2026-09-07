@@ -5,13 +5,15 @@ import Image from "next/image";
 import { Sparkles } from "lucide-react";
 import Button from "@/components/ui/Button";
 import CoverEditor from "@/components/CoverEditor";
+import CoverThumb from "@/components/workflow/CoverThumb";
 import { DEFAULT_TARGET_ID, assetPx, assetRatioCss } from "@/lib/targets";
-import { DEFAULT_COVER_CONFIG, generateCoverDataUrl, type CoverConfig } from "@/lib/cover";
+import type { CoverConfig } from "@/lib/cover";
 import {
   contentCardToCoverInput,
   createCoverTemplateOptions,
   draftToCoverInput,
   getCoverSourceKey,
+  resolveCoverConfig,
   type CoverInput,
   type CoverPlan,
 } from "@/lib/coverWorkflow";
@@ -101,74 +103,10 @@ function getVersionId(sourceType: CoverVersion["sourceType"], source: ContentCar
   return `topic-${topic.topicId || topic.recordId}`;
 }
 
-function getFallbackCoverConfig(input: CoverInput): CoverConfig {
-  const [template] = createCoverTemplateOptions(input);
-  return {
-    ...DEFAULT_COVER_CONFIG,
-    ...(template?.config || {}),
-    sourceKey: getCoverSourceKey(input),
-  };
-}
-
-function isTitlePosition(value: unknown): value is CoverConfig["titlePosition"] {
-  return value === "center" || value === "left" || value === "bottom";
-}
-
-function parseStoredCoverConfig(json: string | undefined, fallback: CoverConfig): CoverConfig | null {
-  if (!json) return null;
-
-  try {
-    const parsed = JSON.parse(json);
-    if (!parsed || typeof parsed !== "object") return null;
-    const config = parsed as Partial<CoverConfig>;
-
-    return {
-      ...fallback,
-      ...config,
-      title: typeof config.title === "string" && config.title.trim() ? config.title : fallback.title,
-      subtitle: typeof config.subtitle === "string" ? config.subtitle : fallback.subtitle,
-      backgroundColor: typeof config.backgroundColor === "string" ? config.backgroundColor : fallback.backgroundColor,
-      overlayColor: typeof config.overlayColor === "string" ? config.overlayColor : fallback.overlayColor,
-      overlayOpacity: typeof config.overlayOpacity === "number" ? config.overlayOpacity : fallback.overlayOpacity,
-      overlayBlur: typeof config.overlayBlur === "number" ? config.overlayBlur : fallback.overlayBlur,
-      titleSize: typeof config.titleSize === "number" ? config.titleSize : fallback.titleSize,
-      titleColor: typeof config.titleColor === "string" ? config.titleColor : fallback.titleColor,
-      titlePosition: isTitlePosition(config.titlePosition) ? config.titlePosition : fallback.titlePosition,
-      fontFamily: typeof config.fontFamily === "string" ? config.fontFamily : fallback.fontFamily,
-    };
-  } catch (error) {
-    console.warn("[CoverStudio] 封面配置解析失败", {
-      action: "cover.parseStoredConfig",
-      error,
-    });
-    return null;
-  }
-}
-
-function createConfigFromCoverMetadata(
-  item: ContentCard | DraftNote,
-  input: CoverInput
-): { config: CoverConfig; hasStoredConfig: boolean } {
-  const fallback = getFallbackCoverConfig(input);
-  const storedConfig = parseStoredCoverConfig(item.coverConfigJson, fallback);
-  const config = storedConfig || fallback;
-
-  return {
-    hasStoredConfig: Boolean(storedConfig),
-    config: {
-      ...config,
-      sourceKey: getCoverSourceKey(input),
-      title: item.coverTitle || config.title,
-      subtitle: item.coverSubtitle || config.subtitle,
-      backgroundColor: item.coverPrimaryColor || config.backgroundColor,
-    },
-  };
-}
-
 function createDraftCoverVersion(draft: DraftNote): CoverVersion | null {
   if (!hasGeneratedCover(draft)) return null;
   const input = draftToCoverInput(draft);
-  const { config, hasStoredConfig } = createConfigFromCoverMetadata(draft, input);
+  const { config, hasStoredConfig } = resolveCoverConfig(draft, input);
 
   return {
     id: getVersionId("draft", draft),
@@ -185,7 +123,7 @@ function createDraftCoverVersion(draft: DraftNote): CoverVersion | null {
 function createTopicCoverVersion(topic: ContentCard): CoverVersion | null {
   if (!hasGeneratedCover(topic)) return null;
   const input = contentCardToCoverInput(topic);
-  const { config, hasStoredConfig } = createConfigFromCoverMetadata(topic, input);
+  const { config, hasStoredConfig } = resolveCoverConfig(topic, input);
 
   return {
     id: getVersionId("topic", topic),
@@ -197,55 +135,6 @@ function createTopicCoverVersion(topic: ContentCard): CoverVersion | null {
     style: topic.coverStyle || config.templateId || "自定义",
     hasStoredConfig,
   };
-}
-
-function CoverVersionThumbnail({ config }: { config: CoverConfig }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [previewUrl, setPreviewUrl] = useState("");
-
-  useEffect(() => {
-    let isCancelled = false;
-    setPreviewUrl("");
-
-    async function renderPreview() {
-      if (!canvasRef.current) return;
-
-      try {
-        const dataUrl = await generateCoverDataUrl(
-          canvasRef.current,
-          config,
-          assetPx(DEFAULT_TARGET_ID, "cover")
-        );
-        if (!isCancelled) setPreviewUrl(dataUrl);
-      } catch (error) {
-        console.warn("[CoverStudio] 封面缩略图生成失败", {
-          action: "cover.renderVersionThumb",
-          error,
-        });
-      }
-    }
-
-    renderPreview();
-    return () => {
-      isCancelled = true;
-    };
-  }, [config]);
-
-  return (
-    <div
-      className="relative overflow-hidden rounded-xl border border-line bg-soft"
-      style={{ aspectRatio: assetRatioCss(DEFAULT_TARGET_ID, "cover") }}
-    >
-      {previewUrl ? (
-        <Image src={previewUrl} alt="封面缩略图" fill sizes="128px" className="object-cover" unoptimized />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center text-[11px] font-bold text-faint">
-          生成中
-        </div>
-      )}
-      <canvas ref={canvasRef} className="hidden" />
-    </div>
-  );
 }
 
 function ContentImagePreview({
@@ -474,7 +363,7 @@ export default function CoverStudio({
                           : "border-line bg-soft text-ink hover:border-line-strong"
                       }`}
                     >
-                      <CoverVersionThumbnail config={version.config} />
+                      <CoverThumb config={version.config} className="rounded-xl border border-line" alt="封面缩略图" />
                       <div className="mt-2 text-[11px] font-bold text-faint">
                         {version.sourceType === "draft" ? "草稿封面" : "选题封面"}
                       </div>

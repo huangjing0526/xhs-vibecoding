@@ -35,6 +35,7 @@ import ProjectList, { getNoteStatus, type ProjectLane } from "@/components/workf
 import NoteEditor from "@/components/workflow/NoteEditor";
 import NoteInspector from "@/components/workflow/NoteInspector";
 import QualityGate from "@/components/workflow/QualityGate";
+import PublishPack from "@/components/workflow/PublishPack";
 import WatermarkStudio from "@/components/workflow/WatermarkStudio";
 import ImageFactory from "@/components/workflow/ImageFactory";
 import {
@@ -62,7 +63,7 @@ import {
   type BloggerDistillation,
 } from "@/lib/bloggerWorkflow";
 import { DEFAULT_COVER_CONFIG, downloadCover, type CoverConfig } from "@/lib/cover";
-import type { CoverPlan } from "@/lib/coverWorkflow";
+import { resolveNoteCoverConfig, type CoverPlan } from "@/lib/coverWorkflow";
 import {
   contentCardToImageSourceInput,
   downloadImageAsset,
@@ -317,6 +318,11 @@ export default function WorkflowDashboard() {
     setImageTab("cover");
     setArea("textLayer");
   }, []);
+  // 同上，落在配图那一段
+  const openContentImage = useCallback(() => {
+    setImageTab("content");
+    setArea("textLayer");
+  }, []);
   const [contentImageTemplate, setContentImageTemplate] = useState<ContentImageTemplateType>("flowchart");
   const [contentImagePlan, setContentImagePlan] = useState<ContentImagePlan | null>(null);
   const [review, setReview] = useState<ReviewResult | null>(null);
@@ -405,10 +411,19 @@ export default function WorkflowDashboard() {
     () => snapshot.materials.filter((item) => selectedMaterialIds.includes(item.recordId)),
     [selectedMaterialIds, snapshot.materials]
   );
+  /**
+   * 当前笔记的封面配置，由封面元数据现算。
+   * 不看 coverDataUrl——那是叠字排版区里正编辑的那张图，属于「上一次点开的是谁」而不是「这篇有没有封面」，
+   * 换一篇笔记它还挂在那儿，会让检查面板和质检都判错。
+   */
+  const noteCoverConfig = useMemo(
+    () => resolveNoteCoverConfig(selectedTopic, selectedDraft),
+    [selectedDraft, selectedTopic]
+  );
   // 发布前质检：纯规则、实时随草稿/选题/封面变化（阶段 A，不写回飞书）
   const qualityResult = useMemo(
-    () => runQualityCheck({ draft: selectedDraft, topic: selectedTopic, coverReady: Boolean(coverDataUrl) }),
-    [selectedDraft, selectedTopic, coverDataUrl]
+    () => runQualityCheck({ draft: selectedDraft, topic: selectedTopic, coverReady: Boolean(noteCoverConfig) }),
+    [selectedDraft, selectedTopic, noteCoverConfig]
   );
 
   const setFriendlyError = useCallback((action: string, error: unknown) => {
@@ -499,18 +514,24 @@ export default function WorkflowDashboard() {
     await loadFeishuSnapshot();
   }, [bootstrapConfig?.feishuReady, loadFeishuSnapshot, setNotice]);
 
-  const handleSelectTopic = useCallback((topic: ContentCard) => {
-    setSelectedTopic(topic);
-    setSelectedDraft(null);
+  // 换一篇笔记 = 换一套产出：上一篇的封面方案与两张预览图都不该跟过来
+  const clearGeneratedAssets = useCallback(() => {
+    setCoverPlan(null);
+    setCoverDataUrl("");
     setContentImagePlan(null);
     setContentImageDataUrl("");
   }, []);
 
+  const handleSelectTopic = useCallback((topic: ContentCard) => {
+    setSelectedTopic(topic);
+    setSelectedDraft(null);
+    clearGeneratedAssets();
+  }, [clearGeneratedAssets]);
+
   const handleSelectDraft = useCallback((draft: DraftNote) => {
     setSelectedDraft(draft);
-    setContentImagePlan(null);
-    setContentImageDataUrl("");
-  }, []);
+    clearGeneratedAssets();
+  }, [clearGeneratedAssets]);
 
   const handleBindDaoku = useCallback((topicId: string, bloggerId: string) => {
     setTopicDaokuMap((current) => ({ ...current, [topicId]: bloggerId }));
@@ -906,21 +927,6 @@ export default function WorkflowDashboard() {
     }
   }, [loadFeishuSnapshot, setFriendlyError, setNotice, workflowMode]);
 
-  // 质检面板里「标签重配 / 引导重写」内联编辑：只改前端当前草稿，不写回飞书；
-  // 之后在中栏点「保存」可一并写回。
-  const handlePatchDraft = useCallback(
-    (patch: Partial<DraftNote>) => {
-      if (!selectedDraft) return;
-      const next = { ...selectedDraft, ...patch };
-      setSelectedDraft(next);
-      setSnapshot((current) => ({
-        ...current,
-        drafts: current.drafts.map((item) => (isSameDraft(item, next) ? next : item)),
-      }));
-    },
-    [selectedDraft]
-  );
-
   const handleGenerateCover = useCallback(async () => {
     const sourceDraft = selectedDraft;
     const sourceTopic = selectedTopic;
@@ -1248,16 +1254,16 @@ export default function WorkflowDashboard() {
     return [
       { id: "topic", label: "选题", done: Boolean(selectedTopic) },
       { id: "draft", label: "草稿", done: Boolean(selectedDraft) },
-      { id: "cover", label: "封面", done: Boolean(coverDataUrl), onSelect: openCover },
+      { id: "cover", label: "封面", done: Boolean(noteCoverConfig), onSelect: openCover },
       {
         id: "quality",
         label: "质检",
         done: Boolean(selectedDraft && qualityResult && !qualityResult.hardFail),
         onSelect: () => setArea("quality"),
       },
-      { id: "publish", label: "发布", done: published },
+      { id: "publish", label: "发布", done: published, onSelect: () => setArea("publish") },
     ];
-  }, [selectedTopic, selectedDraft, coverDataUrl, qualityResult, openCover]);
+  }, [selectedTopic, selectedDraft, noteCoverConfig, qualityResult, openCover]);
 
   // ⌘K 命令表：分区跳转 + 笔记切换 + 高频动作，全部收在一个入口
   const commands: Command[] = useMemo(() => {
@@ -1501,16 +1507,13 @@ export default function WorkflowDashboard() {
                     onBindDaoku={handleBindDaoku}
                     bloggerReady={bloggerReady}
                     onOpenBlogger={() => openArea("blogger")}
-                    coverDataUrl={coverDataUrl}
+                    coverConfig={noteCoverConfig}
                     onOpenCover={openCover}
                     videoReady={videoReady}
                     onOpenVideo={() => openArea("video")}
                     quality={qualityResult}
                     onOpenQuality={() => openArea("quality")}
-                    onPublish={() => {
-                      if (selectedDraft) handlePublishDraft(selectedDraft);
-                    }}
-                    publishing={isPublishingDraft}
+                    onOpenPublish={() => openArea("publish")}
                   />
                 </div>
               </div>
@@ -1806,12 +1809,38 @@ export default function WorkflowDashboard() {
             <QualityGate
               result={qualityResult}
               draft={selectedDraft}
-              onApplyDraftPatch={handlePatchDraft}
+              onApplyDraftPatch={(patch) => {
+                // 质检面板里改标签/引导走的是正经保存：只改前端 state 的话，不发布就切走改动即丢
+                if (selectedDraft) handleSaveDraft({ ...selectedDraft, ...patch });
+              }}
               onResolve={(action) => {
                 if (action === "rewrite") setArea("rewrite");
                 else if (action === "cover") openCover();
                 else if (action === "source") setArea("library");
               }}
+              onOpenPublish={() => setArea("publish")}
+              applyingPatch={isSavingDraft}
+            />
+          </ToolPage>
+        )}
+
+        {area === "publish" && (
+          <ToolPage
+            area="publish"
+            note={selectedTopic}
+            ready={Boolean(selectedDraft)}
+            emptyHint="发布包需要一篇草稿，先在工作台生成草稿。"
+            onGoProjects={() => setArea("projects")}
+          >
+            <PublishPack
+              draft={selectedDraft}
+              topic={selectedTopic}
+              coverConfig={noteCoverConfig}
+              contentImageDataUrl={contentImageDataUrl}
+              quality={qualityResult}
+              onOpenCover={openCover}
+              onOpenImages={openContentImage}
+              onOpenQuality={() => setArea("quality")}
               onPublish={() => {
                 if (selectedDraft) handlePublishDraft(selectedDraft);
               }}

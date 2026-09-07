@@ -2,9 +2,11 @@
 
 import type { ReactNode } from "react";
 import LinkButton from "@/components/workflow/LinkButton";
+import CoverThumb from "@/components/workflow/CoverThumb";
 import Badge, { type BadgeTone } from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import { isPublishedDraft, type ContentCard, type DraftNote } from "@/lib/xhsWorkflow";
+import type { CoverConfig } from "@/lib/cover";
 import { summarizeQuality, type QualityCheckResult, type QualitySummary } from "@/lib/qualityCheck";
 
 interface DaokuOption {
@@ -24,14 +26,15 @@ interface NoteInspectorProps {
   onBindDaoku: (topicId: string, bloggerId: string) => void;
   bloggerReady: boolean;
   onOpenBlogger: () => void;
-  coverDataUrl: string;
+  /** 这篇笔记自己的封面配置（由封面元数据重建），没生成过就是 null */
+  coverConfig: CoverConfig | null;
   onOpenCover: () => void;
   videoReady: boolean;
   onOpenVideo: () => void;
   quality: QualityCheckResult | null;
   onOpenQuality: () => void;
-  onPublish: () => void;
-  publishing: boolean;
+  /** 发布这一步的落点是发布包：先看成品、拿走素材，再在那里标记发布 */
+  onOpenPublish: () => void;
 }
 
 // 领域层的质检语义色 → Badge 色调
@@ -100,14 +103,13 @@ export default function NoteInspector({
   onBindDaoku,
   bloggerReady,
   onOpenBlogger,
-  coverDataUrl,
+  coverConfig,
   onOpenCover,
   videoReady,
   onOpenVideo,
   quality,
   onOpenQuality,
-  onPublish,
-  publishing,
+  onOpenPublish,
 }: NoteInspectorProps) {
   if (!topic) {
     return (
@@ -194,13 +196,16 @@ export default function NoteInspector({
 
       <Section
         title="封面"
-        status={coverDataUrl ? "已生成" : "未生成"}
-        statusTone={coverDataUrl ? "ok" : "neutral"}
-        action={<LinkButton label={coverDataUrl ? "编辑封面" : "生成封面"} onClick={onOpenCover} />}
+        status={coverConfig ? "已生成" : "未生成"}
+        statusTone={coverConfig ? "ok" : "neutral"}
+        action={<LinkButton label={coverConfig ? "编辑封面" : "生成封面"} onClick={onOpenCover} />}
       >
-        {coverDataUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={coverDataUrl} alt="封面预览" className="w-28 rounded-2xl border border-line shadow-card" />
+        {coverConfig ? (
+          <CoverThumb
+            config={coverConfig}
+            className="w-28 rounded-2xl border border-line shadow-card"
+            sizes="112px"
+          />
         ) : (
           <p className="text-xs text-faint">还没有封面，点右侧生成。</p>
         )}
@@ -228,20 +233,8 @@ export default function NoteInspector({
         {published ? (
           <p className="text-xs leading-5 text-ok">已发布，复盘记录已创建。</p>
         ) : (
-          <Button
-            block
-            variant="primary"
-            onClick={hardFail ? onOpenQuality : onPublish}
-            disabled={!draft}
-            loading={publishing}
-          >
-            {publishing
-              ? "处理中"
-              : !draft
-                ? "先生成草稿"
-                : hardFail
-                  ? `先过质检（${quality?.failCount} 项硬伤）`
-                  : "标记发布"}
+          <Button block variant="primary" onClick={hardFail ? onOpenQuality : onOpenPublish} disabled={!draft}>
+            {!draft ? "先生成草稿" : hardFail ? `先过质检（${quality?.failCount} 项硬伤）` : "去拿发布包"}
           </Button>
         )}
       </Section>

@@ -1,5 +1,6 @@
 import type { AspectId } from "./targets";
 import type { ContentCard, DraftNote } from "./xhsWorkflow";
+import { downloadFile } from "./download";
 
 /** 以下三个上限同时写在 prompt 文案里，prompt 与代码必须读同一份，否则模型白写、渲染截断。 */
 const NODE_TEXT_MAX_CHARS = 18;
@@ -845,8 +846,5 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 export function downloadImageAsset(dataUrl: string, filename: string): void {
-  const link = document.createElement("a");
-  link.download = filename;
-  link.href = dataUrl;
-  link.click();
+  downloadFile(dataUrl, filename);
 }

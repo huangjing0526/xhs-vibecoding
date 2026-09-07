@@ -19,12 +19,14 @@ import {
 interface QualityGateProps {
   result: QualityCheckResult;
   draft: DraftNote | null;
-  /** 标签/引导内联编辑后回写前端草稿（不写飞书） */
+  /** 标签/引导内联编辑后保存草稿（连上飞书时一并写回） */
   onApplyDraftPatch: (patch: Partial<DraftNote>) => void;
   /** 跳已有入口修复（改写/封面/素材），由容器按 action 路由 */
   onResolve: (action: QualityFixAction) => void;
-  onPublish: () => void;
-  publishing: boolean;
+  /** 质检过了就去发布包拿成品，标记发布在那边做 */
+  onOpenPublish: () => void;
+  /** 内联修复正在保存 */
+  applyingPatch: boolean;
 }
 
 const VERDICT_META: Record<QualityVerdict, { label: string; tone: BadgeTone; dot: string }> = {
@@ -52,11 +54,13 @@ function InlineFix({
   label,
   initial,
   placeholder,
+  saving,
   onSave,
 }: {
   label: string;
   initial: string;
   placeholder: string;
+  saving: boolean;
   onSave: (value: string) => void;
 }) {
   const [value, setValue] = useState(initial);
@@ -70,7 +74,7 @@ function InlineFix({
         placeholder={placeholder}
         className="h-9 min-w-0 flex-1 text-xs"
       />
-      <Button size="sm" variant="primary" onClick={() => onSave(value)} disabled={!dirty}>
+      <Button size="sm" variant="primary" onClick={() => onSave(value)} disabled={!dirty} loading={saving}>
         {label}
       </Button>
     </div>
@@ -80,11 +84,13 @@ function InlineFix({
 function IssueCard({
   issue,
   draft,
+  applyingPatch,
   onApplyDraftPatch,
   onResolve,
 }: {
   issue: QualityIssue;
   draft: DraftNote | null;
+  applyingPatch: boolean;
   onApplyDraftPatch: (patch: Partial<DraftNote>) => void;
   onResolve: (action: QualityFixAction) => void;
 }) {
@@ -107,6 +113,7 @@ function IssueCard({
       {showFix && issue.fixAction === "tags" && draft && (
         <InlineFix
           label="重配标签"
+          saving={applyingPatch}
           initial={draft.tags.join(" ")}
           placeholder="用空格分隔，如 #AI工具 #小红书运营 #避坑"
           onSave={(value) => onApplyDraftPatch({ tags: value.split(/\s+/).filter(Boolean) })}
@@ -115,6 +122,7 @@ function IssueCard({
       {showFix && issue.fixAction === "cta" && draft && (
         <InlineFix
           label="重写引导"
+          saving={applyingPatch}
           initial={draft.commentPrompt}
           placeholder="写一个真实讨论问题"
           onSave={(value) => onApplyDraftPatch({ commentPrompt: value })}
@@ -133,8 +141,8 @@ export default function QualityGate({
   draft,
   onApplyDraftPatch,
   onResolve,
-  onPublish,
-  publishing,
+  onOpenPublish,
+  applyingPatch,
 }: QualityGateProps) {
   const published = Boolean(draft && isPublishedDraft(draft));
   const summary = summarizeQuality(result, Boolean(draft));
@@ -151,6 +159,7 @@ export default function QualityGate({
             key={issue.dimension}
             issue={issue}
             draft={draft}
+            applyingPatch={applyingPatch}
             onApplyDraftPatch={onApplyDraftPatch}
             onResolve={onResolve}
           />
@@ -162,21 +171,12 @@ export default function QualityGate({
           <p className="text-center text-xs font-bold text-ok">已发布，复盘记录已创建。</p>
         ) : (
           <>
-            <Button
-              block
-              size="lg"
-              variant="primary"
-              onClick={onPublish}
-              loading={publishing}
-              disabled={!draft || result.hardFail}
-            >
-              {publishing
-                ? "处理中"
-                : result.hardFail
-                  ? `先处理 ${result.failCount} 项硬伤`
-                  : result.warnCount > 0
-                    ? "仍要发布"
-                    : "通过质检，标记发布"}
+            <Button block size="lg" variant="primary" onClick={onOpenPublish} disabled={!draft || result.hardFail}>
+              {result.hardFail
+                ? `先处理 ${result.failCount} 项硬伤`
+                : result.warnCount > 0
+                  ? "仍要发，去拿发布包"
+                  : "通过质检，去拿发布包"}
             </Button>
             {result.hardFail && (
               <p className="mt-2 text-center text-[11px] text-faint">硬伤未清不能发布；警告可自行判断。</p>

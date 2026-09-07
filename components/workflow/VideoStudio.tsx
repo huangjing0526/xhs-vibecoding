@@ -20,6 +20,7 @@ import {
   type VideoRenderStatus,
 } from "@/lib/videoWorkflow";
 import type { ContentCard, DraftNote } from "@/lib/xhsWorkflow";
+import { copyToClipboard } from "@/lib/clipboard";
 
 interface VideoStudioProps {
   selectedTopic: ContentCard | null;
@@ -108,20 +109,9 @@ export default function VideoStudio({
     }
   };
 
-  const handleCopy = async (label: string, text: string) => {
+  const handleCopy = (label: string, text: string) => {
     if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(`${label}已复制`);
-    } catch (error) {
-      console.error("[VideoStudio] 复制失败", {
-        userId: "local",
-        tenantId: "local",
-        action: "video.copy",
-        error,
-      });
-      toast.error("复制失败，请手动选择内容复制");
-    }
+    void copyToClipboard(text, { successMessage: `${label}已复制`, action: "video.copy" });
   };
 
   return (

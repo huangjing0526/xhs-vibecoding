@@ -10,6 +10,7 @@ import {
   Inbox,
   LayoutGrid,
   Library,
+  PackageCheck,
   PenLine,
   Radar,
   Scissors,
@@ -54,7 +55,7 @@ export type LibraryAreaId = (typeof LIBRARY_AREAS)[number];
  * 点进去只会撞「先选一个项目」的空态。与库规则同一手法，由 satisfies 钉死。
  * 「这个区是不是步骤」只看这张表，不再有第二个字段把同一件事另说一遍。
  */
-export const NOTE_STEP_AREAS = ["video", "rewrite", "quality"] as const;
+export const NOTE_STEP_AREAS = ["video", "rewrite", "quality", "publish"] as const;
 export type NoteStepAreaId = (typeof NOTE_STEP_AREAS)[number];
 
 /** 不许带 category 的区：名词库 + 笔记步骤。satisfies 用它把「不进工具目录」钉死在类型上。 */
@@ -75,6 +76,7 @@ export type AreaId =
   | "video"
   | "videoFactory"
   | "quality"
+  | "publish"
   | "review"
   | "rewrite"
   | "blogger"
@@ -232,6 +234,13 @@ const AREA_TABLE = {
     hint: "质检 · 发布",
     subtitle: "发布前规则质检与兜底修复。",
     icon: ShieldCheck,
+    tint: "from-brand-100",
+  },
+  publish: {
+    label: "发布包",
+    hint: "文案 · 图 · 一次拿走",
+    subtitle: "把这篇的文案和图收成能直接发的一份：整篇复制，图打包下载，发完回来标记发布。",
+    icon: PackageCheck,
     tint: "from-brand-100",
   },
   review: {

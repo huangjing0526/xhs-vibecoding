@@ -1,3 +1,5 @@
+import { downloadFile } from "./download";
+
 export type CoverTemplateId = "command" | "alert" | "checklist" | "casefile" | "contrast" | "sticky";
 
 export interface CoverConfig {
@@ -622,8 +624,5 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 export function downloadCover(dataUrl: string, filename: string): void {
-  const link = document.createElement("a");
-  link.download = filename;
-  link.href = dataUrl;
-  link.click();
+  downloadFile(dataUrl, filename);
 }

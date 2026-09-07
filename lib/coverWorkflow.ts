@@ -2,11 +2,12 @@ import {
   CoverConfig,
   COVER_TEMPLATES,
   CoverTemplateId,
+  DEFAULT_COVER_CONFIG,
   getCoverTemplate,
 } from "./cover";
 import { ACCOUNT_POSITIONING } from "./account";
 import type { AspectId } from "./targets";
-import { ContentCard, DraftNote } from "./xhsWorkflow";
+import { ContentCard, DraftNote, hasGeneratedCover } from "./xhsWorkflow";
 
 /** 同时写在 prompt 文案里，两处必须一致。 */
 const COVER_TITLE_MAX_CHARS = 24;
@@ -250,6 +251,93 @@ export function createCoverTemplateOptions(input: CoverInput): CoverTemplateOpti
   const preferred = options.find((option) => option.id === preferredId);
   const rest = options.filter((option) => option.id !== preferredId);
   return preferred ? [preferred, ...rest] : options;
+}
+
+function isTitlePosition(value: unknown): value is CoverConfig["titlePosition"] {
+  return value === "center" || value === "left" || value === "bottom";
+}
+
+/** 没有存过配置时的起点：默认配置叠上这条内容首选模板的样式。 */
+function getFallbackCoverConfig(input: CoverInput): CoverConfig {
+  const [template] = createCoverTemplateOptions(input);
+  return {
+    ...DEFAULT_COVER_CONFIG,
+    ...(template?.config || {}),
+    sourceKey: getCoverSourceKey(input),
+  };
+}
+
+/**
+ * 解析飞书「封面配置JSON」。字段逐个兜类型——这段 JSON 人可以在飞书里手改，
+ * 结构不能假定可信。解析不出来返回 null，由调用方决定退回 fallback。
+ */
+function parseStoredCoverConfig(json: string | undefined, fallback: CoverConfig): CoverConfig | null {
+  if (!json) return null;
+
+  try {
+    const parsed = JSON.parse(json);
+    if (!parsed || typeof parsed !== "object") return null;
+    const config = parsed as Partial<CoverConfig>;
+
+    return {
+      ...fallback,
+      ...config,
+      title: typeof config.title === "string" && config.title.trim() ? config.title : fallback.title,
+      subtitle: typeof config.subtitle === "string" ? config.subtitle : fallback.subtitle,
+      backgroundColor: typeof config.backgroundColor === "string" ? config.backgroundColor : fallback.backgroundColor,
+      overlayColor: typeof config.overlayColor === "string" ? config.overlayColor : fallback.overlayColor,
+      overlayOpacity: typeof config.overlayOpacity === "number" ? config.overlayOpacity : fallback.overlayOpacity,
+      overlayBlur: typeof config.overlayBlur === "number" ? config.overlayBlur : fallback.overlayBlur,
+      titleSize: typeof config.titleSize === "number" ? config.titleSize : fallback.titleSize,
+      titleColor: typeof config.titleColor === "string" ? config.titleColor : fallback.titleColor,
+      titlePosition: isTitlePosition(config.titlePosition) ? config.titlePosition : fallback.titlePosition,
+      fontFamily: typeof config.fontFamily === "string" ? config.fontFamily : fallback.fontFamily,
+    };
+  } catch (error) {
+    console.warn("[coverWorkflow] 封面配置解析失败", {
+      action: "cover.parseStoredConfig",
+      error,
+    });
+    return null;
+  }
+}
+
+/**
+ * 从一条选题/草稿的封面元数据重建可渲染的封面配置。
+ *
+ * 封面图本身不落库，落库的是这份配置——所以「这篇有没有封面」由 `hasGeneratedCover` 判断，
+ * 预览图各处按这份配置现渲染，而不是靠某次会话里生成的那张 dataUrl。
+ */
+export function resolveCoverConfig(
+  item: ContentCard | DraftNote,
+  input: CoverInput
+): { config: CoverConfig; hasStoredConfig: boolean } {
+  const fallback = getFallbackCoverConfig(input);
+  const storedConfig = parseStoredCoverConfig(item.coverConfigJson, fallback);
+  const config = storedConfig || fallback;
+
+  return {
+    hasStoredConfig: Boolean(storedConfig),
+    config: {
+      ...config,
+      sourceKey: getCoverSourceKey(input),
+      title: item.coverTitle || config.title,
+      subtitle: item.coverSubtitle || config.subtitle,
+      backgroundColor: item.coverPrimaryColor || config.backgroundColor,
+    },
+  };
+}
+
+/**
+ * 一篇笔记当前的封面配置：草稿的封面盖过选题的，两边都没生成过就是 null。
+ *
+ * 「这篇有没有封面」的唯一判据。收在领域层是因为它决定了三件事的口径：检查面板的封面段、
+ * 发布前质检的封面维、流水线轨上的封面格——三处各判一次必然漂移。
+ */
+export function resolveNoteCoverConfig(topic: ContentCard | null, draft: DraftNote | null): CoverConfig | null {
+  if (draft && hasGeneratedCover(draft)) return resolveCoverConfig(draft, draftToCoverInput(draft)).config;
+  if (topic && hasGeneratedCover(topic)) return resolveCoverConfig(topic, contentCardToCoverInput(topic)).config;
+  return null;
 }
 
 export function createFallbackCoverPlan(input: CoverInput): CoverPlan {
