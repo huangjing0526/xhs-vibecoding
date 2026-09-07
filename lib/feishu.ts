@@ -100,7 +100,20 @@ async function getTenantAccessToken(): Promise<string> {
     }),
   });
 
-  const data = await parseFeishuResponse<{ tenant_access_token?: string; expire?: number }>(response, action);
+  const parsed = await parseFeishuResponse<{ tenant_access_token?: string; expire?: number }>(response, action);
+  if (!parsed.ok) {
+    console.error("[Feishu] 取 tenant_access_token 失败", {
+      userId: "local",
+      tenantId: "feishu",
+      action,
+      status: parsed.status,
+      code: parsed.code,
+      msg: parsed.msg,
+    });
+    throw new Error(parsed.msg);
+  }
+
+  const data = parsed.data;
   if (!data.tenant_access_token) {
     throw new Error("飞书未返回 tenant_access_token");
   }
@@ -113,7 +126,25 @@ async function getTenantAccessToken(): Promise<string> {
   return tokenCache.token;
 }
 
-async function parseFeishuResponse<T>(response: Response, action: string): Promise<T> {
+const MAX_RETRIES = 2;
+const INITIAL_RETRY_DELAY_MS = 400;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTokenExpired(code: number | undefined, status: number): boolean {
+  return status === 401 || code === 99991663 || code === 99991664 || code === 99991668;
+}
+
+function isRateLimitedOrTransient(code: number | undefined, status: number): boolean {
+  return status === 429 || status >= 500 || code === 99991400 || code === 99991401;
+}
+
+async function parseFeishuResponse<T>(
+  response: Response,
+  action: string
+): Promise<{ ok: true; data: T } | { ok: false; code?: number; status: number; msg: string; rawError?: unknown }> {
   const text = await response.text();
   let payload: any;
 
@@ -128,22 +159,19 @@ async function parseFeishuResponse<T>(response: Response, action: string): Promi
       bodyPreview: text.slice(0, 300),
       error,
     });
-    throw new Error("飞书接口响应格式异常");
+    return { ok: false, status: response.status, msg: "飞书接口响应格式异常", rawError: error };
   }
 
   if (!response.ok || payload.code !== 0) {
-    console.error("[Feishu] 接口调用失败", {
-      userId: "local",
-      tenantId: "feishu",
-      action,
+    return {
+      ok: false,
       status: response.status,
       code: payload.code,
-      msg: payload.msg,
-    });
-    throw new Error(payload.msg ? `飞书接口失败：${payload.msg}` : "飞书接口调用失败");
+      msg: payload.msg ? `飞书接口失败：${payload.msg}` : "飞书接口调用失败",
+    };
   }
 
-  return payload.data ?? payload;
+  return { ok: true, data: (payload.data ?? payload) as T };
 }
 
 export async function feishuRequest<T>(
@@ -152,17 +180,68 @@ export async function feishuRequest<T>(
   body: unknown | undefined,
   action: string
 ): Promise<T> {
-  const token = await getTenantAccessToken();
-  const response = await fetch(`${getFeishuApiBase()}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json; charset=utf-8",
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let lastErrorMsg = "飞书接口调用失败";
 
-  return parseFeishuResponse<T>(response, action);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const token = await getTenantAccessToken();
+      const response = await fetch(`${getFeishuApiBase()}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json; charset=utf-8",
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+
+      const parsed = await parseFeishuResponse<T>(response, action);
+      if (parsed.ok) {
+        return parsed.data;
+      }
+
+      lastErrorMsg = parsed.msg;
+
+      // 如果是 token 失效，清空缓存并在下次重试中重新获取
+      if (isTokenExpired(parsed.code, parsed.status)) {
+        console.warn("[Feishu] Token 已失效或过期，正在刷新并重试", { action, code: parsed.code, attempt });
+        tokenCache = null;
+        if (attempt < MAX_RETRIES) {
+          continue;
+        }
+      }
+
+      // 如果是频控或服务端临时错误，指数退避后重试
+      if (attempt < MAX_RETRIES && isRateLimitedOrTransient(parsed.code, parsed.status)) {
+        const delay = INITIAL_RETRY_DELAY_MS * 2 ** attempt;
+        console.warn(`[Feishu] 接口触发频控或服务端错误(${parsed.code ?? parsed.status})，${delay}ms 后重试`, {
+          action,
+          attempt: attempt + 1,
+        });
+        await sleep(delay);
+        continue;
+      }
+
+      console.error("[Feishu] 接口调用失败", {
+        userId: "local",
+        tenantId: "feishu",
+        action,
+        status: parsed.status,
+        code: parsed.code,
+        msg: parsed.msg,
+      });
+      throw new Error(parsed.msg);
+    } catch (error) {
+      if (attempt < MAX_RETRIES && (error instanceof TypeError || (error as Error).message.includes("fetch"))) {
+        const delay = INITIAL_RETRY_DELAY_MS * 2 ** attempt;
+        console.warn(`[Feishu] 网络抖动，${delay}ms 后重试`, { action, attempt: attempt + 1, error });
+        await sleep(delay);
+        continue;
+      }
+      throw error instanceof Error ? error : new Error(lastErrorMsg);
+    }
+  }
+
+  throw new Error(lastErrorMsg);
 }
 
 function buildQuery(params: Record<string, string | number | boolean | undefined>): string {
