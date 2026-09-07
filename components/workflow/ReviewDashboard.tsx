@@ -33,7 +33,7 @@ export default function ReviewDashboard({ metrics, review, onGenerate, onCancel,
   const handleCarry = async (advice: string) => {
     try {
       await navigator.clipboard.writeText(advice);
-      toast.success("已复制下次优化建议，可粘贴进新笔记");
+      toast.success("已复制下次优化建议，可粘贴进新项目");
     } catch (error) {
       console.error("[ReviewDashboard] 复制失败", { action: "review.carryNextAction", error });
       toast.error("复制失败，请手动选择文本");
@@ -45,7 +45,7 @@ export default function ReviewDashboard({ metrics, review, onGenerate, onCancel,
   const totalImpressions = metrics.reduce((sum, item) => sum + (item.impressions ?? 0), 0);
   const averageSaveRate =
     metrics.length > 0 ? metrics.reduce((sum, item) => sum + item.saveRate, 0) / metrics.length : 0;
-  // 整体封面点击率按总量算，而不是各条求平均——否则几十次曝光的笔记会把数字拉飞
+  // 整体封面点击率按总量算，而不是各条求平均——否则几十次曝光的项目会把数字拉飞
   const overallClickRate = totalImpressions > 0 ? totalReads / totalImpressions : 0;
 
   return (
@@ -67,7 +67,7 @@ export default function ReviewDashboard({ metrics, review, onGenerate, onCancel,
             >
               <div className="min-w-0">
                 <div className="font-mono text-[11px] font-bold text-faint">{metric.noteId}</div>
-                <div className="mt-1 text-sm font-bold leading-6 text-ink">{metric.title || "未命名笔记"}</div>
+                <div className="mt-1 text-sm font-bold leading-6 text-ink">{metric.title || "未命名项目"}</div>
               </div>
               <div className="grid grid-cols-4 text-center text-xs">
                 <div>
@@ -95,7 +95,7 @@ export default function ReviewDashboard({ metrics, review, onGenerate, onCancel,
               </div>
             </div>
           ))}
-          {metrics.length === 0 && <div className="p-10 text-center text-sm text-faint">暂无已发布笔记数据</div>}
+          {metrics.length === 0 && <div className="p-10 text-center text-sm text-faint">暂无已发布项目数据</div>}
         </div>
       </div>
 
@@ -177,7 +177,7 @@ export default function ReviewDashboard({ metrics, review, onGenerate, onCancel,
               bare
               icon={<BarChart3 size={22} />}
               title="把发布后的数据回填后，生成复盘结论"
-              description={metrics.length === 0 ? "先发布一篇笔记才有数据可复盘。" : undefined}
+              description={metrics.length === 0 ? "先发布一个项目才有数据可复盘。" : undefined}
               action={
                 <div className="flex items-center gap-2">
                   <Button variant="ai" size="lg" onClick={onGenerate} loading={generating} disabled={metrics.length === 0}>

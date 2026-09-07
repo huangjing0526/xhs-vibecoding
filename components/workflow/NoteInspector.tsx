@@ -112,7 +112,7 @@ export default function NoteInspector({
   if (!topic) {
     return (
       <div className="flex h-full items-center justify-center bg-surface p-6 text-center text-sm leading-6 text-faint">
-        选中一篇笔记，这里会显示它从选题到发布的全流程。
+        选中一个项目，这里会显示它从选题到发布的全流程。
       </div>
     );
   }
@@ -136,7 +136,7 @@ export default function NoteInspector({
               size="sm"
               variant="danger"
               onClick={() => {
-                if (window.confirm("确定删除这篇笔记（选题）吗？")) onDeleteTopic();
+                if (window.confirm("确定删除这个项目（选题）吗？")) onDeleteTopic();
               }}
             >
               删除

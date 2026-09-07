@@ -188,7 +188,7 @@ export default function BloggerResearch({
                 </article>
               ))}
               {visibleSamples.length === 0 && (
-                <div className="p-10 text-center text-sm text-faint">还没有样本，先粘贴 3-5 条代表性笔记。</div>
+                <div className="p-10 text-center text-sm text-faint">还没有样本，先录入 3-5 条代表性内容样本。</div>
               )}
             </div>
           </section>
