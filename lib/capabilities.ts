@@ -147,9 +147,9 @@ const AREA_TABLE = {
     tint: "from-brand-50",
   },
   library: {
-    label: "素材",
-    hint: "外面进来的原料",
-    subtitle: "线索、日报、本地文档——还没变成任何东西的原料，在这里提炼成选题。",
+    label: "选题",
+    hint: "提交主题 · 提炼与改写",
+    subtitle: "提交主题和参考内容，让 AI 提炼观点与提纲，确认后改写成稿。",
     icon: Inbox,
     tint: "from-brand-50",
   },

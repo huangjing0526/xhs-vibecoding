@@ -52,6 +52,11 @@ export async function POST(request: NextRequest) {
       // Phase 4 一稿多投时改为遍历 card.targets 各出一篇；现阶段每条选题只投第一个目标。
       // targets 一定非空（parseTargets / 各构造点保证），故直接取首个。
       const fallbackDraft = createFallbackDraft(card, card.targets[0]);
+      if (card.sourceMaterial.startsWith("主题：")) {
+        fallbackDraft.content = [card.coreViewpoint, ...card.outline, card.realCase].filter(Boolean).join("\n\n");
+        fallbackDraft.tags = [];
+        fallbackDraft.commentPrompt = card.commentPrompt;
+      }
       const aiResult = await generateWorkflowJson<DraftNote>({
         action: "drafts.generateOne",
         prompt: buildDraftPrompt(card),
@@ -63,6 +68,7 @@ export async function POST(request: NextRequest) {
       const normalizedDraft = normalizeGeneratedDraft(aiResult.result, { ...fallbackDraft, topicId: card.topicId });
       drafts.push({
         ...normalizedDraft,
+        topicId: card.topicId,
         qualityScoreBeforeWrite: card.selectionScore,
         collectibleAssetPreview:
           normalizedDraft.collectibleAssetPreview || card.reusableAsset || normalizedDraft.collectibleAssetPreview,
@@ -99,6 +105,7 @@ export async function POST(request: NextRequest) {
       usedFallback ? "未检测到 AI 配置，已用规则生成草稿" : "笔记草稿生成成功"
     );
   } catch (error) {
+    console.error("[Topics] 改写失败", { userId: "local", tenantId: "local", action: "drafts.generate", error });
     return apiError(error, "drafts.generate", "笔记草稿生成失败");
   }
 }

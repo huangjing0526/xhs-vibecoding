@@ -37,7 +37,7 @@ export default function WorkflowOnboarding({
           {isDemo && missingCount > 0 && <Badge tone="warn">缺少 {missingCount} 项飞书配置</Badge>}
 
           <h2 className="mt-2 font-rounded text-xl font-bold leading-7 text-ink">
-            {isDemo ? "先用样例跑完整闭环" : "从 3-6 条素材开始这一轮"}
+            {isDemo ? "先用样例跑完整闭环" : "飞书已连接"}
           </h2>
           <p className="mt-1.5 max-w-2xl text-sm leading-6 text-muted">
             {isDemo
@@ -69,7 +69,7 @@ export default function WorkflowOnboarding({
             30 秒体验 Demo
           </Button>
           <Button variant="secondary" size="lg" onClick={isDemo ? onConnectFeishu : onOpenSource}>
-            {isDemo ? "尝试连接飞书" : "选择素材"}
+            {isDemo ? "尝试连接飞书" : "查看项目"}
           </Button>
           <Button variant="ghost" size="lg" onClick={onDismiss}>
             收起

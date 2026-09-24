@@ -1,5 +1,7 @@
 "use client";
 
+import type { TopicBrief } from "@/lib/xhsWorkflow";
+
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { ArrowLeft, Download, FileText, Plus, RefreshCw, Sparkles, X } from "lucide-react";
@@ -16,6 +18,7 @@ import ClueIntakePanel from "@/components/workflow/ClueIntakePanel";
 import LocalDocsSyncPanel from "@/components/workflow/LocalDocsSyncPanel";
 import SegmentedControl from "@/components/workflow/SegmentedControl";
 import ReviewDashboard from "@/components/workflow/ReviewDashboard";
+import TopicWorkspace from "@/components/workflow/TopicWorkspace";
 import WorkflowOnboarding from "@/components/workflow/WorkflowOnboarding";
 import BloggerResearch from "@/components/workflow/BloggerResearch";
 import VideoExtractPanel from "@/components/workflow/VideoExtractPanel";
@@ -816,17 +819,44 @@ export default function WorkflowDashboard() {
     }
   }, [hasPendingMaterials, loadFeishuSnapshot, selectedMaterials, setFriendlyError, setNotice, snapshot.glossary, tasks, workflowMode]);
 
-  const handleGenerateDraft = useCallback(async () => {
+  const handleDistillBrief = useCallback(async (brief: TopicBrief): Promise<ContentCard | null> => {
+    setIsGeneratingTopics(true);
+    try {
+      const result = await generateContentCards({ brief, glossary: snapshot.glossary, writeBack: workflowMode === "connected", signal: tasks.start("topics") });
+      setSnapshot((current) => ({ ...current, topics: mergeByKey(current.topics, result.cards, (topic) => topic.topicId) }));
+      const topic = result.cards[0] || null;
+      setNotice({ type: result.usedFallback ? "info" : "success", message: result.usedFallback ? "当前为规则示例，请确认并编辑提炼结果；连接 AI 后可生成正式内容。" : "已提炼选题，请确认标题、观点和提纲" });
+      if (workflowMode === "connected") {
+        const synced = await loadFeishuSnapshot();
+        return synced?.topics.find((item) => item.topicId === topic?.topicId) || topic;
+      }
+      return topic;
+    } catch (error) {
+      if (isAbortError(error)) setNotice({ type: "info", message: "已取消提炼" });
+      else setFriendlyError("topics.distill", error);
+      return null;
+    } finally {
+      tasks.finish("topics");
+      setIsGeneratingTopics(false);
+    }
+  }, [loadFeishuSnapshot, setFriendlyError, setNotice, snapshot.glossary, tasks, workflowMode]);
+
+  const handleGenerateDraft = useCallback(async (confirmedTopic?: ContentCard) => {
     setIsGeneratingDrafts(true);
     setNotice({ type: "info", message: "正在生成小红书草稿" });
     try {
       const shouldWriteBack = workflowMode === "connected";
+      if (confirmedTopic) {
+        if (shouldWriteBack) await saveTopic({ topic: confirmedTopic, writeBack: true });
+        setSnapshot((current) => ({ ...current, topics: mergeByKey(current.topics, [confirmedTopic], (topic) => topic.topicId) }));
+      }
+      const draftTopic = confirmedTopic || selectedTopic;
       const fallbackCard = usableTopics.find((topic) => topic.status === TOPIC_STATUS.pending) || usableTopics[0];
       const result = await generateDrafts({
         count: 1,
         status: TOPIC_STATUS.pending,
         writeBack: shouldWriteBack,
-        cards: selectedTopic ? [selectedTopic] : fallbackCard ? [fallbackCard] : undefined,
+        cards: draftTopic ? [draftTopic] : fallbackCard ? [fallbackCard] : undefined,
         signal: tasks.start("drafts"),
       });
       setSnapshot((current) => ({
@@ -834,9 +864,14 @@ export default function WorkflowDashboard() {
         drafts: mergeByKey(current.drafts, result.drafts, (draft) => draft.noteId),
       }));
       setSelectedDraft(result.drafts[0] || null);
+      if (confirmedTopic) {
+        setSelectedTopic(confirmedTopic);
+        clearGeneratedAssets();
+        setArea("note");
+      }
       setNotice({
         type: "success",
-        message: shouldWriteBack ? "草稿已生成，并写回飞书" : "Demo 草稿已生成",
+        message: result.usedFallback ? "已生成规则示例草稿（未使用 AI）" : shouldWriteBack ? "草稿已生成，并写回飞书" : "草稿已生成",
       });
       if (shouldWriteBack) {
         await loadFeishuSnapshot();
@@ -848,7 +883,7 @@ export default function WorkflowDashboard() {
       tasks.finish("drafts");
       setIsGeneratingDrafts(false);
     }
-  }, [loadFeishuSnapshot, selectedTopic, setFriendlyError, setNotice, tasks, usableTopics, workflowMode]);
+  }, [clearGeneratedAssets, loadFeishuSnapshot, selectedTopic, setFriendlyError, setNotice, tasks, usableTopics, workflowMode]);
 
   // 编辑器选区改写：网络与取消统一收在 dashboard，NoteEditor 只管选区和替换
   const handleInlineRewrite = useCallback(
@@ -1485,7 +1520,7 @@ export default function WorkflowDashboard() {
                     boundDaokuName={boundDaokuName}
                     isGenerating={isGeneratingDrafts}
                     isSaving={isSavingDraft}
-                    onGenerateDraft={handleGenerateDraft}
+                    onGenerateDraft={() => handleGenerateDraft()}
                     onCancelGenerate={() => tasks.cancel("drafts")}
                     onInlineRewrite={handleInlineRewrite}
                     onCancelInlineRewrite={() => tasks.cancel("inlineRewrite")}
@@ -1527,39 +1562,32 @@ export default function WorkflowDashboard() {
           <CanvasPage
             title={AREAS.library.label}
             subtitle={AREAS.library.subtitle}
-            action={
-              <div className="flex items-center gap-2">
-                {isGeneratingTopics && (
-                  <Button variant="ghost" onClick={() => tasks.cancel("topics")}>
-                    取消
-                  </Button>
-                )}
-                <Button
-                  variant="ai"
-                  onClick={() => handleGenerateTopics()}
-                  disabled={selectedMaterials.length === 0}
-                  loading={isGeneratingTopics}
-                  icon={<Sparkles size={16} />}
-                >
-                  {isGeneratingTopics ? "生成中" : `生成选题（${selectedMaterials.length}）`}
-                </Button>
-              </div>
-            }
           >
             <div className="mt-6 space-y-3">
-              <WorkflowOnboarding
-                mode={workflowMode}
-                config={bootstrapConfig}
-                onUseDemo={handleUseDemo}
-                onLoadMarkdown={handleLoadMarkdownDemo}
-                onConnectFeishu={handleConnectFeishu}
-                onOpenSource={() => setArea("projects")}
-                onDismiss={() => setArea("projects")}
+              <TopicWorkspace
+                topics={usableTopics}
+                drafts={usableDrafts}
+                generating={isGeneratingTopics}
+                rewriting={isGeneratingDrafts}
+                onDistill={handleDistillBrief}
+                onRewrite={handleGenerateDraft}
+                onCancel={() => tasks.cancel("topics")}
+                onOpen={(topic) => {
+                  handleSelectTopic(topic);
+                  setSelectedDraft(usableDrafts.find((draft) => draft.topicId === topic.topicId) || null);
+                  setArea("note");
+                }}
               />
-              <CollapsiblePanel title="录入与提炼" hint="线索采集、选题池、本地文档——三选一导入">
+              <CollapsiblePanel title="素材与导入" hint="从已有素材、线索或文档提炼选题">
+                <div className="p-5">
+                  <Button variant="ai" disabled={selectedMaterials.length === 0 || isGeneratingTopics} loading={isGeneratingTopics} onClick={() => handleGenerateTopics()}>
+                    从已选素材提炼（{selectedMaterials.length}）
+                  </Button>
+                </div>
+              <CollapsiblePanel title="导入参考素材" hint="线索采集、选题池、本地文档">
                 <div className="space-y-3 p-5">
                   <p className="text-sm leading-6 text-muted">
-                    勾选下方素材，点右上「生成选题」即可提炼——每条选题就是一篇新的图文项目。已选{" "}
+                    勾选下方素材，点「从已选素材提炼」即可提炼——每条选题就是一篇新的图文项目。已选{" "}
                     <span className="font-rounded font-bold tabular-nums text-ink">{selectedMaterials.length}</span> 条。
                   </p>
                   <SegmentedControl
@@ -1612,6 +1640,18 @@ export default function WorkflowDashboard() {
                 onToggleMaterialStatus={handleToggleMaterialStatus}
                 onNotice={setNotice}
               />
+              </CollapsiblePanel>
+              <CollapsiblePanel title="Demo 与飞书连接" hint="体验样例或配置数据同步">
+              <WorkflowOnboarding
+                mode={workflowMode}
+                config={bootstrapConfig}
+                onUseDemo={handleUseDemo}
+                onLoadMarkdown={handleLoadMarkdownDemo}
+                onConnectFeishu={handleConnectFeishu}
+                onOpenSource={() => setArea("projects")}
+                onDismiss={() => setArea("projects")}
+              />
+              </CollapsiblePanel>
             </div>
           </CanvasPage>
         )}

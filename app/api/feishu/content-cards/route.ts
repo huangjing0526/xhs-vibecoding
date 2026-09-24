@@ -1,3 +1,4 @@
+import type { TopicBrief } from "@/lib/xhsWorkflow";
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk, readJsonBody } from "../_utils";
 import { createFeishuRecords, searchFeishuRecords, updateFeishuRecord } from "@/lib/feishu";
@@ -20,9 +21,11 @@ import {
   normalizeDraftNote,
   MATERIAL_STATUS,
 } from "@/lib/xhsWorkflow";
+import { fetchClueContent } from "@/lib/clueIntake";
 import { scoreTopicCards } from "@/lib/topicScoring";
 
 interface ContentCardsRequest {
+  brief?: TopicBrief;
   count?: number;
   status?: string;
   writeBack?: boolean;
@@ -53,12 +56,31 @@ function findExistingTopicForCard(card: ContentCard, existingTopics: ContentCard
 export async function POST(request: NextRequest) {
   try {
     const body = await readJsonBody<ContentCardsRequest>(request, "contentCards.readJson");
-    const count = body.count || 5;
+    const brief = body.brief;
+    if (brief) {
+      const references = brief.reference.split("\n");
+      for (let index = 0; index < references.length; index += 1) {
+        const line = references[index].trim();
+        if (/^https?:\/\/\S+$/.test(line)) {
+          const fetched = await fetchClueContent(line);
+          if (!fetched.text) throw new Error(fetched.emptyHint);
+          references[index] = `${line}\n${fetched.title}\n${fetched.text}`;
+        }
+      }
+      brief.reference = references.join("\n");
+    }
+    const submissionId = brief ? `TOPIC-${crypto.randomUUID()}` : "";
+    const count = brief ? 1 : body.count || 5;
     const status = body.status || MATERIAL_STATUS.pending;
     const writeBack = body.writeBack !== false;
 
     const sourceMaterials =
-      body.materials ||
+      (brief ? [{
+        recordId: "", sourceId: submissionId, sourceType: "主题与参考",
+        date: new Date().toISOString().slice(0, 10), summary: brief.theme,
+        event: brief.theme, method: brief.reference, pitfall: "", relatedTerm: "",
+        status: MATERIAL_STATUS.pending,
+      }] : body.materials) ||
       filterByStatus((await searchFeishuRecords("material")).map(normalizeMaterial), status);
     const materials = filterUsableMaterials(sourceMaterials);
     const targetCount = Math.min(count, materials.length);
@@ -71,9 +93,17 @@ export async function POST(request: NextRequest) {
     }
 
     const fallbackCards = createFallbackContentCards(materials, glossary, targetCount);
+    if (brief) {
+      Object.assign(fallbackCards[0], {
+        topicId: submissionId, titleCandidates: [brief.theme], coreViewpoint: brief.theme,
+        realCase: "", reusableAsset: "", painPoint: "", coverText: brief.theme,
+        relatedTerm: "", commentPrompt: "",
+        outline: ["提出主题与问题", "结合参考梳理观点", "总结方法与启发"],
+      });
+    }
     const aiResult = await generateWorkflowJson<{ cards: ContentCard[] }>({
       action: "contentCards.generate",
-      prompt: buildContentCardPrompt(materials, glossary, targetCount),
+      prompt: buildContentCardPrompt(materials, glossary, targetCount, brief),
       fallback: { cards: fallbackCards },
       maxTokens: 4500,
     });
@@ -81,7 +111,13 @@ export async function POST(request: NextRequest) {
     const rawCards = Array.isArray(aiResult.result.cards) ? aiResult.result.cards : fallbackCards;
     const normalizedCards = rawCards
       .slice(0, targetCount)
-      .map((card, index) => normalizeGeneratedContentCard(card, fallbackCards[index] || fallbackCards[0]));
+      .map((card, index) => {
+        const normalized = normalizeGeneratedContentCard(card, fallbackCards[index] || fallbackCards[0]);
+        return brief ? {
+          ...normalized, topicId: submissionId,
+          sourceMaterial: `主题：${brief.theme}\n参考内容：\n${brief.reference}`,
+        } : normalized;
+      });
     const recentTopics = writeBack ? (await searchFeishuRecords("topic")).map(normalizeContentCard) : [];
     const recentDrafts = writeBack ? (await searchFeishuRecords("draft")).map(normalizeDraftNote) : [];
     const cards = scoreTopicCards(normalizedCards, { recentTopics, recentDrafts });
@@ -91,7 +127,7 @@ export async function POST(request: NextRequest) {
     let updatedExisting = 0;
     let updatedMaterials = 0;
     if (writeBack) {
-      const existingTopics = filterUsableContentCards(recentTopics);
+      const existingTopics = brief ? [] : filterUsableContentCards(recentTopics);
       const existingTopicIds = new Set(existingTopics.map((topic) => topic.topicId).filter(Boolean));
       const cardsToCreate = cards.filter(
         (card) => !existingTopicIds.has(card.topicId) && !findExistingTopicForCard(card, existingTopics)
@@ -154,6 +190,7 @@ export async function POST(request: NextRequest) {
         : "内容卡片生成成功"
     );
   } catch (error) {
+    console.error("[Topics] 提炼失败", { userId: "local", tenantId: "local", action: "contentCards.generate", error });
     return apiError(error, "contentCards.generate", "内容卡片生成失败");
   }
 }

@@ -1,3 +1,4 @@
+import type { TopicBrief } from "@/lib/xhsWorkflow";
 import type { BloggerDistillation, BloggerProfile, BloggerSample } from "@/lib/bloggerWorkflow";
 import type { CoverConfig } from "@/lib/cover";
 import type { CoverInput, CoverPlan } from "@/lib/coverWorkflow";
@@ -242,6 +243,7 @@ export async function saveTopic(options: {
 }
 
 export async function generateContentCards(options?: {
+  brief?: TopicBrief;
   count?: number;
   status?: string;
   writeBack?: boolean;
@@ -255,6 +257,7 @@ export async function generateContentCards(options?: {
       method: "POST",
       signal: options?.signal,
       body: JSON.stringify({
+        brief: options?.brief,
         count: options?.count ?? 3,
         status: options?.status ?? MATERIAL_STATUS.pending,
         writeBack: options?.writeBack ?? true,
