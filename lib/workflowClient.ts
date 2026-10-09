@@ -45,6 +45,9 @@ import type {
   VideoProject,
 } from "@/lib/videoFactory";
 import type { InlineRewriteAction } from "@/lib/inlineRewrite";
+import type { RewriteInput, RewriteIntensity, RewriteResult, RewriteTarget } from "@/lib/rewriteWorkflow";
+import type { NoteAssets } from "@/lib/noteAssets";
+import type { VideoDuration, VideoFormat, VideoPace, VideoPlan, VideoSourceInput } from "@/lib/videoWorkflow";
 
 export interface WorkflowSnapshot {
   materials: MaterialItem[];
@@ -391,6 +394,21 @@ export async function generateReview(options?: {
   );
 }
 
+export interface NoteStatsImportResult {
+  parsed: number;
+  updated: number;
+  linked: number;
+  created: number;
+}
+
+/** 复盘页：上传创作服务平台导出的「笔记列表明细表.xlsx」，合进飞书复盘表。 */
+export async function importNoteStats(file: File): Promise<NoteStatsImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch("/api/feishu/review/import", { method: "POST", body: formData });
+  return parseApiResponse<NoteStatsImportResult>(response, "导入笔记数据失败");
+}
+
 export async function scanLocalDocs(options?: {
   sourceDir?: string;
   categories?: LocalDocCategory[];
@@ -493,6 +511,62 @@ export interface InlineRewriteClientResult {
   provider: string;
 }
 
+/** 爆款优化：整篇（或只标题/正文/结构）按道库改写。 */
+export async function rewriteNote(options: {
+  input: RewriteInput;
+  distillation: BloggerDistillation | null;
+  target: RewriteTarget;
+  intensity: RewriteIntensity;
+  signal?: AbortSignal;
+}): Promise<{ result: RewriteResult; usedFallback: boolean }> {
+  return workflowRequest<{ result: RewriteResult; usedFallback: boolean }>(
+    "/api/rewrite",
+    {
+      method: "POST",
+      signal: options.signal,
+      body: JSON.stringify({
+        input: options.input,
+        distillation: options.distillation,
+        target: options.target,
+        intensity: options.intensity,
+      }),
+    },
+    "整篇改写失败"
+  );
+}
+
+/** 一个项目在本机存的产出（配图方案、视频方案）。 */
+export async function getNoteAssets(topicId: string): Promise<NoteAssets> {
+  const response = await fetch(`/api/notes/assets?topicId=${encodeURIComponent(topicId)}`, { cache: "no-store" });
+  const { assets } = await parseApiResponse<{ assets: NoteAssets }>(response, "读取项目产出失败");
+  return assets;
+}
+
+export async function saveNoteAssets(topicId: string, assets: NoteAssets): Promise<void> {
+  await workflowRequest<{ assets: NoteAssets }>(
+    "/api/notes/assets",
+    { method: "PUT", body: JSON.stringify({ topicId, ...assets }) },
+    "保存项目产出失败"
+  );
+}
+
+/** 笔记 → 视频脚本（口播稿 + 分镜）。 */
+export async function generateVideoScript(options: {
+  input: VideoSourceInput;
+  distillation: BloggerDistillation | null;
+  format: VideoFormat;
+  duration: VideoDuration;
+  pace: VideoPace;
+  signal?: AbortSignal;
+}): Promise<{ plan: VideoPlan; usedFallback: boolean }> {
+  const { signal, ...body } = options;
+  return workflowRequest<{ plan: VideoPlan; usedFallback: boolean }>(
+    "/api/video/script",
+    { method: "POST", signal, body: JSON.stringify(body) },
+    "视频脚本生成失败"
+  );
+}
+
 /** 编辑器里选中一段文字后的内联改写。 */
 export async function rewriteInline(options: {
   selection: string;
@@ -500,7 +574,7 @@ export async function rewriteInline(options: {
   instruction?: string;
   noteTitle?: string;
   painPoint?: string;
-  bloggerId?: string;
+  distillation?: BloggerDistillation | null;
   signal?: AbortSignal;
 }): Promise<InlineRewriteClientResult> {
   return workflowRequest<InlineRewriteClientResult>(
@@ -514,7 +588,7 @@ export async function rewriteInline(options: {
         instruction: options.instruction,
         noteTitle: options.noteTitle,
         painPoint: options.painPoint,
-        bloggerId: options.bloggerId,
+        distillation: options.distillation,
       }),
     },
     "内联改写失败"
@@ -660,6 +734,48 @@ export async function listBenchmarkRhythms(): Promise<{ rhythms: BenchmarkRhythm
 export async function listDaokuTemplates(): Promise<{ distillations: BloggerDistillation[] }> {
   const response = await fetch("/api/daoku", { cache: "no-store" });
   return parseApiResponse<{ distillations: BloggerDistillation[] }>(response, "道库模板读取失败");
+}
+
+/** 对标博主和样本：配了对标表读飞书，persisted=false 表示是 demo、存不住。 */
+export async function listBloggers(): Promise<{ profiles: BloggerProfile[]; samples: BloggerSample[]; persisted: boolean }> {
+  const response = await fetch("/api/bloggers", { cache: "no-store" });
+  return parseApiResponse<{ profiles: BloggerProfile[]; samples: BloggerSample[]; persisted: boolean }>(
+    response,
+    "读取对标博主失败"
+  );
+}
+
+export async function createBlogger(input: { name: string; positioning: string }): Promise<BloggerProfile> {
+  const { profile } = await workflowRequest<{ profile: BloggerProfile }>(
+    "/api/bloggers",
+    { method: "POST", body: JSON.stringify(input) },
+    "添加博主失败"
+  );
+  return profile;
+}
+
+export async function addBloggerSample(input: { bloggerId: string; title: string; content: string }): Promise<BloggerSample> {
+  const { sample } = await workflowRequest<{ sample: BloggerSample }>(
+    "/api/bloggers/samples",
+    { method: "POST", body: JSON.stringify(input) },
+    "保存样本失败"
+  );
+  return sample;
+}
+
+/** 选题 → 道库（按博主）的绑定，存在本机。 */
+export async function listDaokuBindings(): Promise<Record<string, string>> {
+  const response = await fetch("/api/daoku/bindings", { cache: "no-store" });
+  const { bindings } = await parseApiResponse<{ bindings: Record<string, string> }>(response, "读取道库绑定失败");
+  return bindings;
+}
+
+export async function saveDaokuBinding(topicId: string, bloggerId: string): Promise<void> {
+  await workflowRequest<{ bindings: Record<string, string> }>(
+    "/api/daoku/bindings",
+    { method: "PUT", body: JSON.stringify({ topicId, bloggerId }) },
+    "保存道库绑定失败"
+  );
 }
 
 /** 对标拆解：从样本蒸馏出一位博主的道。没配 AI 时后端会回启发式骨架，用 usedFallback 区分。 */

@@ -25,7 +25,7 @@ npm run xhs:pull -- topics --out=in.json
 npm run xhs:write -- topic out.json --mark-materials --dry-run
 npm run xhs:write -- topic out.json --mark-materials   # 按内容去重 + 标已用素材为已提炼
 
-# ③ 草稿：选题卡 → 正文（buildDraftPrompt，正文≤200字，可叠 distill-blogger 审稿）
+# ③ 草稿：选题卡 → 正文（buildDraftPrompt，正文≤600字，可叠 distill-blogger 审稿）
 npm run xhs:pull -- drafts --out=in.json
 npm run xhs:write -- draft out.json --dry-run          # 按笔记ID去重
 npm run xhs:write -- draft out.json

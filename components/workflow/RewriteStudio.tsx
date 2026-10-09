@@ -6,15 +6,17 @@ import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
 import EmptyState from "@/components/ui/EmptyState";
 import SegmentedControl from "./SegmentedControl";
+import { useAbortableTasks } from "./useAbortableTasks";
+import type { Notice } from "./types";
 import type { BloggerDistillation } from "@/lib/bloggerWorkflow";
 import {
-  createFallbackRewrite,
   draftToRewriteInput,
   topicToRewriteInput,
   type RewriteIntensity,
   type RewriteResult,
   type RewriteTarget,
 } from "@/lib/rewriteWorkflow";
+import { isAbortError, rewriteNote } from "@/lib/workflowClient";
 import { DRAFT_STATUS, type ContentCard, type DraftNote } from "@/lib/xhsWorkflow";
 import { DEFAULT_TARGET_ID } from "@/lib/targets";
 
@@ -22,7 +24,11 @@ interface RewriteStudioProps {
   selectedTopic: ContentCard | null;
   selectedDraft: DraftNote | null;
   bloggerDistillation: BloggerDistillation | null;
-  onApplyToDraft: (draft: DraftNote) => void;
+  onApplyToDraft: (draft: DraftNote) => Promise<void>;
+  /** 没草稿时能否就地新建一篇：只有 demo 能，连飞书时得先在项目详情里生成草稿（拿到记录 ID）才存得进去 */
+  canCreateDraft: boolean;
+  onNotice: (notice: Notice) => void;
+  onError: (action: string, error: unknown) => void;
 }
 
 function getSourceTitle(topic: ContentCard | null, draft: DraftNote | null): string {
@@ -49,23 +55,50 @@ export default function RewriteStudio({
   selectedDraft,
   bloggerDistillation,
   onApplyToDraft,
+  canCreateDraft,
+  onNotice,
+  onError,
 }: RewriteStudioProps) {
   const [target, setTarget] = useState<RewriteTarget>("full");
   const [intensity, setIntensity] = useState<RewriteIntensity>("medium");
   const [result, setResult] = useState<RewriteResult | null>(null);
+  const [pickedTitle, setPickedTitle] = useState(0);
+  const [isRewriting, setIsRewriting] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
+  const tasks = useAbortableTasks();
 
   const input = useMemo(() => {
-    if (selectedDraft) return draftToRewriteInput(selectedDraft);
+    if (selectedDraft) return draftToRewriteInput(selectedDraft, selectedTopic);
     if (selectedTopic) return topicToRewriteInput(selectedTopic);
     return null;
   }, [selectedDraft, selectedTopic]);
 
-  const handleRewrite = () => {
+  const handleRewrite = async () => {
     if (!input) return;
-    setResult(createFallbackRewrite(input, bloggerDistillation, target, intensity));
+    setIsRewriting(true);
+    try {
+      const response = await rewriteNote({
+        input,
+        distillation: bloggerDistillation,
+        target,
+        intensity,
+        signal: tasks.start("rewrite"),
+      });
+      setResult(response.result);
+      setPickedTitle(0);
+      if (response.usedFallback) {
+        onNotice({ type: "info", message: "未检测到 AI 配置，这版是规则模板，建议手动调整" });
+      }
+    } catch (error) {
+      if (isAbortError(error)) onNotice({ type: "info", message: "已取消改写" });
+      else onError("rewrite.full", error);
+    } finally {
+      tasks.finish("rewrite");
+      setIsRewriting(false);
+    }
   };
 
-  const handleApply = () => {
+  const handleApply = async () => {
     if (!result) return;
     const baseDraft: DraftNote = selectedDraft || {
       noteId: `NOTE-${Date.now().toString(36).toUpperCase()}`,
@@ -80,12 +113,17 @@ export default function RewriteStudio({
       status: DRAFT_STATUS.pending,
     };
 
-    onApplyToDraft({
-      ...baseDraft,
-      title: result.titles[0] || baseDraft.title,
-      content: result.content,
-      imageSuggestions: baseDraft.imageSuggestions || selectedTopic?.reusableAsset || "",
-    });
+    setIsApplying(true);
+    try {
+      await onApplyToDraft({
+        ...baseDraft,
+        title: result.titles[pickedTitle] || baseDraft.title,
+        content: result.content,
+        imageSuggestions: baseDraft.imageSuggestions || selectedTopic?.reusableAsset || "",
+      });
+    } finally {
+      setIsApplying(false);
+    }
   };
 
   return (
@@ -122,7 +160,7 @@ export default function RewriteStudio({
                 { value: "deep", label: "重构" },
               ]}
             />
-            <Button variant="ai" onClick={handleRewrite} disabled={!input} icon={<Sparkles size={15} />}>
+            <Button variant="ai" onClick={handleRewrite} disabled={!input} loading={isRewriting} icon={<Sparkles size={15} />}>
               改写内容
             </Button>
           </div>
@@ -144,7 +182,13 @@ export default function RewriteStudio({
               <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">改写后</div>
               <h3 className="mt-2 text-xl font-bold text-ink">改写结果</h3>
             </div>
-            <Button variant="secondary" onClick={handleApply} disabled={!result}>
+            <Button
+              variant="secondary"
+              onClick={handleApply}
+              disabled={!result || isRewriting || (!selectedDraft && !canCreateDraft)}
+              loading={isApplying}
+              title={!selectedDraft && !canCreateDraft ? "先在项目详情里生成草稿" : undefined}
+            >
               应用到草稿
             </Button>
           </div>
@@ -156,7 +200,11 @@ export default function RewriteStudio({
                   <button
                     key={title}
                     type="button"
-                    className="block w-full rounded-2xl border border-line bg-soft px-3.5 py-2.5 text-left text-sm font-semibold leading-6 text-ink transition-colors hover:border-brand-300 hover:bg-brand-50"
+                    onClick={() => setPickedTitle(index)}
+                    aria-pressed={pickedTitle === index}
+                    className={`block w-full rounded-2xl border px-3.5 py-2.5 text-left text-sm font-semibold leading-6 text-ink transition-colors hover:border-brand-300 hover:bg-brand-50 ${
+                      pickedTitle === index ? "border-brand-400 bg-brand-50" : "border-line bg-soft"
+                    }`}
                   >
                     <span className="mr-2 font-rounded text-xs font-bold text-brand-500">0{index + 1}</span>
                     {title}

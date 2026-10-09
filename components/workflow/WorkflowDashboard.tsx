@@ -17,7 +17,7 @@ import TopicPoolImportPanel from "@/components/workflow/TopicPoolImportPanel";
 import ClueIntakePanel from "@/components/workflow/ClueIntakePanel";
 import LocalDocsSyncPanel from "@/components/workflow/LocalDocsSyncPanel";
 import SegmentedControl from "@/components/workflow/SegmentedControl";
-import ReviewDashboard from "@/components/workflow/ReviewDashboard";
+import ReviewDashboard, { ImportStatsButton } from "@/components/workflow/ReviewDashboard";
 import TopicWorkspace from "@/components/workflow/TopicWorkspace";
 import WorkflowOnboarding from "@/components/workflow/WorkflowOnboarding";
 import BloggerResearch from "@/components/workflow/BloggerResearch";
@@ -60,11 +60,8 @@ import {
 } from "@/lib/manualEntry";
 import type { ExtractedClue } from "@/lib/clueIntake";
 import type { InlineRewriteAction } from "@/lib/inlineRewrite";
-import {
-  DEMO_BLOGGER_PROFILES,
-  getDistillationForBlogger,
-  type BloggerDistillation,
-} from "@/lib/bloggerWorkflow";
+import { DEMO_BLOGGER_DISTILLATIONS, type BloggerDistillation } from "@/lib/bloggerWorkflow";
+import type { NoteAssets } from "@/lib/noteAssets";
 import { DEFAULT_COVER_CONFIG, downloadCover, type CoverConfig } from "@/lib/cover";
 import { resolveNoteCoverConfig, type CoverPlan } from "@/lib/coverWorkflow";
 import {
@@ -91,12 +88,18 @@ import {
   generateDrafts,
   generateImageAsset,
   generateReview,
+  importNoteStats,
   getWorkflowBootstrap,
   deleteRecord,
   isAbortError,
   listVideoProjects,
   publishDraft,
   saveDaokuTemplate,
+  listDaokuTemplates,
+  listDaokuBindings,
+  saveDaokuBinding,
+  getNoteAssets,
+  saveNoteAssets,
   saveDraft,
   saveMaterial,
   rewriteInline,
@@ -117,7 +120,6 @@ import SourceWorkspace from "./SourceWorkspace";
 import type { Notice } from "./types";
 
 // 对标博主道库选项：源自模块常量，全程不变，提到组件外避免每次渲染重建
-const DAOKU_OPTIONS = DEMO_BLOGGER_PROFILES.map((profile) => ({ bloggerId: profile.id, name: profile.name }));
 
 /**
  * 图片工厂默认就是 AI 生图：产出类型在 ImageFactory 内部排成一排 tab，一眼看完能做哪些图。
@@ -362,8 +364,8 @@ export default function WorkflowDashboard() {
   const [projectLane, setProjectLane] = useState<ProjectLane>("post");
   // 每条选题各自绑定的对标博主道库：topicId -> bloggerId（""=不绑定）
   const [topicDaokuMap, setTopicDaokuMap] = useState<Record<string, string>>({});
+  const [daokuTemplates, setDaokuTemplates] = useState<BloggerDistillation[]>([]);
   const [videoPlan, setVideoPlan] = useState<VideoPlan | null>(null);
-  const [videoRendered, setVideoRendered] = useState(false);
   const setNotice = useCallback((notice: Notice) => {
     // 带 action 的提示渲染成 toast 上的一个按钮，给「生成完了去哪看」这类承接用
     const options = notice.action ? { action: { label: notice.action.label, onClick: notice.action.run } } : undefined;
@@ -376,6 +378,7 @@ export default function WorkflowDashboard() {
     }
   }, []);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isImportingStats, setIsImportingStats] = useState(false);
   const [isGeneratingTopics, setIsGeneratingTopics] = useState(false);
   const [isGeneratingDrafts, setIsGeneratingDrafts] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
@@ -457,13 +460,13 @@ export default function WorkflowDashboard() {
     });
   }, []);
 
+  // 只回读不提示：写操作之后的回读已有自己的成功提示，「已同步」由用户主动触发的入口自己说
   const loadFeishuSnapshot = useCallback(async (): Promise<WorkflowSnapshot | null> => {
     setIsSyncing(true);
     try {
       const data = await syncWorkflowData();
       applySnapshot(data);
       setWorkflowMode("connected");
-      setNotice({ type: "success", message: "飞书数据已同步" });
       return data;
     } catch (error) {
       setFriendlyError("workflow.sync", error);
@@ -471,7 +474,7 @@ export default function WorkflowDashboard() {
     } finally {
       setIsSyncing(false);
     }
-  }, [applySnapshot, setFriendlyError, setNotice]);
+  }, [applySnapshot, setFriendlyError]);
 
   const handleUseDemo = useCallback(() => {
     setWorkflowMode("demo");
@@ -503,8 +506,8 @@ export default function WorkflowDashboard() {
       handleUseDemo();
       return;
     }
-    await loadFeishuSnapshot();
-  }, [handleUseDemo, loadFeishuSnapshot, workflowMode]);
+    if (await loadFeishuSnapshot()) setNotice({ type: "success", message: "飞书数据已同步" });
+  }, [handleUseDemo, loadFeishuSnapshot, setNotice, workflowMode]);
 
   const handleConnectFeishu = useCallback(async () => {
     if (!bootstrapConfig?.feishuReady) {
@@ -514,14 +517,19 @@ export default function WorkflowDashboard() {
       });
       return;
     }
-    await loadFeishuSnapshot();
+    if (await loadFeishuSnapshot()) setNotice({ type: "success", message: "飞书数据已同步" });
   }, [bootstrapConfig?.feishuReady, loadFeishuSnapshot, setNotice]);
 
-  // 换一篇笔记 = 换一套产出：上一篇的封面方案与两张预览图都不该跟过来
+  // 生成完就存，不挡住「已生成」的提示；存失败单独报
+  const persistNoteAssets = useCallback((topicId: string, assets: NoteAssets) => {
+    saveNoteAssets(topicId, assets).catch((error) => setFriendlyError("notes.assets.write", error));
+  }, [setFriendlyError]);
+
+  // 换一篇笔记 = 换一套产出：上一篇的封面方案与两张预览图都不该跟过来。
+  // 配图方案不在这里清：它按项目存着，由「换项目就读它存过的方案」那个 effect 管
   const clearGeneratedAssets = useCallback(() => {
     setCoverPlan(null);
     setCoverDataUrl("");
-    setContentImagePlan(null);
     setContentImageDataUrl("");
   }, []);
 
@@ -536,19 +544,38 @@ export default function WorkflowDashboard() {
     clearGeneratedAssets();
   }, [clearGeneratedAssets]);
 
+  // 绑定存本机文件：先改界面，写失败再退回去并提示
   const handleBindDaoku = useCallback((topicId: string, bloggerId: string) => {
-    setTopicDaokuMap((current) => ({ ...current, [topicId]: bloggerId }));
-  }, []);
+    let previous: Record<string, string> = {};
+    setTopicDaokuMap((current) => {
+      previous = current;
+      return { ...current, [topicId]: bloggerId };
+    });
+    saveDaokuBinding(topicId, bloggerId).catch((error) => {
+      setTopicDaokuMap(previous);
+      setFriendlyError("daoku.bindings.write", error);
+    });
+  }, [setFriendlyError]);
+
+  // 可绑定的道库 = 已落盘的模板；demo 模式再补上样例博主，好让没蒸馏过也能体验
+  const daokuLibrary = useMemo(() => {
+    if (workflowMode !== "demo") return daokuTemplates;
+    const saved = new Set(daokuTemplates.map((item) => item.bloggerId));
+    return [...daokuTemplates, ...DEMO_BLOGGER_DISTILLATIONS.filter((item) => !saved.has(item.bloggerId))];
+  }, [daokuTemplates, workflowMode]);
+  const daokuOptions = useMemo(
+    () => daokuLibrary.map((item) => ({ bloggerId: item.bloggerId, name: item.sourceLabel })),
+    [daokuLibrary]
+  );
 
   // 当前选题生效的道库：优先用该选题绑定的，其次退回博主步全局选择
   const getDaokuForTopic = useCallback(
     (topic: ContentCard | null): BloggerDistillation | null => {
       const boundId = topic ? topicDaokuMap[topic.topicId] : undefined;
       if (!boundId) return bloggerDistillation;
-      if (bloggerDistillation?.bloggerId === boundId) return bloggerDistillation;
-      return getDistillationForBlogger(boundId);
+      return daokuLibrary.find((item) => item.bloggerId === boundId) || bloggerDistillation;
     },
-    [bloggerDistillation, topicDaokuMap]
+    [bloggerDistillation, daokuLibrary, topicDaokuMap]
   );
 
   // 草稿步换选题：切到该选题已有的草稿（没有则置空，由「生成草稿」补）
@@ -720,7 +747,7 @@ export default function WorkflowDashboard() {
         setWorkflowMode("connected");
         // 落地页本来就是工作台（area 初始值），这里不再回设——否则会把用户
         // 在启动期间点选的区悄悄弹回来。
-        await loadFeishuSnapshot();
+        if (await loadFeishuSnapshot()) setNotice({ type: "success", message: "飞书数据已同步" });
       } catch (error) {
         if (!isActive) return;
         console.error("[WorkflowDashboard] 启动失败，切换 Demo", { action: "workflow.bootstrap", error });
@@ -894,7 +921,7 @@ export default function WorkflowDashboard() {
           ...payload,
           noteTitle: selectedDraft?.title || selectedTopic?.titleCandidates[0],
           painPoint: selectedTopic?.painPoint,
-          bloggerId: selectedTopic ? topicDaokuMap[selectedTopic.topicId] : undefined,
+          distillation: getDaokuForTopic(selectedTopic),
           signal: tasks.start("inlineRewrite"),
         });
         setNotice({
@@ -911,7 +938,7 @@ export default function WorkflowDashboard() {
         setIsRewritingInline(false);
       }
     },
-    [selectedDraft, selectedTopic, setFriendlyError, setNotice, tasks, topicDaokuMap]
+    [getDaokuForTopic, selectedDraft, selectedTopic, setFriendlyError, setNotice, tasks]
   );
 
   const handleSaveDraft = useCallback(async (draft: DraftNote) => {
@@ -1049,6 +1076,7 @@ export default function WorkflowDashboard() {
       });
       setContentImagePlan(result.plan);
       setImageTab("content");
+      if (sourceTopic) persistNoteAssets(sourceTopic.topicId, { contentImagePlan: result.plan });
       setNotice({
         type: "success",
         message: result.usedFallback ? "已用规则生成内容配图" : "内容配图已生成",
@@ -1060,7 +1088,7 @@ export default function WorkflowDashboard() {
       tasks.finish("contentImage");
       setIsGeneratingContentImage(false);
     }
-  }, [contentImageTemplate, selectedDraft, selectedTopic, setFriendlyError, setNotice, tasks]);
+  }, [contentImageTemplate, persistNoteAssets, selectedDraft, selectedTopic, setFriendlyError, setNotice, tasks]);
 
   const handleGenerateReview = useCallback(async () => {
     setIsReviewing(true);
@@ -1089,6 +1117,22 @@ export default function WorkflowDashboard() {
     }
   }, [loadFeishuSnapshot, publishedMetrics, setFriendlyError, setNotice, tasks, workflowMode]);
 
+  const handleImportNoteStats = useCallback(async (file: File) => {
+    setIsImportingStats(true);
+    try {
+      const result = await importNoteStats(file);
+      setNotice({
+        type: "success",
+        message: `已导入 ${result.parsed} 篇：更新 ${result.updated}${result.linked ? `（其中 ${result.linked} 篇对上已发布笔记）` : ""}，新增 ${result.created}`,
+      });
+      await loadFeishuSnapshot();
+    } catch (error) {
+      setFriendlyError("review.import", error);
+    } finally {
+      setIsImportingStats(false);
+    }
+  }, [loadFeishuSnapshot, setFriendlyError, setNotice]);
+
   const handleDownloadCover = useCallback(() => {
     if (!coverDataUrl) {
       setNotice({ type: "error", message: "请先在图片工厂的封面页生成预览图" });
@@ -1113,29 +1157,51 @@ export default function WorkflowDashboard() {
     setContentImageDataUrl("");
   }, []);
 
-  const handleApplyRewriteToDraft = useCallback((draft: DraftNote) => {
-    setSnapshot((current) => ({
-      ...current,
-      drafts: mergeByKey(current.drafts, [draft], (item) => item.noteId),
-    }));
-    setSelectedDraft(draft);
-    setNotice({ type: "success", message: "改写结果已应用到当前草稿" });
-  }, [setNotice]);
-
-  // 选一篇笔记：带出它的草稿，并清掉上一篇的封面/配图预览
+  // 选一篇笔记：带出它的草稿，并清掉上一篇的封面/配图预览（配图方案由按项目读取的 effect 换）
   const handleSelectNote = useCallback((topic: ContentCard) => {
     setSelectedTopic(topic);
     setSelectedDraft(usableDrafts.find((item) => item.topicId === topic.topicId) || null);
-    setCoverPlan(null);
-    setCoverDataUrl("");
+    clearGeneratedAssets();
+  }, [clearGeneratedAssets, usableDrafts]);
+
+  // 换项目就读它存过的配图、视频方案：生成时已存进本机，回来不用重做
+  const selectedTopicId = selectedTopic?.topicId;
+  useEffect(() => {
     setContentImagePlan(null);
-    setContentImageDataUrl("");
-  }, [usableDrafts]);
+    setVideoPlan(null);
+    if (!selectedTopicId) return;
+    let active = true;
+    getNoteAssets(selectedTopicId)
+      .then((assets) => {
+        if (!active) return;
+        setContentImagePlan(assets.contentImagePlan ?? null);
+        setVideoPlan(assets.videoPlan ?? null);
+      })
+      .catch((error) => setFriendlyError("notes.assets.read", error));
+    return () => {
+      active = false;
+    };
+  }, [selectedTopicId, setFriendlyError]);
+
+  const handleVideoPlanChange = useCallback((plan: VideoPlan) => {
+    setVideoPlan(plan);
+    if (selectedTopicId) persistNoteAssets(selectedTopicId, { videoPlan: plan });
+  }, [persistNoteAssets, selectedTopicId]);
 
   // 「最近使用」是本机偏好，挂载后再读，避免服务端渲染时读 localStorage
   useEffect(() => {
     setRecent(readRecent());
   }, []);
+
+  // 道库模板与选题绑定都在本机，挂载拉一次；之后蒸馏、绑定都就地更新，不再回读
+  useEffect(() => {
+    Promise.all([listDaokuTemplates(), listDaokuBindings()])
+      .then(([{ distillations }, bindings]) => {
+        setDaokuTemplates(distillations);
+        setTopicDaokuMap(bindings);
+      })
+      .catch((error) => setFriendlyError("daoku.load", error));
+  }, [setFriendlyError]);
 
   // 打开一个区并记一笔「最近使用」。结构页（首页/目录/项目）不算「用过一个工具」，不记。
   const openArea = useCallback((id: AreaId) => {
@@ -1200,6 +1266,7 @@ export default function WorkflowDashboard() {
     setBloggerDistillation(distillation);
     saveDaokuTemplate(distillation)
       .then(() => {
+        setDaokuTemplates((current) => [distillation, ...current.filter((item) => item.id !== distillation.id)]);
         setNotice({
           type: "success",
           message: `道库「${distillation.sourceLabel}」已存进模板`,
@@ -1277,7 +1344,7 @@ export default function WorkflowDashboard() {
     [applyIntent],
   );
 
-  const boundDaokuName = DAOKU_OPTIONS.find(
+  const boundDaokuName = daokuOptions.find(
     (option) => option.bloggerId === topicDaokuMap[selectedTopic?.topicId || ""]
   )?.name;
   const bloggerReady = Boolean(bloggerDistillation);
@@ -1537,7 +1604,7 @@ export default function WorkflowDashboard() {
                     onDeleteTopic={() => selectedTopic && handleDeleteTopic(selectedTopic)}
                     sourceSummary={selectedTopic?.sourceMaterial || ""}
                     onOpenLibrary={() => openArea("library")}
-                    daokuOptions={DAOKU_OPTIONS}
+                    daokuOptions={daokuOptions}
                     topicDaokuMap={topicDaokuMap}
                     onBindDaoku={handleBindDaoku}
                     bloggerReady={bloggerReady}
@@ -1658,7 +1725,17 @@ export default function WorkflowDashboard() {
 
         {area === "review" && (
           <ToolScroll>
-            <PageHeader title={AREAS.review.label} subtitle={AREAS.review.subtitle} />
+            <PageHeader
+              title={AREAS.review.label}
+              subtitle={AREAS.review.subtitle}
+              action={
+                <ImportStatsButton
+                  onImport={handleImportNoteStats}
+                  importing={isImportingStats}
+                  disabled={workflowMode !== "connected"}
+                />
+              }
+            />
             <ReviewDashboard
               metrics={publishedMetrics}
               review={review}
@@ -1764,9 +1841,11 @@ export default function WorkflowDashboard() {
               selectedTopic={selectedTopic}
               selectedDraft={selectedDraft}
               bloggerDistillation={bloggerDistillation}
-              onVideoPlanChange={setVideoPlan}
+              plan={videoPlan}
+              onVideoPlanChange={handleVideoPlanChange}
+              onNotice={setNotice}
+              onError={setFriendlyError}
               imageUrls={[coverDataUrl, contentImageDataUrl].filter(Boolean)}
-              onRenderedChange={setVideoRendered}
             />
           </ToolPage>
         )}
@@ -1783,7 +1862,11 @@ export default function WorkflowDashboard() {
               selectedTopic={selectedTopic}
               selectedDraft={selectedDraft}
               bloggerDistillation={getDaokuForTopic(selectedTopic)}
-              onApplyToDraft={handleApplyRewriteToDraft}
+              // 应用即保存：只改内存的话，下一次同步飞书就把改写冲掉了
+              onApplyToDraft={handleSaveDraft}
+              canCreateDraft={workflowMode === "demo"}
+              onNotice={setNotice}
+              onError={setFriendlyError}
             />
           </ToolPage>
         )}
@@ -1792,8 +1875,10 @@ export default function WorkflowDashboard() {
           <ToolPage area="blogger" onGoProjects={() => setArea("projects")}>
             <BloggerResearch
               selectedDistillation={bloggerDistillation}
+              savedDistillations={daokuLibrary}
               onDistillationChange={adoptDistillation}
               onNotice={setNotice}
+              onError={setFriendlyError}
             />
           </ToolPage>
         )}
@@ -1876,7 +1961,7 @@ export default function WorkflowDashboard() {
               draft={selectedDraft}
               topic={selectedTopic}
               coverConfig={noteCoverConfig}
-              contentImageDataUrl={contentImageDataUrl}
+              contentImagePlan={contentImagePlan}
               quality={qualityResult}
               onOpenCover={openCover}
               onOpenImages={openContentImage}

@@ -1,6 +1,17 @@
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
-export type WorkflowTableName = "material" | "glossary" | "topic" | "draft" | "review";
+/** 表名 → table_id 的环境变量。对标两张表（blogger / bloggerNote）可选，不在启动必检之列。 */
+const TABLE_ENV = {
+  material: "FEISHU_MATERIAL_TABLE_ID",
+  glossary: "FEISHU_GLOSSARY_TABLE_ID",
+  topic: "FEISHU_TOPIC_TABLE_ID",
+  draft: "FEISHU_DRAFT_TABLE_ID",
+  review: "FEISHU_REVIEW_TABLE_ID",
+  blogger: "FEISHU_BLOGGER_TABLE_ID",
+  bloggerNote: "FEISHU_BLOGGER_NOTE_TABLE_ID",
+} as const;
+
+export type WorkflowTableName = keyof typeof TABLE_ENV;
 
 export interface FeishuRecord {
   record_id: string;
@@ -39,16 +50,8 @@ function requireEnv(name: string): string {
 }
 
 export function getMissingFeishuConfig(tableNames: WorkflowTableName[] = []): string[] {
-  const envNames = ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_BASE_APP_TOKEN"];
-  const tableEnvMap: Record<WorkflowTableName, string> = {
-    material: "FEISHU_MATERIAL_TABLE_ID",
-    glossary: "FEISHU_GLOSSARY_TABLE_ID",
-    topic: "FEISHU_TOPIC_TABLE_ID",
-    draft: "FEISHU_DRAFT_TABLE_ID",
-    review: "FEISHU_REVIEW_TABLE_ID",
-  };
-
-  tableNames.forEach((tableName) => envNames.push(tableEnvMap[tableName]));
+  const envNames: string[] = ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_BASE_APP_TOKEN"];
+  tableNames.forEach((tableName) => envNames.push(TABLE_ENV[tableName]));
   return Array.from(new Set(envNames)).filter((name) => !getEnv(name));
 }
 
@@ -61,14 +64,7 @@ export function getFeishuApiBase(): string {
 }
 
 export function getFeishuTableId(tableName: WorkflowTableName): string {
-  const envMap: Record<WorkflowTableName, string> = {
-    material: "FEISHU_MATERIAL_TABLE_ID",
-    glossary: "FEISHU_GLOSSARY_TABLE_ID",
-    topic: "FEISHU_TOPIC_TABLE_ID",
-    draft: "FEISHU_DRAFT_TABLE_ID",
-    review: "FEISHU_REVIEW_TABLE_ID",
-  };
-  return requireEnv(envMap[tableName]);
+  return requireEnv(TABLE_ENV[tableName]);
 }
 
 export function getFeishuAppToken(): string {
@@ -262,6 +258,24 @@ export async function updateFeishuRecord(
     `/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}`,
     { fields },
     `feishu.updateRecord.${tableName}`
+  );
+}
+
+/** 批量更新，单次上限 1000 条，由调用方分批。 */
+export async function batchUpdateFeishuRecords(
+  tableName: WorkflowTableName,
+  records: Array<{ record_id: string; fields: Record<string, unknown> }>
+): Promise<unknown> {
+  assertFeishuConfig([tableName]);
+  if (records.length === 0) return { records: [] };
+
+  const appToken = getFeishuAppToken();
+  const tableId = getFeishuTableId(tableName);
+  return feishuRequest(
+    "POST",
+    `/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/batch_update`,
+    { records },
+    `feishu.batchUpdateRecords.${tableName}`
   );
 }
 

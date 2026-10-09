@@ -83,7 +83,7 @@ export function buildPublishPack(
   else missing.push("还没有封面，去封面那一步生成一张");
 
   if (images.contentImageDataUrl) packImages.push({ label: "配图", dataUrl: images.contentImageDataUrl });
-  else missing.push("这次会话还没做内容配图（配图不落库，换一篇再回来就要重做）");
+  else missing.push("还没有内容配图（可选），去配图那一步生成一张");
 
   if (!draft.commentPrompt.trim()) missing.push("没有评论引导，正文末尾会少一句互动");
   if (draft.tags.filter(Boolean).length === 0) missing.push("没有话题标签，发出去很难被搜到");

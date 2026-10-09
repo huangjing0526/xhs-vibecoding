@@ -1,5 +1,5 @@
 import type { BloggerDistillation } from "./bloggerWorkflow";
-import type { ContentCard, DraftNote } from "./xhsWorkflow";
+import { unknownToText, type ContentCard, type DraftNote } from "./xhsWorkflow";
 
 export type VideoSourceType = "topic" | "draft" | "manual";
 export type VideoFormat = "talking_head" | "flash_cards" | "screen_recording" | "story";
@@ -72,21 +72,42 @@ export function topicToVideoSourceInput(topic: ContentCard): VideoSourceInput {
   };
 }
 
-export function draftToVideoSourceInput(draft: DraftNote): VideoSourceInput {
+/** 草稿本身不带痛点和观点，从它的选题补上 */
+export function draftToVideoSourceInput(draft: DraftNote, topic: ContentCard | null): VideoSourceInput {
   return {
     sourceType: "draft",
     sourceId: draft.noteId || draft.recordId,
     title: draft.title,
     content: draft.content,
-    reusableAsset: draft.imageSuggestions,
+    painPoint: topic?.painPoint,
+    coreViewpoint: topic?.coreViewpoint,
+    reusableAsset: topic?.reusableAsset || draft.imageSuggestions,
   };
 }
 
-function getFormatName(format: VideoFormat): string {
-  if (format === "flash_cards") return "图文快闪";
-  if (format === "screen_recording") return "教程录屏";
-  if (format === "story") return "剧情反差";
-  return "口播";
+const FORMAT_NAME: Record<VideoFormat, string> = {
+  talking_head: "口播",
+  flash_cards: "图文快闪",
+  screen_recording: "教程录屏",
+  story: "剧情反差",
+};
+const DURATIONS: VideoDuration[] = ["30s", "60s", "90s"];
+const PACES: VideoPace[] = ["steady", "fast"];
+
+export function getFormatName(format: VideoFormat): string {
+  return FORMAT_NAME[format];
+}
+
+export function isVideoFormat(value: unknown): value is VideoFormat {
+  return typeof value === "string" && value in FORMAT_NAME;
+}
+
+export function isVideoDuration(value: unknown): value is VideoDuration {
+  return DURATIONS.includes(value as VideoDuration);
+}
+
+export function isVideoPace(value: unknown): value is VideoPace {
+  return PACES.includes(value as VideoPace);
 }
 
 export function createFallbackVideoPlan(
@@ -155,5 +176,66 @@ export function createFallbackVideoPlan(
       "画面要求：浅色极简、文字少、每屏只保留一个判断点。",
       "不要编造素材里没有的数据、收益或团队规模。",
     ].join("\n"),
+  };
+}
+
+export function buildVideoScriptPrompt(
+  input: VideoSourceInput,
+  distillation: BloggerDistillation | null,
+  format: VideoFormat,
+  duration: VideoDuration,
+  pace: VideoPace
+): string {
+  const context = [
+    input.painPoint ? `读者痛点：${input.painPoint}` : "",
+    input.coreViewpoint ? `核心观点：${input.coreViewpoint}` : "",
+    input.reusableAsset ? `可收藏资产：${input.reusableAsset}` : "",
+    distillation?.coreDao ? `对标道库的核心道（学写法，不照搬）：${distillation.coreDao}` : "",
+  ].filter(Boolean).join("\n");
+
+  return `把下面这篇小红书笔记改成一条 ${duration} 的${FORMAT_NAME[format]}短视频脚本，${pace === "fast" ? "快节奏" : "稳定节奏"}。
+
+要求：
+- 开头 3 秒内给出具体场景、反差或结果，不要寒暄。
+- 口播稿按时间顺序写，口语化，总时长贴合 ${duration}。
+- 分镜 4–6 屏，每屏只讲一个判断点，字幕短到一眼能读完。
+- 不许编造原文没有的数据、收益、时间和规模；不要营销腔和私域引导。
+${context ? `\n${context}\n` : ""}
+笔记标题：${input.title}
+
+笔记正文：
+${input.content}
+
+只返回 JSON，不要解释：
+{
+  "title": "视频标题",
+  "hook": "开头钩子一句话",
+  "voiceover": "完整口播稿",
+  "scenes": [{ "order": 1, "visual": "画面", "subtitle": "字幕", "durationHint": "0-5s" }],
+  "coverText": "封面大字，可换行",
+  "generationPrompt": "交给视频生成模型的整体画面提示词"
+}`;
+}
+
+/** 模型结果落成 VideoPlan：id、来源、格式参数由这里定，缺的字段用规则版补，分镜不像样就整组用规则版。 */
+export function normalizeVideoPlan(raw: Partial<VideoPlan>, fallback: VideoPlan): VideoPlan {
+  const scenes = Array.isArray(raw.scenes)
+    ? raw.scenes
+        .map((scene, index) => ({
+          order: index + 1,
+          visual: unknownToText(scene?.visual),
+          subtitle: unknownToText(scene?.subtitle),
+          durationHint: unknownToText(scene?.durationHint),
+        }))
+        .filter((scene) => scene.visual || scene.subtitle)
+    : [];
+  return {
+    ...fallback,
+    title: unknownToText(raw.title, fallback.title),
+    hook: unknownToText(raw.hook, fallback.hook),
+    voiceover: unknownToText(raw.voiceover, fallback.voiceover),
+    scenes: scenes.length ? scenes : fallback.scenes,
+    coverText: unknownToText(raw.coverText, fallback.coverText),
+    generationPrompt: unknownToText(raw.generationPrompt, fallback.generationPrompt),
   };
 }

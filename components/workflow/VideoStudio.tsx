@@ -7,10 +7,12 @@ import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
 import EmptyState from "@/components/ui/EmptyState";
 import SegmentedControl from "./SegmentedControl";
+import { useAbortableTasks } from "./useAbortableTasks";
+import type { Notice } from "./types";
 import type { BloggerDistillation } from "@/lib/bloggerWorkflow";
 import {
-  createFallbackVideoPlan,
   draftToVideoSourceInput,
+  getFormatName,
   topicToVideoSourceInput,
   type VideoDuration,
   type VideoFormat,
@@ -21,57 +23,71 @@ import {
 } from "@/lib/videoWorkflow";
 import type { ContentCard, DraftNote } from "@/lib/xhsWorkflow";
 import { copyToClipboard } from "@/lib/clipboard";
+import { generateVideoScript, isAbortError } from "@/lib/workflowClient";
 
 interface VideoStudioProps {
   selectedTopic: ContentCard | null;
   selectedDraft: DraftNote | null;
   bloggerDistillation: BloggerDistillation | null;
+  /** 这个项目存过的视频方案，由页面按项目读出来；生成新方案后经 onVideoPlanChange 存回去 */
+  plan: VideoPlan | null;
   onVideoPlanChange: (plan: VideoPlan) => void;
+  onNotice: (notice: Notice) => void;
+  onError: (action: string, error: unknown) => void;
   /** 图片生成环节产出的封面/内容图（data URL），作为各屏背景复用 */
   imageUrls?: string[];
-  /** 成片状态回流给总览/上下文 */
-  onRenderedChange?: (rendered: boolean) => void;
-}
-
-function formatLabel(format: VideoFormat): string {
-  if (format === "flash_cards") return "图文快闪";
-  if (format === "screen_recording") return "教程录屏";
-  if (format === "story") return "剧情反差";
-  return "口播";
 }
 
 export default function VideoStudio({
   selectedTopic,
   selectedDraft,
   bloggerDistillation,
+  plan,
   onVideoPlanChange,
+  onNotice,
+  onError,
   imageUrls = [],
-  onRenderedChange,
 }: VideoStudioProps) {
   const [format, setFormat] = useState<VideoFormat>("talking_head");
   const [duration, setDuration] = useState<VideoDuration>("60s");
   const [pace, setPace] = useState<VideoPace>("steady");
-  const [plan, setPlan] = useState<VideoPlan | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const tasks = useAbortableTasks();
   const [renderStatus, setRenderStatus] = useState<VideoRenderStatus>("idle");
   const [renderResult, setRenderResult] = useState<VideoRenderResult | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
 
   const input = useMemo(() => {
-    if (selectedDraft) return draftToVideoSourceInput(selectedDraft);
+    if (selectedDraft) return draftToVideoSourceInput(selectedDraft, selectedTopic);
     if (selectedTopic) return topicToVideoSourceInput(selectedTopic);
     return null;
   }, [selectedDraft, selectedTopic]);
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!input) return;
-    const nextPlan = createFallbackVideoPlan(input, bloggerDistillation, format, duration, pace);
-    setPlan(nextPlan);
-    onVideoPlanChange(nextPlan);
-    // 方案变了，旧成片作废
-    setRenderResult(null);
-    setRenderError(null);
-    setRenderStatus("idle");
-    onRenderedChange?.(false);
+    setGenerating(true);
+    try {
+      const result = await generateVideoScript({
+        input,
+        distillation: bloggerDistillation,
+        format,
+        duration,
+        pace,
+        signal: tasks.start("videoScript"),
+      });
+      onVideoPlanChange(result.plan);
+      if (result.usedFallback) onNotice({ type: "info", message: "未检测到 AI 配置，这版是规则模板，建议手动调整" });
+      // 方案变了，旧成片作废
+      setRenderResult(null);
+      setRenderError(null);
+      setRenderStatus("idle");
+    } catch (error) {
+      if (isAbortError(error)) onNotice({ type: "info", message: "已取消生成视频脚本" });
+      else onError("video.script", error);
+    } finally {
+      tasks.finish("videoScript");
+      setGenerating(false);
+    }
   };
 
   const handleRender = async () => {
@@ -79,7 +95,6 @@ export default function VideoStudio({
     setRenderStatus("rendering");
     setRenderError(null);
     setRenderResult(null);
-    onRenderedChange?.(false);
     try {
       const resp = await fetch("/api/video/render", {
         method: "POST",
@@ -92,7 +107,6 @@ export default function VideoStudio({
       }
       setRenderResult(data as VideoRenderResult);
       setRenderStatus("done");
-      onRenderedChange?.(true);
       toast.success("视频已渲染完成");
     } catch (error) {
       const message = error instanceof Error ? error.message : "渲染失败";
@@ -156,7 +170,7 @@ export default function VideoStudio({
                 { value: "fast", label: "快" },
               ]}
             />
-            <Button variant="ai" onClick={handleGenerate} disabled={!input} icon={<Sparkles size={15} />}>
+            <Button variant="ai" onClick={handleGenerate} disabled={!input} loading={generating} icon={<Sparkles size={15} />}>
               生成视频脚本
             </Button>
             <Button
@@ -223,7 +237,7 @@ export default function VideoStudio({
         <aside className="rounded-3xl border border-line bg-surface p-5 shadow-card">
           <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">视频方案</div>
           <h3 className="mt-2 font-rounded text-xl font-bold text-ink">
-            {plan ? formatLabel(plan.format) : "待生成方案"}
+            {plan ? getFormatName(plan.format) : "待生成方案"}
           </h3>
           <div className="mt-4 space-y-2 text-sm text-muted">
             <div className="rounded-xl bg-soft px-3 py-2">开头钩子</div>

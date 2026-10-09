@@ -67,6 +67,19 @@ export function countAbstractWords(text: string): number {
   return ABSTRACT_WORDS.filter((word) => text.includes(word)).length;
 }
 
+/**
+ * 每种标题结构要命中的信号词，写给模型看。与下面 titleMatchesStructure 的正则一一对应——
+ * 改了正则必须同步改这里，否则改写出来的标题过不了质检。
+ */
+export const TITLE_STRUCTURE_SIGNAL: Record<ViralTitleStructure, string> = {
+  "pain-solved": "必须含「最烦 / 最痛苦 / 终于不用 / 被…解决 / 卡住 / 熬夜 / 返工 / 尴尬」之一",
+  "before-after": "必须是「之前 / 以前 / 用…前」+「之后 / 后来 / 结果 / 用…后」的前后对照",
+  "ordinary-growth": "必须含「普通人 / 0基础 / 零基础」并接「先别 / 先练 / 先学 / 建议先」",
+  "workflow-reveal": "必须含「工作流长这样 / 流程长这样 / 我是怎么做 / 我现在固定用」之一",
+  "result-demo": "必须含「我用…做出了 / 做成了 / 做完了 / 成品 / 模板 / 卡片 / 表格」之一",
+  "curiosity-opportunity": "必须含「出现后 / 该先问 / 值不值得 / 机会 / 风险」之一",
+};
+
 export function titleMatchesStructure(title: string, structure?: ViralTitleStructure): boolean {
   if (!structure) return true;
   const value = title.trim();

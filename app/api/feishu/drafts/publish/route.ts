@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk, readJsonBody } from "../../_utils";
-import { createFeishuRecords, searchFeishuRecords, updateFeishuRecord } from "@/lib/feishu";
+import { createFeishuRecords, fieldToText, searchFeishuRecords, updateFeishuRecord } from "@/lib/feishu";
+import { findClaimableRow, isWorkbenchNoteId, toReviewRow } from "@/lib/noteStats.mjs";
 import {
   createReviewMetricFromDraft,
   DraftNote,
   mapDraftToFeishuFields,
   mapReviewMetricToFeishuFields,
-  normalizeReviewMetric,
   DRAFT_STATUS,
 } from "@/lib/xhsWorkflow";
 
@@ -41,14 +41,18 @@ export async function POST(request: NextRequest) {
         mapDraftToFeishuFields(publishedDraft)
       );
 
-      const reviewRecords = await searchFeishuRecords("review");
-      const existingReviewRecord = reviewRecords.find(
-        (record) => normalizeReviewMetric(record).noteId === publishedDraft.noteId
+      // 先导入数据、后标记发布时，这篇的数据已经躺在一条导入行里：标题唯一对上就认领它，不再另建一条空行
+      const reviewRows = (await searchFeishuRecords("review")).map((record) => toReviewRow(record, fieldToText));
+      const existingReviewRecord = findClaimableRow(
+        reviewRows,
+        publishedDraft.noteId,
+        publishedDraft.title,
+        (row) => !isWorkbenchNoteId(row.noteId)
       );
       const reviewFields = mapReviewMetricToFeishuFields(reviewMetric);
 
       reviewWriteResult = existingReviewRecord
-        ? await updateFeishuRecord("review", existingReviewRecord.record_id, reviewFields)
+        ? await updateFeishuRecord("review", existingReviewRecord.recordId, reviewFields)
         : await createFeishuRecords("review", [{ fields: reviewFields }]);
     }
 

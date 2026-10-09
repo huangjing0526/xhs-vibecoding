@@ -1,8 +1,9 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk, readJsonBody } from "@/app/api/feishu/_utils";
 import { isSafeSegment } from "@/app/api/image-factory/_shared";
+import { writeJsonFile } from "@/app/api/_localJson";
 import type { BloggerDistillation } from "@/lib/bloggerWorkflow";
 
 // 读写本机磁盘，必须 nodejs runtime。
@@ -25,8 +26,7 @@ export async function POST(request: NextRequest) {
     // id 直接当文件名，路径安全校验不能省
     if (!isSafeSegment(id)) return apiBadRequest("道库 id 不合法，只能是字母、数字、下划线和连字符");
     if (!distillation.sourceLabel) return apiBadRequest("道库缺少来源名字，存不进模板目录");
-    await mkdir(DAOKU_ROOT, { recursive: true });
-    await writeFile(entryFile(id), JSON.stringify(distillation, null, 2), "utf8");
+    await writeJsonFile(entryFile(id), distillation);
     console.info("[Daoku] 道库已落盘", { action: "daoku.save", id, sourceLabel: distillation.sourceLabel });
     return apiOk({ distillation }, `道库「${distillation.sourceLabel}」已存进模板`);
   } catch (error) {

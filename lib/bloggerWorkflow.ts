@@ -26,6 +26,18 @@ export interface BloggerSample {
   };
 }
 
+/** 手动粘贴的一条样本。id 由调用方给：服务端用带随机后缀的短 id，demo 页面用浏览器的 randomUUID。 */
+export function makeManualSample(id: string, input: { bloggerId: string; title: string; content: string }): BloggerSample {
+  return {
+    id,
+    bloggerId: input.bloggerId,
+    title: input.title || "未命名样本",
+    content: input.content,
+    tags: [],
+    coverDescription: "手动录入样本",
+  };
+}
+
 /**
  * 复刻一条道库要你自己补的东西。道给判断路径，槽位说清拿什么填。
  * 没有槽位的蒸馏结果只是「别人怎么做的」，不是模板——这条由类型把守，字段必填。
@@ -340,12 +352,4 @@ export function mergeDistilledDao(
     adaptationNotes: list(dao.adaptationNotes, base.adaptationNotes),
     slots: extra.length ? [...DAOKU_BASE_SLOTS, ...extra] : base.slots,
   };
-}
-
-export function getSamplesForBlogger(bloggerId: string): BloggerSample[] {
-  return DEMO_BLOGGER_SAMPLES.filter((sample) => sample.bloggerId === bloggerId);
-}
-
-export function getDistillationForBlogger(bloggerId: string): BloggerDistillation | null {
-  return DEMO_BLOGGER_DISTILLATIONS.find((item) => item.bloggerId === bloggerId) || null;
 }
