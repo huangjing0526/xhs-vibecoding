@@ -2,9 +2,8 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
-import { readAsset } from "@/app/api/image-factory/_assets";
 import { MIME_BY_EXTENSION, mimeByExtension } from "@/app/api/image-factory/_shared";
-import { castPath, isSafeSegment, projectDir } from "@/app/api/video-factory/_shared";
+import { castPath, copyLibraryAsset, isSafeSegment, projectDir } from "@/app/api/video-factory/_shared";
 import { CAST_SLOTS, type CastRef, type CastSlot } from "@/lib/videoFactory";
 
 export const runtime = "nodejs";
@@ -52,25 +51,23 @@ export async function POST(request: NextRequest) {
     if (stale) await rm(stale.file, { force: true });
 
     let target = "";
-    let extension = ".png";
+    let facts: Partial<CastRef> = {};
 
     if (file instanceof File && file.size > 0) {
-      extension = path.extname(file.name).toLowerCase();
+      const extension = path.extname(file.name).toLowerCase();
       if (!(extension in MIME_BY_EXTENSION)) return apiBadRequest("参考图只支持 PNG / JPG / WebP");
       target = castPath(projectId, slot, extension);
       await writeFile(target, Buffer.from(await file.arrayBuffer()));
     } else if (assetId) {
       const library = CAST_SLOTS.find((item) => item.id === slot)!.library;
-      const asset = await readAsset(library, assetId);
-      if (!asset) return apiBadRequest("这条素材已不在库里，换一条或重新上传");
-      extension = asset.extension;
-      target = castPath(projectId, slot, extension);
-      await writeFile(target, new Uint8Array(asset.bytes));
+      const copied = await copyLibraryAsset(library, assetId, (extension) => castPath(projectId, slot, extension));
+      if (!copied) return apiBadRequest("这条素材已不在库里，换一条或重新上传");
+      ({ target, facts } = copied);
     } else {
       return apiBadRequest(`请选一张${SLOT_LABEL[slot]}参考图，或上传一张`);
     }
 
-    const cast: CastRef = { assetId, label: label || SLOT_LABEL[slot], path: target };
+    const cast: CastRef = { assetId, label: label || SLOT_LABEL[slot], path: target, ...facts };
     return apiOk({ slot, cast }, `已绑定${SLOT_LABEL[slot]}`);
   } catch (error) {
     console.error("[VideoFactory] 绑定参考图失败", { action: "videoFactory.cast.bind", projectId });

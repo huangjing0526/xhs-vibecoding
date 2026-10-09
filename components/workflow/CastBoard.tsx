@@ -71,7 +71,12 @@ export function LibraryPicker({
   }, [slot.library]);
 
   const copy = LIBRARY_COPY[slot.library];
-  const profiles = useMemo(() => groupAssetProfiles(assets, slot.library), [assets, slot.library]);
+  // 定稿的排前面：没审过的主体还能选，但不该是顺手点到的那个
+  const profiles = useMemo(
+    () =>
+      groupAssetProfiles(assets, slot.library).sort((a, b) => Number(b.approved) - Number(a.approved)),
+    [assets, slot.library],
+  );
   // 名字和特征描述都能搜：场景多半没起过名字，靠「门店」「雪」这类词从描述里捞更快
   const matched = useMemo(() => {
     const word = keyword.trim().toLowerCase();
@@ -130,8 +135,12 @@ export function LibraryPicker({
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={profile.cover.imageUrl} alt={profile.name} className="aspect-square w-full object-cover" />
                     <span className="block truncate px-2 py-1.5 text-[10px] font-semibold text-ink">{profile.name}</span>
-                    {profile.assets.length > 1 && (
-                      <span className="block px-2 pb-1.5 text-[10px] text-faint">{profile.assets.length} 张</span>
+                    {(profile.assets.length > 1 || !profile.approved) && (
+                      <span className="block px-2 pb-1.5 text-[10px] text-faint">
+                        {[profile.assets.length > 1 ? `${profile.assets.length} 张` : "", profile.approved ? "" : "未定稿"]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
                     )}
                   </button>
                 ))}

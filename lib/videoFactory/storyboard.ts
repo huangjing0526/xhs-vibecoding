@@ -272,6 +272,14 @@ ${
   例：「镜头缓慢向前推进，人物抬头看向镜头，发丝轻微飘动。」
   不要重复描述画面内容，不要要求画面里出现文字。
 - 跨镜头如果是同一个人/同一件产品，framePrompt 里要用同样的措辞描述外观，否则会换脸。
+- videoPrompt 里不要描述商品的图案、印花、文字、logo 这些细节：外观由第一帧锁定，
+  文字一描述，视频模型就会每帧重新画一遍，越画越走样。只写动作和镜头。
+
+【卖货的片子多填两项，不卖货就都留空字符串】
+- productFocus：这一镜要让观众看清商品的哪里、用什么景别。
+  例：「近景：领口和印花」「全身：裤型和整体比例」「侧面中景：腰身和口袋」。只说看哪里，不说它长什么样。
+- sellingPoint：把这一镜对应的卖点翻成镜头拍得到的画面，并把这个动作写进 videoPrompt。
+  例：「显瘦 → 侧身停半秒，露出腰身轮廓」。「有质感」「高级」这类镜头拍不出来的词不算，换成看得见的画面。
 - voiceover 是「口播全文」的连续切片：按镜头顺序把全文切开，前一镜的结尾接后一镜的开头，不重不漏。
 - voiceover 和 subtitle 里都不许出现「标题」「钩子」「痛点」「干货」「转折」「行动号召」这类段落标签，
   那是结构说明不是口播内容。subtitle 是 voiceover 的精简版。
@@ -290,6 +298,8 @@ ${
       "subtitle": "压在画面上的字幕",
       "framePrompt": "第一帧图的完整提示词",
       "videoPrompt": "让这张图动起来的运动提示词",
+      "productFocus": "这一镜要看清商品的哪里，不卖货留空",
+      "sellingPoint": "卖点 → 镜头里看得见的画面，没有就留空",
       "cuts": [
         { "subtitle": "这一刀的字幕", "voiceover": "这一刀的口播" }
       ]
@@ -350,6 +360,13 @@ function buildShotCuts(unit: GenerationUnit, raw: unknown, fallbackText: ShotTex
   return cuts;
 }
 
+/** 卖货的两项，模型没填就不落这个键，免得每镜都挂两个空串。 */
+function productFields(shot: Partial<Shot> | undefined): Pick<Shot, "productFocus" | "sellingPoint"> {
+  const productFocus = str(shot?.productFocus);
+  const sellingPoint = str(shot?.sellingPoint);
+  return { ...(productFocus ? { productFocus } : {}), ...(sellingPoint ? { sellingPoint } : {}) };
+}
+
 interface ShotText {
   voiceover: string;
   subtitle: string;
@@ -395,6 +412,7 @@ export function normalizeStoryboard(
         subtitle: "",
         framePrompt: str(shot?.framePrompt),
         videoPrompt: str(shot?.videoPrompt),
+        ...productFields(shot),
         cuts: buildShotCuts(unit, shot?.cuts, text),
       };
     });
@@ -418,6 +436,7 @@ export function normalizeStoryboard(
         subtitle: str(shot.subtitle),
         framePrompt: str(shot.framePrompt),
         videoPrompt: str(shot.videoPrompt),
+        ...productFields(shot),
         ...(trimToSec === undefined ? {} : { trimToSec }),
       };
     });

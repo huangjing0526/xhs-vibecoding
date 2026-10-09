@@ -9,6 +9,7 @@ import {
   finalCutPath,
   isSafeSegment,
   mapLimited,
+  probeDurationSec,
   projectDir,
   readProject,
   runCommand,
@@ -19,6 +20,7 @@ import {
   DEFAULT_VOICE,
   DEFAULT_VOICE_RATE,
   VOICEOVER_TAIL_SEC,
+  clipQaCleared,
   storyboardParts,
   type ComposePart,
   type FinalCut,
@@ -77,16 +79,6 @@ const run = (args: string[]) =>
     timeoutMs: COMMAND_TIMEOUT_MS,
     timeoutMessage: "ffmpeg 合成超时，镜头数太多或机器太忙",
   });
-
-async function probeDurationSec(file: string): Promise<number> {
-  const out = await runCommand(
-    "ffprobe",
-    ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", file],
-    { timeoutMs: 30_000 },
-  );
-  const value = Number(String(out).trim().split("\n")[0]);
-  return Number.isFinite(value) && value > 0 ? value : 0;
-}
 
 interface ComposeRequest {
   projectId?: string;
@@ -177,6 +169,13 @@ export async function POST(request: NextRequest) {
       .map((shot) => shot.order);
     if (missing.length > 0) {
       return apiBadRequest(`第 ${missing.join("、")} 镜还没有成片，先把它们生成出来`);
+    }
+    // 没过验收的片子不进成片：同样一次报全。人看过觉得能用的，写一句理由放行就算过
+    const uncleared = shots
+      .filter((shot) => !clipQaCleared(project.clips.find((clip) => clip.shotOrder === shot.order)?.qa))
+      .map((shot) => shot.order);
+    if (uncleared.length > 0) {
+      return apiBadRequest(`第 ${uncleared.join("、")} 镜还没过验收：先验收，或看过后写明理由放行`);
     }
 
     const dir = projectDir(projectId);

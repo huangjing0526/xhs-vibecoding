@@ -75,6 +75,11 @@ interface SelectedInput {
   slotId: string;
   file: File;
   previewUrl: string;
+  /**
+   * 从模特库取来的才有：这位模特的名字和身份特征，走服务端的人物身份段落。
+   * 跟着这张图走——槽位里换成上传或粘贴的图，它就自然没了，不会把旧身份套到新的人身上。
+   */
+  identity?: { name: string; traits: string };
 }
 
 /** 一次运行里的一个生成任务：一个产出类型 × 一个视角（没有视角的产出就是它自己）。 */
@@ -403,11 +408,11 @@ export default function ImageFactory({
     setPrompt(customPrompt === preset.prompt ? "" : preset.prompt);
   };
 
-  const selectInput = (slotId: string, file: File) => {
+  const selectInput = (slotId: string, file: File, identity?: SelectedInput["identity"]) => {
     setSelectedInputs((current) => {
       const previous = current[slotId];
       if (previous) URL.revokeObjectURL(previous.previewUrl);
-      return { ...current, [slotId]: { slotId, file, previewUrl: URL.createObjectURL(file) } };
+      return { ...current, [slotId]: { slotId, file, previewUrl: URL.createObjectURL(file), identity } };
     });
     setResults([]);
   };
@@ -440,14 +445,20 @@ export default function ImageFactory({
       if (!response.ok) throw new Error(`资产图取回失败（${response.status}）`);
       const blob = await response.blob();
       const file = new File([blob], `${entry.name}${entry.extension}`, { type: blob.type });
+      const traits = entry.traits?.trim() || "";
+      // 模特的特征走服务端专门的人物身份段落（「必须保持这位人物，不要换人」），不混进补充要求
+      if (kind === "models") {
+        selectInput(slot.id, file, traits ? { name: entry.name, traits } : undefined);
+        return;
+      }
       selectInput(slot.id, file);
-      // 特征描述是这条资产锁得住身份的原因，取用时一并带进补充要求，别让它留在库里当摆设
-      if (entry.traits?.trim()) {
+      // 商品和场景的特征描述是这条资产锁得住的原因，取用时一并带进补充要求，别让它留在库里当摆设
+      if (traits) {
         setPromptByTemplate((current) => {
           const existing = current[activeTemplateId] || "";
-          return existing.includes(entry.traits!.trim())
+          return existing.includes(traits)
             ? current
-            : { ...current, [activeTemplateId]: [existing, entry.traits!.trim()].filter(Boolean).join("\n") };
+            : { ...current, [activeTemplateId]: [existing, traits].filter(Boolean).join("\n") };
         });
       }
     } catch (error) {
@@ -608,6 +619,11 @@ export default function ImageFactory({
         if (job.view) {
           formData.set("viewLabel", job.view.label);
           formData.set("viewHint", job.view.hint);
+        }
+        const identity = job.template.slots.map((slot) => selectedInputs[slot.id]?.identity).find(Boolean);
+        if (identity) {
+          formData.set("identityName", identity.name);
+          formData.set("identityTraits", identity.traits);
         }
         // 每个视角都把同一份上传素材再发一次：身份、服装这些一致性全靠这张参考图
         job.template.slots.forEach((slot) => {

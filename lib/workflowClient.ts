@@ -35,6 +35,7 @@ import type {
   CastBinding,
   CastRef,
   CastSlot,
+  ClipQa,
   FinalCut,
   ScriptDraft,
   ShotGenerationResult,
@@ -712,6 +713,19 @@ export async function deleteLibraryAsset(kind: LibraryKind, assetId: string): Pr
   );
 }
 
+/** 素材库：改一个主体的定稿状态、主锚点或品类，回改完的整组。 */
+export async function updateLibraryProfile(
+  kind: LibraryKind,
+  patch: { name: string; approved?: boolean; anchorId?: string; category?: string }
+): Promise<LibraryAssetEntry[]> {
+  const data = await workflowRequest<Record<string, LibraryAssetEntry[]>>(
+    `/api/image-factory/${kind}`,
+    { method: "PATCH", body: JSON.stringify(patch) },
+    "素材更新失败"
+  );
+  return data[kind] || [];
+}
+
 /**
  * 视频工厂：给项目绑定角色 / 产品参考图。
  * 走 multipart 以支持现场上传，因此不能用 workflowRequest（它固定 JSON 头）。
@@ -770,7 +784,7 @@ export async function clearShotMaterial(projectId: string, shotOrder: number): P
 export async function generateShotFrame(
   formData: FormData,
   signal?: AbortSignal,
-): Promise<{ projectId: string; shotOrder: number; framePath: string }> {
+): Promise<{ projectId: string; shotOrder: number; framePath: string; approvedFrames: number[] }> {
   const response = await fetch("/api/video-factory/frame", { method: "POST", body: formData, signal });
   return parseApiResponse(response, "首帧生成失败");
 }
@@ -851,6 +865,33 @@ export async function generateShotClip(
 export async function attachShotClip(formData: FormData): Promise<ShotGenerationResult> {
   const response = await fetch("/api/video-factory/clip", { method: "POST", body: formData });
   return parseApiResponse<ShotGenerationResult>(response, "成片上传失败");
+}
+
+/** 视频工厂：确认或撤销一镜的首帧，回当前全部已确认的镜号。 */
+export async function reviewShotFrame(options: {
+  projectId: string;
+  shotOrder: number;
+  approved: boolean;
+}): Promise<{ approvedFrames: number[] }> {
+  return workflowRequest(
+    "/api/video-factory/frame-review",
+    { method: "POST", body: JSON.stringify(options) },
+    "首帧确认失败"
+  );
+}
+
+/** 视频工厂：验收一镜，或写理由放行。 */
+export async function reviewShotClip(options: {
+  projectId: string;
+  shotOrder: number;
+  action: "check" | "override";
+  reason?: string;
+}): Promise<{ shotOrder: number; qa: ClipQa }> {
+  return workflowRequest(
+    "/api/video-factory/clip-qa",
+    { method: "POST", body: JSON.stringify(options) },
+    "验收失败"
+  );
 }
 
 /** 视频工厂：图片工厂里可以拿来当首帧的图。 */

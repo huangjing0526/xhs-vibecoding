@@ -71,6 +71,8 @@ export async function POST(request: NextRequest) {
       clips: body.resetClips ? [] : existing?.clips ?? [],
       voiceovers: body.resetClips ? [] : existing?.voiceovers ?? [],
       finalCut: body.resetClips ? null : existing?.finalCut ?? null,
+      // 首帧确认同理归服务端（重出首帧时由首帧路由撤掉）；重拆分镜后镜号全变了，一并清空
+      approvedFrames: body.resetClips ? [] : existing?.approvedFrames ?? [],
     };
 
     return apiOk({ project: await writeProject(project) }, "已保存");

@@ -24,6 +24,7 @@ import ModalOverlay from "@/components/ui/ModalOverlay";
 import PipelineRail from "@/components/ui/PipelineRail";
 import BenchmarkCastBoard from "@/components/workflow/BenchmarkCastBoard";
 import CastBoard from "@/components/workflow/CastBoard";
+import ClipQaPanel from "@/components/workflow/ClipQaPanel";
 import RhythmBoard from "@/components/workflow/RhythmBoard";
 import ShotMaterialSlot from "@/components/workflow/ShotMaterialSlot";
 import type { LibraryKind } from "@/lib/imageFactory";
@@ -50,6 +51,8 @@ import {
   listBenchmarkRhythms,
   listFrameCandidates,
   listVideoProjects,
+  reviewShotClip,
+  reviewShotFrame,
   rewriteVideoScript,
   saveVideoProject,
   confirmBenchmarkSource,
@@ -67,8 +70,10 @@ import {
   EMPTY_CAST,
   PROVIDER_CAPS,
   SHOT_DURATIONS,
+  clipQaCleared,
   isGenerativeProvider,
   snapShotDuration,
+  upsertClip,
   VIDEO_FACTORY_STEPS,
   applyCameraMove,
   checkScriptDuration,
@@ -94,6 +99,7 @@ import {
   type ScriptDraft,
   type Shot,
   type ShotAspectRatio,
+  type ShotClip,
   type ShotDuration,
   type ShotResolution,
   type VideoFactoryStepId,
@@ -154,6 +160,7 @@ const EMPTY_PROJECT: VideoProject = {
   script: null,
   storyboard: null,
   clips: [],
+  approvedFrames: [],
   voiceovers: [],
   finalCut: null,
 };
@@ -513,6 +520,8 @@ export default function VideoFactory({
   const [frameVersion, setFrameVersion] = useState<Record<number, number>>({});
   /** 成片预览要绕开浏览器缓存：同一镜重跑会覆盖同名文件 */
   const [clipVersion, setClipVersion] = useState<Record<number, number>>({});
+  /** 正在验收的镜号；验收要抽帧加看图，十几秒到一分钟 */
+  const [checkingShots, setCheckingShots] = useState<number[]>([]);
 
   const savedRef = useRef("");
   /** 存盘串成一条链：整份覆盖的接口不能并发，但也不能因为「正在存」就把新编辑丢掉。 */
@@ -520,6 +529,8 @@ export default function VideoFactory({
 
   const script = project.script;
   const storyboard = project.storyboard;
+  /** 已出片但没过验收的镜号；合成路由会拦，这里提前说 */
+  const unclearedShots = project.clips.filter((clip) => !clipQaCleared(clip.qa)).map((clip) => clip.shotOrder);
   /** 已绑上参考图的槽位，首帧那一段的文案与提醒都按它算，别再写死角色和产品 */
   const boundCastSlots = CAST_SLOTS.filter((slot) => project.cast[slot.id]);
   const benchmarkCast = useMemo(() => project.rhythm?.cast || [], [project.rhythm]);
@@ -674,6 +685,8 @@ export default function VideoFactory({
         // clips 归服务端所有，存盘时不上送，这里再把盘上那份接回来——
         // 否则扩展推进来的片子在页面上永远不出现，得手动重选项目才看得到
         clips: saved.clips,
+        // 首帧确认同理，由首帧、出片路由在服务端改
+        approvedFrames: saved.approvedFrames,
       }));
       return saved;
     },
@@ -1009,6 +1022,7 @@ export default function VideoFactory({
       formData.append("shotOrder", String(shot.order));
       formData.append("framePrompt", shot.framePrompt);
       formData.append("continuityNote", storyboard?.continuityNote || "");
+      if (shot.productFocus) formData.append("productFocus", shot.productFocus);
       formData.append("provider", frameProvider);
       formData.append("cast", JSON.stringify(project.cast));
       // 这一镜单独绑了素材就带上，服务端会把它排在项目级参考图前面
@@ -1020,12 +1034,21 @@ export default function VideoFactory({
       if (entityRefs.length) {
         formData.append(
           "castEntities",
-          JSON.stringify(entityRefs.map(({ entity, ref }) => ({ kind: entity.kind, label: ref.label, path: ref.path }))),
+          JSON.stringify(
+            entityRefs.map(({ entity, ref }) => ({
+              kind: entity.kind,
+              label: ref.label,
+              path: ref.path,
+              traits: ref.traits,
+              category: ref.category,
+            })),
+          ),
         );
       }
 
-      await generateShotFrame(formData);
-      setProject((current) => ({ ...current, id: saved.id }));
+      // 新首帧还没人看过，服务端撤了它的确认，回来的是撤完的那份
+      const { approvedFrames } = await generateShotFrame(formData);
+      setProject((current) => ({ ...current, id: saved.id, approvedFrames }));
       setFrameVersion((current) => ({ ...current, [shot.order]: (current[shot.order] || 0) + 1 }));
       // 刚生成的首帧已经落在项目目录，出片时不用再选图
       setPendingFrames((current) => {
@@ -1040,6 +1063,45 @@ export default function VideoFactory({
       return false;
     } finally {
       setFramingShot(null);
+    }
+  };
+
+  const handleReviewFrame = async (shotOrder: number, approved: boolean) => {
+    if (!project.id) return;
+    try {
+      const data = await reviewShotFrame({ projectId: project.id, shotOrder, approved });
+      setProject((current) => ({ ...current, approvedFrames: data.approvedFrames }));
+    } catch (error) {
+      console.error("[VideoFactory] 首帧确认失败", { action: "videoFactory.frameReview", shotOrder, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "首帧确认失败" });
+    }
+  };
+
+  /** 验收结论只挂在这一镜的片子上，拿返回的那份换掉，别的字段不动 */
+  const applyClipQa = (shotOrder: number, qa: ShotClip["qa"]) =>
+    setProject((current) => ({
+      ...current,
+      clips: current.clips.map((clip) => (clip.shotOrder === shotOrder ? { ...clip, qa } : clip)),
+    }));
+
+  const runClipQa = async (projectId: string, shotOrder: number, reason?: string) => {
+    setCheckingShots((current) => [...current, shotOrder]);
+    try {
+      const data = await reviewShotClip({
+        projectId,
+        shotOrder,
+        action: reason ? "override" : "check",
+        reason,
+      });
+      applyClipQa(shotOrder, data.qa);
+      if (data.qa.status === "fail") {
+        onNotice({ type: "info", message: `第 ${shotOrder} 镜有没过的关，重做这一镜或看过后放行` });
+      }
+    } catch (error) {
+      console.error("[VideoFactory] 验收失败", { action: "videoFactory.clipQa", shotOrder, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "验收失败" });
+    } finally {
+      setCheckingShots((current) => current.filter((order) => order !== shotOrder));
     }
   };
 
@@ -1266,12 +1328,14 @@ export default function VideoFactory({
       setProject((current) => ({
         ...current,
         id: saved.id,
-        clips: [...current.clips.filter((clip) => clip.shotOrder !== shot.order), data.clip].sort(
-          (a, b) => a.shotOrder - b.shotOrder,
-        ),
+        clips: upsertClip(current.clips, data.clip),
+        // 当场挑的首帧由出片路由记成已确认，用它回来的那份
+        approvedFrames: data.approvedFrames ?? current.approvedFrames,
       }));
       setClipVersion((current) => ({ ...current, [shot.order]: (current[shot.order] || 0) + 1 }));
-      onNotice({ type: "success", message: `第 ${shot.order} 镜已生成` });
+      onNotice({ type: "success", message: `第 ${shot.order} 镜已生成，开始验收` });
+      // 出片即验收：不合格的当场就知道，别等到合成那一步才发现
+      void runClipQa(saved.id, shot.order);
     } catch (error) {
       console.error("[VideoFactory] 图生视频失败", { action: "videoFactory.generate", shotOrder: shot.order, error });
       onNotice({ type: "error", message: error instanceof Error ? error.message : "图生视频失败" });
@@ -1293,12 +1357,11 @@ export default function VideoFactory({
       setProject((current) => ({
         ...current,
         id: saved.id,
-        clips: [...current.clips.filter((clip) => clip.shotOrder !== shot.order), data.clip].sort(
-          (a, b) => a.shotOrder - b.shotOrder,
-        ),
+        clips: upsertClip(current.clips, data.clip),
       }));
       setClipVersion((current) => ({ ...current, [shot.order]: (current[shot.order] || 0) + 1 }));
-      onNotice({ type: "success", message: `第 ${shot.order} 镜已挂上` });
+      onNotice({ type: "success", message: `第 ${shot.order} 镜已挂上，开始验收` });
+      void runClipQa(saved.id, shot.order);
     } catch (error) {
       console.error("[VideoFactory] 成片上传失败", { action: "videoFactory.attach", shotOrder: shot.order, error });
       onNotice({ type: "error", message: error instanceof Error ? error.message : "成片上传失败" });
@@ -1808,6 +1871,23 @@ export default function VideoFactory({
 
                 {shot.visual && <p className="mt-2.5 text-sm leading-6 text-ink">{shot.visual}</p>}
 
+                {(shot.productFocus !== undefined || shot.sellingPoint !== undefined) && (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <Field label="看清商品哪里">
+                      <Input
+                        value={shot.productFocus || ""}
+                        onChange={(event) => patchShot(shot.order, { productFocus: event.target.value })}
+                      />
+                    </Field>
+                    <Field label="卖点画面">
+                      <Input
+                        value={shot.sellingPoint || ""}
+                        onChange={(event) => patchShot(shot.order, { sellingPoint: event.target.value })}
+                      />
+                    </Field>
+                  </div>
+                )}
+
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <div>
                     <div className="flex items-center justify-between">
@@ -1971,6 +2051,7 @@ export default function VideoFactory({
               const clip = project.clips.find((item) => item.shotOrder === shot.order);
               const pending = pendingFrames[shot.order];
               const frameLabel = pending?.label || (clip?.framePath ? "已用上次的首帧" : "");
+              const frameApproved = project.approvedFrames.includes(shot.order);
               const busy = generatingShot === shot.order;
 
               return (
@@ -1983,6 +2064,7 @@ export default function VideoFactory({
                     </span>
                     {clip && <Badge tone="ok">已出片</Badge>}
                   </div>
+                  {shot.productFocus && <p className="mt-1.5 text-[11px] text-faint">看清：{shot.productFocus}</p>}
 
                   <p className="mt-2 text-sm leading-6 text-muted">
                     {shot.visual || shotParts(shot)[0].voiceover || "（这一镜没写画面）"}
@@ -2063,23 +2145,50 @@ export default function VideoFactory({
                     )}
                   </div>
 
-                  {(frameVersion[shot.order] || clip?.framePath) && (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
-                      src={`/api/video-factory/frame?projectId=${encodeURIComponent(project.id)}&shot=${shot.order}&v=${
-                        frameVersion[shot.order] || 1
-                      }`}
-                      alt={`第 ${shot.order} 镜首帧`}
-                      className="mt-3 h-40 w-[90px] rounded-xl border border-line bg-sunken object-cover"
-                    />
+                  {(frameVersion[shot.order] || clip?.framePath || frameApproved) && (
+                    <div className="mt-3 flex items-end gap-3">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`/api/video-factory/frame?projectId=${encodeURIComponent(project.id)}&shot=${shot.order}&v=${
+                          frameVersion[shot.order] || 1
+                        }`}
+                        alt={`第 ${shot.order} 镜首帧`}
+                        className="h-40 w-[90px] rounded-xl border border-line bg-sunken object-cover"
+                      />
+                      {/* 当场挑的首帧出片时自动算确认，这里只管「生成首帧」出来、还没人看过的那张 */}
+                      {!pending &&
+                        (frameApproved ? (
+                          <button
+                            type="button"
+                            onClick={() => handleReviewFrame(shot.order, false)}
+                            className="inline-flex items-center gap-1 text-[11px] font-bold text-ok hover:text-muted"
+                            title="撤销确认"
+                          >
+                            <Check size={12} />
+                            首帧已确认
+                          </button>
+                        ) : (
+                          <Button size="sm" variant="secondary" onClick={() => handleReviewFrame(shot.order, true)} icon={<Check size={13} />}>
+                            确认首帧
+                          </Button>
+                        ))}
+                    </div>
                   )}
 
                   {clip && (
-                    <video
-                      controls
-                      src={clipUrl(project.id, shot.order, clipVersion[shot.order] || 1)}
-                      className="mt-3 w-full max-w-[240px] rounded-2xl border border-line bg-black"
-                    />
+                    <>
+                      <video
+                        controls
+                        src={clipUrl(project.id, shot.order, clipVersion[shot.order] || 1)}
+                        className="mt-3 w-full max-w-[240px] rounded-2xl border border-line bg-black"
+                      />
+                      <ClipQaPanel
+                        qa={clip.qa}
+                        busy={checkingShots.includes(shot.order)}
+                        onRecheck={() => runClipQa(project.id, shot.order)}
+                        onOverride={(reason) => runClipQa(project.id, shot.order, reason)}
+                      />
+                    </>
                   )}
                 </Card>
               );
@@ -2129,6 +2238,11 @@ export default function VideoFactory({
               {project.clips.length < storyboard.shots.length && (
                 <Callout tone="warn" className="mb-3">
                   还差 {storyboard.shots.length - project.clips.length} 镜没生成，合成前先把它们出完。
+                </Callout>
+              )}
+              {unclearedShots.length > 0 && (
+                <Callout tone="warn" className="mb-3">
+                  第 {unclearedShots.join("、")} 镜还没过验收，回「视频生成」重验或放行。
                 </Callout>
               )}
 

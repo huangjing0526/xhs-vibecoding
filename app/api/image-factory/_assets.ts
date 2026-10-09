@@ -102,10 +102,54 @@ async function writeIntoLibrary(kind: AssetKind, item: UploadAssetItem): Promise
   return record;
 }
 
-/** 新的排前面：库里最常用的是刚存进去的这批。 */
+/**
+ * 新的排前面：库里最常用的是刚存进去的这批。
+ * 补传进已有主体的图跟着主体的品类走——品类说的是这件货，不是某一张图；
+ * 定稿和锚点不跟：新图没人看过。
+ */
 async function appendAssets(kind: AssetKind, added: AssetRecord[]): Promise<LibraryAssetEntry[]> {
-  await writeAssetIndex(kind, [...added, ...(await readAssetIndex(kind))]);
-  return added.map((record) => toAssetEntry(kind, record));
+  const existing = await readAssetIndex(kind);
+  const inherited = added.map((record) => {
+    const category = existing.find((item) => item.name === record.name && item.category)?.category;
+    return category ? { ...record, category } : record;
+  });
+  await writeAssetIndex(kind, [...inherited, ...existing]);
+  return inherited.map((record) => toAssetEntry(kind, record));
+}
+
+/** 改一个主体的定稿状态、主锚点、品类。不传的项不动。 */
+export interface ProfilePatch {
+  approved?: boolean;
+  /** 设为主锚点的那一张；同主体其余几张的锚点标记一并撤掉 */
+  anchorId?: string;
+  category?: string;
+}
+
+/**
+ * 主体级的改动落到这个主体的每一张上：主体只是「同名的一组图」，没有自己的记录。
+ * 返回改完的整组；主体不存在、锚点不是这个主体的图时返回原因，由路由回 400。
+ */
+export async function updateProfile(
+  kind: AssetKind,
+  name: string,
+  patch: ProfilePatch,
+): Promise<LibraryAssetEntry[] | "missing" | "foreign-anchor"> {
+  const records = await readAssetIndex(kind);
+  if (!records.some((item) => item.name === name)) return "missing";
+  if (patch.anchorId && !records.some((item) => item.name === name && item.id === patch.anchorId)) {
+    return "foreign-anchor";
+  }
+
+  const next = records.map((record) => {
+    if (record.name !== name) return record;
+    const updated: AssetRecord = { ...record };
+    if (patch.approved !== undefined) updated.approved = patch.approved;
+    if (patch.anchorId) updated.anchor = record.id === patch.anchorId;
+    if (patch.category !== undefined) updated.category = patch.category;
+    return updated;
+  });
+  await writeAssetIndex(kind, next);
+  return next.filter((record) => record.name === name).map((record) => toAssetEntry(kind, record));
 }
 
 /** 一次运行的多个视角属于同一个主体，整组入库只读写一次索引。 */
@@ -133,14 +177,17 @@ export async function deleteAsset(kind: AssetKind, assetId: string): Promise<boo
   return true;
 }
 
-/** 取一条素材的图片字节与扩展名，给取图端点和跨模块引用（如视频工厂绑定角色）用。 */
+/**
+ * 取一条素材的图片字节与元数据，给取图端点和跨模块引用（如视频工厂绑定角色）用。
+ * 视频那边绑定时要把特征、品类、定稿状态一起拷走，所以连记录一并给出。
+ */
 export async function readAsset(
   kind: AssetKind,
   assetId: string,
-): Promise<{ bytes: Buffer; extension: string } | null> {
+): Promise<{ bytes: Buffer; extension: string; record: AssetRecord } | null> {
   const record = (await readAssetIndex(kind)).find((item) => item.id === assetId);
   if (!record) return null;
 
   const bytes = await readFile(assetFilePath(kind, record)).catch(() => null);
-  return bytes ? { bytes, extension: record.extension } : null;
+  return bytes ? { bytes, extension: record.extension, record } : null;
 }

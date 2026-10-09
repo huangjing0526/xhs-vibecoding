@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { JOB_ROOT, isSafeSegment, newShortId } from "@/app/api/image-factory/_shared";
-import { EMPTY_CAST, clipFileName, type VideoProject } from "@/lib/videoFactory";
+import { readAsset } from "@/app/api/image-factory/_assets";
+import { JOB_ROOT, MIME_BY_EXTENSION, isSafeSegment, newShortId } from "@/app/api/image-factory/_shared";
+import type { LibraryKind } from "@/lib/imageFactory";
+import { EMPTY_CAST, clipFileName, upsertClip, type CastRef, type ShotClip, type VideoProject } from "@/lib/videoFactory";
 
 // 路径安全校验与短 id 的规则两个工厂完全一致，直接复用图片工厂那份，不再造第二套
 export { isSafeSegment };
@@ -13,6 +15,22 @@ export const PROJECT_ROOT = path.join(FACTORY_ROOT, "projects");
 
 /** 图片工厂的产物目录，视频工厂从这里挑第一帧图，不重复造一套图库。 */
 export const IMAGE_JOB_ROOT = JOB_ROOT;
+
+/**
+ * 把素材库里的一张图拷进项目目录，连同它的特征与品类。三条绑定路由（项目级、对标实体、单镜）共用。
+ * 拷而不是引用：库里那条以后改了、删了，这条片子不该跟着变。素材已不在库里时返回 null。
+ */
+export async function copyLibraryAsset(
+  library: LibraryKind,
+  assetId: string,
+  targetFor: (extension: string) => string,
+): Promise<{ target: string; facts: Pick<CastRef, "traits" | "category"> } | null> {
+  const asset = await readAsset(library, assetId);
+  if (!asset) return null;
+  const target = targetFor(asset.extension);
+  await writeFile(target, new Uint8Array(asset.bytes));
+  return { target, facts: { traits: asset.record.traits, category: asset.record.category } };
+}
 
 /** 项目 id：时间前缀便于人肉排序，随机后缀避免同毫秒撞车。 */
 export const newProjectId = newShortId;
@@ -165,6 +183,15 @@ export function finalCutPath(projectId: string): string {
   return path.join(projectDir(projectId), "final.mp4");
 }
 
+/** 某一镜盘上已有的那张首帧；扩展名逐个试，没有就是 null。 */
+export async function findFramePath(projectId: string, shotOrder: number): Promise<string | null> {
+  for (const extension of Object.keys(MIME_BY_EXTENSION)) {
+    const candidate = framePath(projectId, shotOrder, extension);
+    if (await stat(candidate).then((info) => info.isFile(), () => false)) return candidate;
+  }
+  return null;
+}
+
 /** 某一镜的首帧图落点，扩展名跟上传的走。 */
 export function framePath(projectId: string, shotOrder: number, extension: string): string {
   return path.join(projectDir(projectId), `frame-${String(shotOrder).padStart(2, "0")}${extension}`);
@@ -184,6 +211,7 @@ export async function readProject(projectId: string): Promise<VideoProject | nul
       cast: { ...EMPTY_CAST, ...project.cast },
       voiceovers: project.voiceovers ?? [],
       finalCut: project.finalCut ?? null,
+      approvedFrames: project.approvedFrames ?? [],
     };
   } catch (error) {
     // 首次保存前文件不存在是正常的，其余情况要留痕再按空项目继续
@@ -197,6 +225,60 @@ export async function readProject(projectId: string): Promise<VideoProject | nul
     }
     return null;
   }
+}
+
+/**
+ * 把这一镜写进 project.json 的 clips。
+ * clips 归服务端所有，项目保存接口不收前端那份——出片、回传、验收都得自己在这里落盘，
+ * 否则只有 mp4 躺在盘上、项目却不认它，刷新一下片子就「没了」。
+ */
+export async function mergeClipIntoProject(projectId: string, clip: ShotClip): Promise<void> {
+  const project = await readProject(projectId);
+  if (!project) {
+    // 片子字节已经落盘了，这里再失败也追不回来，留痕即可，别把整次回传判死
+    console.error("[VideoFactory] 成片已落盘但项目读不到，clips 未更新", {
+      userId: "local",
+      action: "videoFactory.clip.merge",
+      projectId,
+      shotOrder: clip.shotOrder,
+    });
+    return;
+  }
+
+  await writeProject({ ...project, clips: upsertClip(project.clips, clip) });
+}
+
+/**
+ * 记下或撤掉某一镜的首帧确认。项目读不到时如实报错——
+ * 确认是出片的闸门，悄悄没记上，人会以为确认过了却出不了片。
+ */
+export async function setFrameApproval(projectId: string, shotOrder: number, approved: boolean): Promise<number[]> {
+  const project = await readProject(projectId);
+  if (!project) {
+    console.error("[VideoFactory] 首帧确认写不进项目", {
+      userId: "local",
+      action: "videoFactory.frame.approval",
+      projectId,
+      shotOrder,
+      approved,
+    });
+    throw new Error("项目不存在，首帧确认没记上");
+  }
+  const rest = project.approvedFrames.filter((order) => order !== shotOrder);
+  const approvedFrames = approved ? [...rest, shotOrder].sort((a, b) => a - b) : rest;
+  await writeProject({ ...project, approvedFrames });
+  return approvedFrames;
+}
+
+/** 量一个媒体文件的时长，量不出来回 0，由调用方决定退回哪个值。 */
+export async function probeDurationSec(file: string): Promise<number> {
+  const out = await runCommand(
+    "ffprobe",
+    ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", file],
+    { timeoutMs: 30_000 },
+  );
+  const value = Number(String(out).trim().split("\n")[0]);
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 export async function writeProject(project: VideoProject): Promise<VideoProject> {

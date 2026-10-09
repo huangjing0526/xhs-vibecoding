@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { ArrowLeft, Library, Loader2, Sparkles, Upload } from "lucide-react";
+import { ArrowLeft, BadgeCheck, Library, Loader2, Sparkles, Upload } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
 import Card from "@/components/ui/Card";
@@ -19,7 +19,8 @@ import {
   type LibraryAssetEntry,
   type LibraryKind,
 } from "@/lib/imageFactory";
-import { deleteLibraryAsset, listLibraryAssets } from "@/lib/workflowClient";
+import { PRODUCT_CATEGORIES } from "@/lib/productCategories";
+import { deleteLibraryAsset, listLibraryAssets, updateLibraryProfile } from "@/lib/workflowClient";
 import type { Notice } from "./types";
 
 /**
@@ -99,6 +100,18 @@ export default function AssetLibrary({
     }
   };
 
+  /** 主体级改动回来的是改完的整组，按 id 换回列表里，其余主体不动 */
+  const patchProfile = async (patch: { name: string; approved?: boolean; anchorId?: string; category?: string }) => {
+    try {
+      const updated = await updateLibraryProfile(kind, patch);
+      const byId = new Map(updated.map((asset) => [asset.id, asset]));
+      setAssets((current) => current.map((asset) => byId.get(asset.id) || asset));
+    } catch (error) {
+      console.error("[AssetLibrary] 主体更新失败", { action: "assets.patch", kind, name: patch.name, error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "素材更新失败" });
+    }
+  };
+
   const handleUploaded = (added: LibraryAssetEntry[]) => {
     setUploading(false);
     if (added.length === 0) return;
@@ -146,12 +159,35 @@ export default function AssetLibrary({
               </h2>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              {kind === "products" && (
+                <select
+                  aria-label="商品品类"
+                  value={openProfile.category}
+                  onChange={(event) => patchProfile({ name: openProfile.name, category: event.target.value })}
+                  className="h-8 rounded-xl border border-line bg-soft px-2.5 text-xs font-bold text-ink outline-none focus:border-brand-300"
+                >
+                  <option value="">选品类</option>
+                  {PRODUCT_CATEGORIES.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <Button
+                size="sm"
+                variant={openProfile.approved ? "ghost" : "secondary"}
+                icon={<BadgeCheck size={14} />}
+                onClick={() => patchProfile({ name: openProfile.name, approved: !openProfile.approved })}
+              >
+                {openProfile.approved ? "撤回定稿" : "标为定稿"}
+              </Button>
               {/* 存进来的东西得有地方用掉，否则这个库就是只进不出。带的是这一位最能代表她的那张 */}
               <Button
                 size="sm"
                 variant="secondary"
                 icon={<Sparkles size={14} />}
-                onClick={() => onUseAsset(openProfile.assets[0], kind)}
+                onClick={() => onUseAsset(openProfile.cover, kind)}
               >
                 用这{copy.subject === "场景" ? "个" : "位"}{copy.subject}生成
               </Button>
@@ -180,6 +216,7 @@ export default function AssetLibrary({
                 fileName={`${asset.name}-${asset.sourceLabel || "未标注"}${asset.extension}`}
                 onOpen={setZoomed}
                 onDelete={handleDelete}
+                onSetAnchor={(picked) => patchProfile({ name: openProfile.name, anchorId: picked.id })}
               />
             ))}
           </div>

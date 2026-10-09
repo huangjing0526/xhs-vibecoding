@@ -13,6 +13,10 @@ export interface AssetProfile {
   assets: LibraryAssetEntry[];
   /** 一眼认出这是谁 / 哪件货的那张：列表页当封面，下游模板当默认参考图 */
   cover: LibraryAssetEntry;
+  /** 每一张都批过才算定稿，见 LibraryAssetEntry.approved */
+  approved: boolean;
+  /** 商品品类，取这个主体身上第一条填过的 */
+  category: string;
 }
 
 /**
@@ -27,6 +31,9 @@ const COVER_PRIORITY: Record<LibraryKind, string[]> = {
 };
 
 function pickCover(assets: LibraryAssetEntry[], kind: LibraryKind): LibraryAssetEntry {
+  // 人手指定的主锚点压过一切默认优先级
+  const anchor = assets.find((asset) => asset.anchor);
+  if (anchor) return anchor;
   for (const label of COVER_PRIORITY[kind]) {
     const matched = assets.find((asset) => asset.sourceLabel === label);
     if (matched) return matched;
@@ -40,6 +47,8 @@ export function groupAssetProfiles(assets: LibraryAssetEntry[], kind: LibraryKin
     traits: items.find((asset) => asset.traits)?.traits || "",
     assets: items,
     cover: pickCover(items, kind),
+    approved: items.every((asset) => asset.approved),
+    category: items.find((asset) => asset.category)?.category || "",
   }));
 }
 

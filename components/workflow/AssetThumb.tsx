@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { Download, Trash2 } from "lucide-react";
+import { Download, Pin, Trash2 } from "lucide-react";
 import type { LibraryAssetEntry } from "@/lib/imageFactory";
 
 /**
@@ -17,6 +17,7 @@ export default function AssetThumb({
   missingHint,
   onOpen,
   onDelete,
+  onSetAnchor,
 }: {
   label: string;
   asset?: LibraryAssetEntry;
@@ -24,6 +25,8 @@ export default function AssetThumb({
   missingHint?: string;
   onOpen: (asset: LibraryAssetEntry) => void;
   onDelete: (asset: LibraryAssetEntry) => void;
+  /** 不传就不提供「设为主锚点」，图片工厂的角度板用不到它 */
+  onSetAnchor?: (asset: LibraryAssetEntry) => void;
 }) {
   if (!asset) {
     return (
@@ -42,7 +45,23 @@ export default function AssetThumb({
         <button type="button" onClick={() => onOpen(asset)} className="absolute inset-0" aria-label={`看大图：${label}`}>
           <Image src={asset.imageUrl} alt={label} fill sizes="200px" className="object-cover" />
         </button>
+        {asset.anchor && (
+          <span className="pointer-events-none absolute left-1.5 top-1.5 rounded-lg bg-black/55 px-1.5 py-0.5 text-[10px] font-bold text-white">
+            主锚点
+          </span>
+        )}
         <div className="pointer-events-none absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+          {onSetAnchor && !asset.anchor && (
+            <button
+              type="button"
+              onClick={() => onSetAnchor(asset)}
+              className="rounded-lg bg-black/55 p-1.5 text-white"
+              aria-label={`把${label}设为主锚点`}
+              title="设为主锚点"
+            >
+              <Pin size={12} />
+            </button>
+          )}
           <a
             href={asset.imageUrl}
             download={fileName}

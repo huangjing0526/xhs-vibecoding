@@ -222,6 +222,15 @@ export interface LibraryAssetEntry {
    * 只给图锁不住身份，描述跟着图一起喂给 CLI 才稳得住同一个人 / 同一件货。
    */
   traits?: string;
+  /**
+   * 定稿。按主体整组批，记在每一张上：之后补传进同名主体的图不带这个标记，
+   * 主体就回到「未定稿」——新图没人看过，不能借着老图的审批混进下游。
+   */
+  approved?: boolean;
+  /** 主锚点：这个主体最能锁住身份的那一张，下游默认拿它当参考图。一个主体只有一张 */
+  anchor?: boolean;
+  /** 商品品类（PRODUCT_CATEGORIES 的 id），只对产品库有意义：决定生成视频时重点防哪些变形 */
+  category?: string;
 }
 
 /**

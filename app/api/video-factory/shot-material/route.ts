@@ -10,9 +10,8 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
-import { readAsset } from "@/app/api/image-factory/_assets";
 import { MIME_BY_EXTENSION, mimeByExtension } from "@/app/api/image-factory/_shared";
-import { isSafeSegment, projectDir, shotMaterialPath } from "@/app/api/video-factory/_shared";
+import { copyLibraryAsset, isSafeSegment, projectDir, shotMaterialPath } from "@/app/api/video-factory/_shared";
 import type { CastRef } from "@/lib/videoFactory";
 
 export const runtime = "nodejs";
@@ -59,6 +58,7 @@ export async function POST(request: NextRequest) {
     if (stale) await rm(stale.file, { force: true });
 
     let target = "";
+    let facts: Partial<CastRef> = {};
 
     if (file instanceof File && file.size > 0) {
       const extension = path.extname(file.name).toLowerCase();
@@ -67,16 +67,14 @@ export async function POST(request: NextRequest) {
       await writeFile(target, Buffer.from(await file.arrayBuffer()));
     } else if (assetId) {
       if (!LIBRARIES.includes(rawLibrary as Library)) return apiBadRequest("素材库不合法");
-      // 拷进项目目录再用：库里那条以后被删了，这条片子不该跟着废
-      const asset = await readAsset(rawLibrary as Library, assetId);
-      if (!asset) return apiBadRequest("这条素材已不在库里，换一条或重新上传");
-      target = shotMaterialPath(projectId, shotOrder, asset.extension);
-      await writeFile(target, new Uint8Array(asset.bytes));
+      const copied = await copyLibraryAsset(rawLibrary as Library, assetId, (extension) => shotMaterialPath(projectId, shotOrder, extension));
+      if (!copied) return apiBadRequest("这条素材已不在库里，换一条或重新上传");
+      ({ target, facts } = copied);
     } else {
       return apiBadRequest("选一张素材，或上传一张");
     }
 
-    const material: CastRef = { assetId, label: label || `第 ${shotOrder} 镜素材`, path: target };
+    const material: CastRef = { assetId, label: label || `第 ${shotOrder} 镜素材`, path: target, ...facts };
     return apiOk({ shotOrder, material }, `已绑定第 ${shotOrder} 镜的素材`);
   } catch (error) {
     console.error("[VideoFactory] 绑定分镜素材失败", { action: "videoFactory.shotMaterial.bind", projectId });

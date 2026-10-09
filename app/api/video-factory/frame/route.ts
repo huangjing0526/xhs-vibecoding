@@ -3,7 +3,8 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import { MIME_BY_EXTENSION, mimeByExtension } from "@/app/api/image-factory/_shared";
-import { framePath, isSafeSegment, projectDir, runCommand } from "@/app/api/video-factory/_shared";
+import { framePath, isSafeSegment, projectDir, runCommand, setFrameApproval } from "@/app/api/video-factory/_shared";
+import { productCategory } from "@/lib/productCategories";
 import { CAST_KIND_LABEL, CAST_SLOTS, type BenchmarkCastKind, type CastRef, type ProjectCast } from "@/lib/videoFactory";
 
 // 调本机生图 CLI，必须 nodejs runtime。
@@ -18,6 +19,22 @@ interface ReferenceImage {
   path: string;
   /** 这张图只准被用来做什么，逐槽位来自 CAST_SLOTS */
   usage: string;
+  /** 绑定时从素材库拷来的特征与品类；只给图锁不住身份，描述跟着图一起给才稳 */
+  traits?: string;
+  category?: string;
+}
+
+/** 参考图在提示词里的那几行：路径、用途，有特征和品类易错处就跟在后面。 */
+function referenceLines(item: ReferenceImage, index: number): string {
+  const category = productCategory(item.category);
+  return [
+    `${index + 1}. ${item.label}：${item.path}`,
+    `   用途：${item.usage}`,
+    item.traits ? `   特征：${item.traits}` : "",
+    category ? `   易错处：${category.risks}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /**
@@ -31,12 +48,9 @@ function buildFramePrompt(options: {
   outputPath: string;
   references: ReferenceImage[];
   continuityNote: string;
+  productFocus: string;
 }): string {
-  const referenceList = options.references.length
-    ? options.references
-        .map((item, index) => `${index + 1}. ${item.label}：${item.path}\n   用途：${item.usage}`)
-        .join("\n")
-    : "无参考图";
+  const referenceList = options.references.length ? options.references.map(referenceLines).join("\n") : "无参考图";
 
   return `你正在执行内容工作台的分镜首帧生成任务。
 
@@ -44,7 +58,7 @@ function buildFramePrompt(options: {
 
 这一镜要的画面：
 ${options.framePrompt}
-
+${options.productFocus ? `\n这一镜要让观众看清：${options.productFocus}\n` : ""}
 输出比例：9:16 竖版，真实摄影质感，画面里不要出现任何文字。
 ${options.continuityNote ? `\n跨镜一致性要求：${options.continuityNote}\n` : ""}
 参考图片：
@@ -87,6 +101,7 @@ export async function POST(request: NextRequest) {
     const continuityNote = String(formData.get("continuityNote") || "").trim();
     const provider = String(formData.get("provider") || "codex").trim();
     const rawCast = String(formData.get("cast") || "").trim();
+    const productFocus = String(formData.get("productFocus") || "").trim();
 
     if (!isSafeSegment(projectId)) return apiBadRequest("项目 id 不合法");
     if (!Number.isInteger(shotOrder) || shotOrder < 1 || shotOrder > 99) return apiBadRequest("镜号不合法");
@@ -117,6 +132,8 @@ export async function POST(request: NextRequest) {
           label: `本镜素材（${material.label}）`,
           path: resolved,
           usage: "这一镜要展示的就是它，款式、颜色、材质、细节都要照它来；场景和光线以上面的画面描述为准",
+          traits: material.traits,
+          category: material.category,
         });
       }
     }
@@ -127,7 +144,9 @@ export async function POST(request: NextRequest) {
     /** 已经由实体绑定覆盖掉的槽位，项目级那张就别再塞进来了 */
     const coveredSlots = new Set<string>();
     if (rawEntities) {
-      const entities = JSON.parse(rawEntities) as Array<{ kind?: string; label?: string; path?: string }>;
+      const entities = JSON.parse(rawEntities) as Array<
+        { kind?: string; label?: string; path?: string } & Pick<CastRef, "traits" | "category">
+      >;
       for (const entity of Array.isArray(entities) ? entities : []) {
         const slot = CAST_SLOTS.find((item) => item.id === entity.kind);
         const resolved = slot && entity.path ? await inProject(entity.path) : null;
@@ -136,6 +155,8 @@ export async function POST(request: NextRequest) {
           label: `${CAST_KIND_LABEL[slot.id as BenchmarkCastKind]}（${entity.label || slot.label}）`,
           path: resolved,
           usage: slot.usage,
+          traits: entity.traits,
+          category: entity.category,
         });
         coveredSlots.add(slot.id);
       }
@@ -150,7 +171,13 @@ export async function POST(request: NextRequest) {
         if (!ref?.path || coveredSlots.has(slot.id)) continue;
         const resolved = await inProject(ref.path);
         if (resolved) {
-          references.push({ label: `${slot.label}（${ref.label}）`, path: resolved, usage: slot.usage });
+          references.push({
+            label: `${slot.label}（${ref.label}）`,
+            path: resolved,
+            usage: slot.usage,
+            traits: ref.traits,
+            category: ref.category,
+          });
         }
       }
     }
@@ -161,7 +188,13 @@ export async function POST(request: NextRequest) {
     const workPath = path.join(dir, `frame-gen-${String(shotOrder).padStart(2, "0")}.png`);
     await rm(workPath, { force: true });
 
-    const cliPrompt = buildFramePrompt({ framePrompt: prompt, outputPath: workPath, references, continuityNote });
+    const cliPrompt = buildFramePrompt({
+      framePrompt: prompt,
+      outputPath: workPath,
+      references,
+      continuityNote,
+      productFocus,
+    });
     const promptFile = path.join(dir, `frame-prompt-${String(shotOrder).padStart(2, "0")}.txt`);
     await writeFile(promptFile, cliPrompt, "utf8");
 
@@ -208,8 +241,10 @@ export async function POST(request: NextRequest) {
     // 统一挪到 frame-NN.png：出片接口认的是这个名字
     await writeFile(target, new Uint8Array(await readFile(produced)));
     if (produced !== target) await rm(produced, { force: true });
+    // 换了一张新首帧，上一张的确认不能沿用
+    const approvedFrames = await setFrameApproval(projectId, shotOrder, false);
 
-    return apiOk({ projectId, shotOrder, framePath: target }, `第 ${shotOrder} 镜首帧已生成`);
+    return apiOk({ projectId, shotOrder, framePath: target, approvedFrames }, `第 ${shotOrder} 镜首帧已生成`);
   } catch (error) {
     console.error("[VideoFactory] 首帧生成失败", { action: "videoFactory.frame", projectId, shotOrder });
     return apiError(error, "videoFactory.frame", "首帧生成失败");

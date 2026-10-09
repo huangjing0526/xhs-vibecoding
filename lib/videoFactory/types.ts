@@ -164,6 +164,14 @@ export interface Shot {
    * 六镜共用一张角色图才不会换脸。所以是「可选覆盖」而不是「取代」。
    */
   material?: CastRef;
+  /**
+   * 这一镜要让观众看清商品的哪里、用什么景别，如「中景：腰线和上下装衔接」。
+   * 不卖货的片子留空。只说看哪里，不说商品长什么样——外观归首帧锁，
+   * 文字一描述图案，模型就会每帧重画一遍，越画越漂。
+   */
+  productFocus?: string;
+  /** 卖点翻成镜头看得见的画面，如「显瘦 → 侧身停半秒露出腰身轮廓」。没有就留空 */
+  sellingPoint?: string;
 }
 
 /** 分镜表。比例固定 9:16——六个发布目标里五个是竖视频。 */
@@ -185,6 +193,51 @@ export interface ShotClip {
   createdAt: string;
   /** 生成这一镜用的首帧图绝对路径，便于重跑时复用 */
   framePath: string;
+  /** 验收结论。片子一换（重跑、重传）就是一条新的 ShotClip，旧结论自然作废 */
+  qa?: ClipQa;
+}
+
+/** 验收的几道关。人、货、场、光由看图模型判，尾帧冻结由 ffmpeg 量。 */
+export const CLIP_QA_GATES = [
+  { id: "identity", label: "人物", hint: "脸、发型、体型和首帧、角色参考图是不是同一个人" },
+  { id: "product", label: "商品", hint: "款式、颜色、图案、文字、结构有没有变" },
+  { id: "background", label: "场景", hint: "背景陈设和空间结构有没有漂移" },
+  { id: "lighting", label: "光线", hint: "光向、色温、曝光有没有突然跳" },
+  { id: "motion", label: "动作", hint: "手指、四肢、穿模、扭曲、黑帧" },
+  { id: "tail", label: "尾帧", hint: "最后一段画面有没有冻住不动" },
+] as const;
+
+export type ClipQaGateId = (typeof CLIP_QA_GATES)[number]["id"];
+
+/** na：这一镜里本来就没有这样东西（如纯商品特写里没有人），不算过也不算挂 */
+export type ClipQaVerdict = "pass" | "fail" | "na";
+
+export interface ClipQaGate {
+  id: ClipQaGateId;
+  verdict: ClipQaVerdict;
+  /** 具体看到了什么，挂了要写清在第几秒、哪里不对 */
+  evidence: string;
+}
+
+export interface ClipQa {
+  /** pass：没有挂的关；fail：至少挂一关；override：挂了但人看过、写了理由放行 */
+  status: "pass" | "fail" | "override";
+  gates: ClipQaGate[];
+  checkedAt: string;
+  /** 谁判的，便于回头对误判 */
+  provider: string;
+  /** 人工放行的理由，status 为 override 时必有 */
+  overrideReason?: string;
+}
+
+/** 合成认这两种：自动验收通过，或者人看过之后放行。 */
+export function clipQaCleared(qa: ClipQa | undefined): boolean {
+  return qa?.status === "pass" || qa?.status === "override";
+}
+
+/** 换上这一镜的新片子，按镜号排好。服务端落盘和前端接结果共用，一镜永远只有一条。 */
+export function upsertClip(clips: ShotClip[], clip: ShotClip): ShotClip[] {
+  return [...clips.filter((item) => item.shotOrder !== clip.shotOrder), clip].sort((a, b) => a.shotOrder - b.shotOrder);
 }
 
 /**
@@ -250,6 +303,13 @@ export interface CastRef {
   label: string;
   /** 拷进项目目录后的绝对路径，生成首帧时直接当参考图用 */
   path: string;
+  /**
+   * 绑定那一刻从素材库拷来的特征描述。和图一样拷一份而不是回库里现查：
+   * 库里那条以后改了、删了，这条片子已经出过的镜头不该跟着变。现场上传的没有。
+   */
+  traits?: string;
+  /** 同上，商品品类，决定出片和验收时盯哪些易错处 */
+  category?: string;
 }
 
 /** 角色、产品、场景三个槽位。生成每一镜首帧时都会带上，这是跨镜一致性的唯一抓手。 */
@@ -331,6 +391,13 @@ export interface VideoProject {
   script: ScriptDraft | null;
   storyboard: Storyboard | null;
   clips: ShotClip[];
+  /**
+   * 人看过并确认的首帧镜号。视频模型只拿首帧当身份和商品的依据，首帧一偏整镜都偏，
+   * 所以「生成首帧」出来的图要人点一下才能拿去出片；自己挑的、上传的首帧本身就是人选的，算确认过。
+   * 和 clips 一样归服务端：重出首帧时由首帧路由撤掉确认，前端手里那份随时可能是旧的。
+   * 老项目没有这个字段，readProject 读的时候补成空的。
+   */
+  approvedFrames: number[];
   /** 各镜配音，和 clips 一样归服务端所有，前端存盘不上送 */
   voiceovers: ShotVoiceover[];
   /** 最近一次合成的成片；没合成过是 null */
@@ -419,6 +486,8 @@ export interface ShotGenerationResult {
   projectId: string;
   shotOrder: number;
   clip: ShotClip;
+  /** 出片路由会顺手把当场挑的首帧记成已确认，回传当前全部已确认镜号；回传通道不带 */
+  approvedFrames?: number[];
 }
 
 export const VIDEO_FACTORY_STEPS = [

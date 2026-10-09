@@ -6,11 +6,13 @@ import {
   listAssets,
   readAsset,
   saveAssets,
+  updateProfile,
   uploadAssets,
   type SaveAssetItem,
   type UploadAssetItem,
 } from "@/app/api/image-factory/_assets";
 import { ASSET_LABEL, isSafeSegment, mimeByExtension, type AssetKind } from "@/app/api/image-factory/_shared";
+import { productCategory } from "@/lib/productCategories";
 
 /**
  * 素材库路由的共用实现。
@@ -86,6 +88,37 @@ export function createAssetHandlers(kind: AssetKind) {
         return apiOk({ [kind]: added }, `已存入${label} ${added.length} 张`);
       } catch (error) {
         return apiError(error, `imageFactory.${kind}.save`, `存入${label}失败`);
+      }
+    },
+
+    /** 主体级改动：定稿、主锚点、品类。按名字定位主体，因为主体本来就是「同名的一组图」。 */
+    async PATCH(request: NextRequest) {
+      let name = "";
+      try {
+        const body = await readJsonBody<{ name?: string; approved?: unknown; anchorId?: unknown; category?: unknown }>(
+          request,
+          `imageFactory.${kind}.patch`,
+        );
+        name = String(body.name || "").trim();
+        if (!name) return apiBadRequest("缺少主体名称");
+
+        const anchorId = typeof body.anchorId === "string" ? body.anchorId.trim() : "";
+        if (anchorId && !isSafeSegment(anchorId)) return apiBadRequest("素材 id 不合法");
+        const category = typeof body.category === "string" ? body.category.trim() : undefined;
+        // 空串是「清掉品类」，不是非法值
+        if (category && !productCategory(category)) return apiBadRequest("不认识这个品类");
+
+        const updated = await updateProfile(kind, name, {
+          approved: typeof body.approved === "boolean" ? body.approved : undefined,
+          anchorId: anchorId || undefined,
+          category,
+        });
+        if (updated === "missing") return apiBadRequest(`「${name}」已不在${label}里`);
+        if (updated === "foreign-anchor") return apiBadRequest("这张图不属于这个主体，没法设为锚点");
+        return apiOk({ [kind]: updated }, "已更新");
+      } catch (error) {
+        console.error(`[ImageFactory] ${label}主体更新失败`, { userId: "local", action: `imageFactory.${kind}.patch`, name });
+        return apiError(error, `imageFactory.${kind}.patch`, `${label}更新失败`);
       }
     },
 
