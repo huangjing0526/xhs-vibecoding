@@ -11,7 +11,7 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import { MIME_BY_EXTENSION, mimeByExtension } from "@/app/api/image-factory/_shared";
-import { copyLibraryAsset, castEntityPath, isSafeSegment, projectDir } from "@/app/api/video-factory/_shared";
+import { copyLibraryAsset, castEntityPath, isSafeSegment, projectDir, readProject, updateProject } from "@/app/api/video-factory/_shared";
 import { castTokenSlug, parseCastToken, type CastRef } from "@/lib/videoFactory";
 
 export const runtime = "nodejs";
@@ -54,6 +54,7 @@ export async function POST(request: NextRequest) {
 
     if (!isSafeSegment(projectId)) return apiBadRequest("项目 id 不合法");
     if (!slug) return apiBadRequest("实体标识不合法，只能是角色/产品/场景加一位序号");
+    if (!(await readProject(projectId))) return apiBadRequest("项目不存在，先保存项目再绑定");
 
     await mkdir(projectDir(projectId), { recursive: true });
 
@@ -78,6 +79,11 @@ export async function POST(request: NextRequest) {
     }
 
     const ref: CastRef = { assetId, label: label || token, path: target, ...facts };
+    // 当场写进项目：生成首帧马上就要从盘上读它，等前端自动存盘就晚了
+    await updateProject(projectId, "videoFactory.castEntity.bind", (project) => ({
+      ...project,
+      castBinding: { ...project.castBinding, [token]: ref },
+    }));
     return apiOk({ token, ref }, `已把「${token}」换成你的素材`);
   } catch (error) {
     console.error("[VideoFactory] 绑定对标实体失败", { action: "videoFactory.castEntity.bind", projectId });
@@ -95,6 +101,11 @@ export async function DELETE(request: NextRequest) {
     if (!isSafeSegment(projectId)) return apiBadRequest("项目 id 不合法");
     if (!slug) return apiBadRequest("实体标识不合法");
 
+    await updateProject(projectId, "videoFactory.castEntity.clear", (project) => {
+      const castBinding = { ...project.castBinding };
+      delete castBinding[token];
+      return { ...project, castBinding };
+    });
     const existing = await findExisting(projectId, slug);
     if (existing) await rm(existing.file, { force: true });
     return apiOk({ token }, `「${token}」已改回照对标的类型写`);

@@ -780,7 +780,7 @@ export async function clearShotMaterial(projectId: string, shotOrder: number): P
   );
 }
 
-/** 视频工厂：按分镜提示词生成一镜的首帧图，自动带上绑定的角色与产品。 */
+/** 视频工厂：按分镜提示词生成一镜的首帧图，参考图由服务端按项目里的绑定算。 */
 export async function generateShotFrame(
   formData: FormData,
   signal?: AbortSignal,
@@ -908,13 +908,19 @@ export async function listVideoProjects(): Promise<{ projects: VideoProject[] }>
   return parseApiResponse<{ projects: VideoProject[] }>(response, "项目列表读取失败");
 }
 
+/** 视频工厂：取单个项目，连同服务端按首帧图现算的已确认镜号。 */
+export async function getVideoProject(projectId: string): Promise<{ project: VideoProject; approvedFrames: number[] }> {
+  const response = await fetch(`/api/video-factory/project?id=${encodeURIComponent(projectId)}`, { cache: "no-store" });
+  return parseApiResponse(response, "项目读取失败");
+}
+
 /** 视频工厂：整份覆盖保存，每步结束存一次。 */
 export async function saveVideoProject(
   project: Partial<VideoProject>,
-  /** clips 归服务端所有，存盘不会收前端那份；重拆分镜要清空得显式说一声。 */
+  /** 服务端写的字段存盘不会收前端那份（见 mergeServerOwned）；重拆分镜要清空得显式说一声。 */
   options?: { resetClips?: boolean },
-): Promise<{ project: VideoProject }> {
-  return workflowRequest<{ project: VideoProject }>(
+): Promise<{ project: VideoProject; approvedFrames: number[] }> {
+  return workflowRequest<{ project: VideoProject; approvedFrames: number[] }>(
     "/api/video-factory/project",
     { method: "POST", body: JSON.stringify({ project, resetClips: options?.resetClips }) },
     "项目保存失败"

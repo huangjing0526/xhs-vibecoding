@@ -3,7 +3,7 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import { MIME_BY_EXTENSION, mimeByExtension } from "@/app/api/image-factory/_shared";
-import { castPath, copyLibraryAsset, isSafeSegment, projectDir } from "@/app/api/video-factory/_shared";
+import { castPath, copyLibraryAsset, isSafeSegment, projectDir, readProject, updateProject } from "@/app/api/video-factory/_shared";
 import { CAST_SLOTS, type CastRef, type CastSlot } from "@/lib/videoFactory";
 
 export const runtime = "nodejs";
@@ -42,6 +42,7 @@ export async function POST(request: NextRequest) {
 
     if (!isSafeSegment(projectId)) return apiBadRequest("项目 id 不合法");
     if (!slot) return apiBadRequest("槽位只能是角色或产品");
+    if (!(await readProject(projectId))) return apiBadRequest("项目不存在，先保存项目再绑定");
 
     const dir = projectDir(projectId);
     await mkdir(dir, { recursive: true });
@@ -68,6 +69,11 @@ export async function POST(request: NextRequest) {
     }
 
     const cast: CastRef = { assetId, label: label || SLOT_LABEL[slot], path: target, ...facts };
+    // 当场写进项目：生成首帧马上就要从盘上读它，等前端自动存盘就晚了
+    await updateProject(projectId, "videoFactory.cast.bind", (project) => ({
+      ...project,
+      cast: { ...project.cast, [slot]: cast },
+    }));
     return apiOk({ slot, cast }, `已绑定${SLOT_LABEL[slot]}`);
   } catch (error) {
     console.error("[VideoFactory] 绑定参考图失败", { action: "videoFactory.cast.bind", projectId });
@@ -84,6 +90,10 @@ export async function DELETE(request: NextRequest) {
     if (!isSafeSegment(projectId)) return apiBadRequest("项目 id 不合法");
     if (!slot) return apiBadRequest("槽位只能是角色或产品");
 
+    await updateProject(projectId, "videoFactory.cast.clear", (project) => ({
+      ...project,
+      cast: { ...project.cast, [slot]: null },
+    }));
     const existing = await findExisting(projectId, slot);
     if (existing) await rm(existing.file, { force: true });
     return apiOk({ slot }, `已取消${SLOT_LABEL[slot]}`);

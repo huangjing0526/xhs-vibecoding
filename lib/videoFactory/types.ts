@@ -392,12 +392,11 @@ export interface VideoProject {
   storyboard: Storyboard | null;
   clips: ShotClip[];
   /**
-   * 人看过并确认的首帧镜号。视频模型只拿首帧当身份和商品的依据，首帧一偏整镜都偏，
+   * 人看过并确认的首帧图，存的是图的内容哈希。视频模型只拿首帧当身份和商品的依据，首帧一偏整镜都偏，
    * 所以「生成首帧」出来的图要人点一下才能拿去出片；自己挑的、上传的首帧本身就是人选的，算确认过。
-   * 和 clips 一样归服务端：重出首帧时由首帧路由撤掉确认，前端手里那份随时可能是旧的。
-   * 老项目没有这个字段，readProject 读的时候补成空的。
+   * 记图不记镜号：哪条路换了图，确认都自然失效，不靠每个改图的路由记得去撤。
    */
-  approvedFrames: number[];
+  approvedFrameHashes: string[];
   /** 各镜配音，和 clips 一样归服务端所有，前端存盘不上送 */
   voiceovers: ShotVoiceover[];
   /** 最近一次合成的成片；没合成过是 null */

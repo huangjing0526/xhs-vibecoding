@@ -11,8 +11,15 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import { MIME_BY_EXTENSION, mimeByExtension } from "@/app/api/image-factory/_shared";
-import { copyLibraryAsset, isSafeSegment, projectDir, shotMaterialPath } from "@/app/api/video-factory/_shared";
-import type { CastRef } from "@/lib/videoFactory";
+import {
+  copyLibraryAsset,
+  isSafeSegment,
+  projectDir,
+  readProject,
+  shotMaterialPath,
+  updateProject,
+} from "@/app/api/video-factory/_shared";
+import type { CastRef, VideoProject } from "@/lib/videoFactory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +31,18 @@ type Library = (typeof LIBRARIES)[number];
 function readShotOrder(value: string): number | null {
   const order = Number(value);
   return Number.isInteger(order) && order > 0 && order <= 999 ? order : null;
+}
+
+/** 把这一镜的素材写进项目里的分镜；undefined 是解绑。 */
+function withShotMaterial(project: VideoProject, shotOrder: number, material: CastRef | undefined): VideoProject {
+  if (!project.storyboard) return project;
+  return {
+    ...project,
+    storyboard: {
+      ...project.storyboard,
+      shots: project.storyboard.shots.map((shot) => (shot.order === shotOrder ? { ...shot, material } : shot)),
+    },
+  };
 }
 
 /** 找出这一镜已经落盘的那张图，扩展名可能是几种之一。 */
@@ -49,6 +68,10 @@ export async function POST(request: NextRequest) {
 
     if (!isSafeSegment(projectId)) return apiBadRequest("项目 id 不合法");
     if (!shotOrder) return apiBadRequest("镜号不合法");
+    const project = await readProject(projectId);
+    if (!project?.storyboard?.shots.some((shot) => shot.order === shotOrder)) {
+      return apiBadRequest(`分镜表里没有第 ${shotOrder} 镜，重新打开项目再绑`);
+    }
 
     const dir = projectDir(projectId);
     await mkdir(dir, { recursive: true });
@@ -75,6 +98,10 @@ export async function POST(request: NextRequest) {
     }
 
     const material: CastRef = { assetId, label: label || `第 ${shotOrder} 镜素材`, path: target, ...facts };
+    // 当场写进项目：生成首帧马上就要从盘上读它，等前端自动存盘就晚了
+    await updateProject(projectId, "videoFactory.shotMaterial.bind", (current) =>
+      withShotMaterial(current, shotOrder, material),
+    );
     return apiOk({ shotOrder, material }, `已绑定第 ${shotOrder} 镜的素材`);
   } catch (error) {
     console.error("[VideoFactory] 绑定分镜素材失败", { action: "videoFactory.shotMaterial.bind", projectId });
@@ -91,6 +118,9 @@ export async function DELETE(request: NextRequest) {
     if (!isSafeSegment(projectId)) return apiBadRequest("项目 id 不合法");
     if (!shotOrder) return apiBadRequest("镜号不合法");
 
+    await updateProject(projectId, "videoFactory.shotMaterial.clear", (current) =>
+      withShotMaterial(current, shotOrder, undefined),
+    );
     const existing = await findExisting(projectId, shotOrder);
     if (existing) await rm(existing.file, { force: true });
     return apiOk({ shotOrder }, `第 ${shotOrder} 镜已改回用项目素材`);

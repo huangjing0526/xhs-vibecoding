@@ -3,9 +3,16 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import { MIME_BY_EXTENSION, mimeByExtension } from "@/app/api/image-factory/_shared";
-import { framePath, isSafeSegment, projectDir, runCommand, setFrameApproval } from "@/app/api/video-factory/_shared";
+import {
+  approvedFrameOrders,
+  framePath,
+  isSafeSegment,
+  projectDir,
+  readProject,
+  runCommand,
+} from "@/app/api/video-factory/_shared";
 import { productCategory } from "@/lib/productCategories";
-import { CAST_KIND_LABEL, CAST_SLOTS, type BenchmarkCastKind, type CastRef, type ProjectCast } from "@/lib/videoFactory";
+import { shotReferences } from "@/lib/videoFactory";
 
 // 调本机生图 CLI，必须 nodejs runtime。
 export const runtime = "nodejs";
@@ -17,7 +24,7 @@ const FRAME_TIMEOUT_MS = 8 * 60 * 1000;
 interface ReferenceImage {
   label: string;
   path: string;
-  /** 这张图只准被用来做什么，逐槽位来自 CAST_SLOTS */
+  /** 这张图只准被用来做什么，逐张来自 shotReferences */
   usage: string;
   /** 绑定时从素材库拷来的特征与品类；只给图锁不住身份，描述跟着图一起给才稳 */
   traits?: string;
@@ -100,13 +107,18 @@ export async function POST(request: NextRequest) {
     const prompt = String(formData.get("framePrompt") || "").trim();
     const continuityNote = String(formData.get("continuityNote") || "").trim();
     const provider = String(formData.get("provider") || "codex").trim();
-    const rawCast = String(formData.get("cast") || "").trim();
     const productFocus = String(formData.get("productFocus") || "").trim();
 
     if (!isSafeSegment(projectId)) return apiBadRequest("项目 id 不合法");
     if (!Number.isInteger(shotOrder) || shotOrder < 1 || shotOrder > 99) return apiBadRequest("镜号不合法");
     if (!prompt) return apiBadRequest("这一镜还没有首帧提示词");
     if (provider !== "codex" && provider !== "grok") return apiBadRequest("请选择可用的本地生图 CLI");
+
+    // 参考图从盘上的项目算，和出片、验收同一份：绑定路由当场就把素材写进了项目，不会读到旧的
+    const project = await readProject(projectId);
+    if (!project) return apiBadRequest("项目不存在，先保存项目再生成首帧");
+    const shot = project.storyboard?.shots.find((item) => item.order === shotOrder);
+    if (!shot) return apiBadRequest(`分镜表里没有第 ${shotOrder} 镜`);
 
     const dir = projectDir(projectId);
     await mkdir(dir, { recursive: true });
@@ -120,66 +132,9 @@ export async function POST(request: NextRequest) {
     };
 
     const references: ReferenceImage[] = [];
-
-    // 这一镜单独绑的素材优先：换装、多产品这类片子每镜要看的东西本来就不同。
-    // 绑了就以它为准，项目级槽位退到后面当一致性兜底。
-    const rawMaterial = String(formData.get("material") || "").trim();
-    if (rawMaterial) {
-      const material = JSON.parse(rawMaterial) as CastRef;
-      const resolved = material?.path ? await inProject(material.path) : null;
-      if (resolved) {
-        references.push({
-          label: `本镜素材（${material.label}）`,
-          path: resolved,
-          usage: "这一镜要展示的就是它，款式、颜色、材质、细节都要照它来；场景和光线以上面的画面描述为准",
-          traits: material.traits,
-          category: material.category,
-        });
-      }
-    }
-
-    // 对标实体绑的素材：一个实体出现在哪几镜就管哪几镜，前端按 sourceShotOrder 算好了送过来。
-    // 排在项目级槽位之前——套了对标的片子，实体绑定才是这一镜真正要展示的东西。
-    const rawEntities = String(formData.get("castEntities") || "").trim();
-    /** 已经由实体绑定覆盖掉的槽位，项目级那张就别再塞进来了 */
-    const coveredSlots = new Set<string>();
-    if (rawEntities) {
-      const entities = JSON.parse(rawEntities) as Array<
-        { kind?: string; label?: string; path?: string } & Pick<CastRef, "traits" | "category">
-      >;
-      for (const entity of Array.isArray(entities) ? entities : []) {
-        const slot = CAST_SLOTS.find((item) => item.id === entity.kind);
-        const resolved = slot && entity.path ? await inProject(entity.path) : null;
-        if (!slot || !resolved) continue;
-        references.push({
-          label: `${CAST_KIND_LABEL[slot.id as BenchmarkCastKind]}（${entity.label || slot.label}）`,
-          path: resolved,
-          usage: slot.usage,
-          traits: entity.traits,
-          category: entity.category,
-        });
-        coveredSlots.add(slot.id);
-      }
-    }
-
-    // 角色/产品/场景的绑定图由前端连同请求一起带过来
-    if (rawCast) {
-      const cast = JSON.parse(rawCast) as ProjectCast;
-      for (const slot of CAST_SLOTS) {
-        const ref = cast[slot.id];
-        // 这一镜的实体绑定已经给了同类的图，再塞项目级那张就是两个互相矛盾的参考
-        if (!ref?.path || coveredSlots.has(slot.id)) continue;
-        const resolved = await inProject(ref.path);
-        if (resolved) {
-          references.push({
-            label: `${slot.label}（${ref.label}）`,
-            path: resolved,
-            usage: slot.usage,
-            traits: ref.traits,
-            category: ref.category,
-          });
-        }
-      }
+    for (const { label, ref, usage } of shotReferences(project, shot)) {
+      const resolved = await inProject(ref.path);
+      if (resolved) references.push({ label, path: resolved, usage, traits: ref.traits, category: ref.category });
     }
 
     // 目标扩展名固定 png：CLI 各家默认格式不一，统一好过每次去猜
@@ -241,8 +196,10 @@ export async function POST(request: NextRequest) {
     // 统一挪到 frame-NN.png：出片接口认的是这个名字
     await writeFile(target, new Uint8Array(await readFile(produced)));
     if (produced !== target) await rm(produced, { force: true });
-    // 换了一张新首帧，上一张的确认不能沿用
-    const approvedFrames = await setFrameApproval(projectId, shotOrder, false);
+    // 确认记的是图，新图天然没确认过，不用在这里撤。
+    // 生成要跑好几分钟，期间别的镜头可能刚确认过，所以重读一次再算
+    const latest = await readProject(projectId);
+    const approvedFrames = latest ? await approvedFrameOrders(latest) : [];
 
     return apiOk({ projectId, shotOrder, framePath: target, approvedFrames }, `第 ${shotOrder} 镜首帧已生成`);
   } catch (error) {

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { readAsset } from "@/app/api/image-factory/_assets";
@@ -203,7 +204,10 @@ export async function readProject(projectId: string): Promise<VideoProject | nul
     if (!parsed || typeof parsed !== "object") return null;
     // 加 genProvider 之前存的项目没有这个字段，读出来就地补上：
     // 界面拿它去查引擎能力表（时长档位、分辨率），拿到 undefined 会直接崩在渲染里
-    const project = { genProvider: "grok-cli", ...parsed } as VideoProject;
+    // 老项目的 approvedFrames 是按镜号记的确认，摘出来换成哈希，不再跟着项目写回去
+    const { approvedFrames: legacyApproved, ...project } = { genProvider: "grok-cli", ...parsed } as VideoProject & {
+      approvedFrames?: unknown;
+    };
     // 同理，加场景槽位之前存的项目 cast 里只有角色和产品，缺的槽位补成未绑定；
     // 加合成步骤之前存的项目没有 voiceovers / finalCut，界面会直接读它们的长度
     return {
@@ -211,7 +215,7 @@ export async function readProject(projectId: string): Promise<VideoProject | nul
       cast: { ...EMPTY_CAST, ...project.cast },
       voiceovers: project.voiceovers ?? [],
       finalCut: project.finalCut ?? null,
-      approvedFrames: project.approvedFrames ?? [],
+      approvedFrameHashes: project.approvedFrameHashes ?? (await legacyApprovedHashes(projectId, legacyApproved)),
     };
   } catch (error) {
     // 首次保存前文件不存在是正常的，其余情况要留痕再按空项目继续
@@ -228,46 +232,118 @@ export async function readProject(projectId: string): Promise<VideoProject | nul
 }
 
 /**
+ * 首帧确认改成记图之前，存的是镜号。按镜号换成那一镜当前首帧的哈希：
+ * 那时换图都会撤确认，所以盘上留着的确认对的就是现在这张图。
+ */
+async function legacyApprovedHashes(projectId: string, orders: unknown): Promise<string[]> {
+  if (!Array.isArray(orders)) return [];
+  const hashes = await Promise.all(orders.map((order) => currentFrameHash(projectId, Number(order))));
+  return hashes.filter((hash): hash is string => Boolean(hash));
+}
+
+/** 某一镜当前首帧的内容哈希；还没有首帧就是 null。 */
+export async function currentFrameHash(projectId: string, shotOrder: number): Promise<string | null> {
+  const frame = await findFramePath(projectId, shotOrder);
+  return frame ? fileHash(frame) : null;
+}
+
+/**
+ * 首帧哈希按「路径 + 修改时间 + 大小」缓存：自动存盘每次都要现算已确认镜号，
+ * 图没动就只花一次 stat，不必把几 MB 的图整张再读一遍。
+ */
+const frameHashCache = new Map<string, { mtimeMs: number; size: number; hash: string }>();
+
+async function fileHash(file: string): Promise<string> {
+  const { mtimeMs, size } = await stat(file);
+  const cached = frameHashCache.get(file);
+  if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.hash;
+  const hash = createHash("sha256").update(await readFile(file)).digest("hex");
+  frameHashCache.set(file, { mtimeMs, size, hash });
+  return hash;
+}
+
+/** 当前首帧已确认的镜号：逐镜拿盘上那张图的哈希去比，图换了确认就不算了。 */
+export async function approvedFrameOrders(project: VideoProject): Promise<number[]> {
+  if (!project.approvedFrameHashes.length) return [];
+  const approved = new Set(project.approvedFrameHashes);
+  const orders = project.storyboard?.shots.map((shot) => shot.order) ?? [];
+  const hashes = await Promise.all(orders.map((order) => currentFrameHash(project.id, order)));
+  return orders.filter((_, index) => approved.has(hashes[index] ?? ""));
+}
+
+/**
+ * 同一个项目的读改写排队执行。
+ * 绑定、出片、合成、自动存盘都会读一份再整份写回，交错起来后写的会抹掉先写的那次改动。
+ * 本机单进程，进程内排队就够了。
+ */
+const projectLocks = new Map<string, Promise<unknown>>();
+
+export function withProjectLock<T>(projectId: string, task: () => Promise<T>): Promise<T> {
+  const previous = projectLocks.get(projectId) ?? Promise.resolve();
+  const run = previous.then(task, task);
+  const settled = run.catch(() => undefined);
+  projectLocks.set(projectId, settled);
+  void settled.then(() => {
+    if (projectLocks.get(projectId) === settled) projectLocks.delete(projectId);
+  });
+  return run;
+}
+
+/**
+ * 读盘上最新的项目、改、写回，整段排队。服务端路由改项目一律走这里，
+ * 别拿请求开头读的那份写——合成这种要跑好几分钟的，中途别人写进来的都会被抹掉。
+ * 项目不存在时报错，由调用方决定要不要吞。
+ */
+export async function updateProject(
+  projectId: string,
+  action: string,
+  mutate: (project: VideoProject) => VideoProject | Promise<VideoProject>,
+): Promise<VideoProject> {
+  return withProjectLock(projectId, async () => {
+    const project = await readProject(projectId);
+    if (!project) {
+      console.error("[VideoFactory] 项目不存在，改动没写进去", { userId: "local", action, projectId });
+      throw new Error("项目不存在，先保存项目再操作");
+    }
+    return writeProject(await mutate(project));
+  });
+}
+
+/**
  * 把这一镜写进 project.json 的 clips。
  * clips 归服务端所有，项目保存接口不收前端那份——出片、回传、验收都得自己在这里落盘，
  * 否则只有 mp4 躺在盘上、项目却不认它，刷新一下片子就「没了」。
  */
 export async function mergeClipIntoProject(projectId: string, clip: ShotClip): Promise<void> {
-  const project = await readProject(projectId);
-  if (!project) {
+  try {
+    await updateProject(projectId, "videoFactory.clip.merge", (project) => ({
+      ...project,
+      clips: upsertClip(project.clips, clip),
+    }));
+  } catch (error) {
     // 片子字节已经落盘了，这里再失败也追不回来，留痕即可，别把整次回传判死
-    console.error("[VideoFactory] 成片已落盘但项目读不到，clips 未更新", {
+    console.error("[VideoFactory] 成片已落盘但 clips 未更新", {
       userId: "local",
       action: "videoFactory.clip.merge",
       projectId,
       shotOrder: clip.shotOrder,
+      error,
     });
-    return;
   }
-
-  await writeProject({ ...project, clips: upsertClip(project.clips, clip) });
 }
 
 /**
- * 记下或撤掉某一镜的首帧确认。项目读不到时如实报错——
+ * 确认或撤掉某一镜当前这张首帧，回现算的已确认镜号。项目读不到时如实报错——
  * 确认是出片的闸门，悄悄没记上，人会以为确认过了却出不了片。
  */
 export async function setFrameApproval(projectId: string, shotOrder: number, approved: boolean): Promise<number[]> {
-  const project = await readProject(projectId);
-  if (!project) {
-    console.error("[VideoFactory] 首帧确认写不进项目", {
-      userId: "local",
-      action: "videoFactory.frame.approval",
-      projectId,
-      shotOrder,
-      approved,
-    });
-    throw new Error("项目不存在，首帧确认没记上");
-  }
-  const rest = project.approvedFrames.filter((order) => order !== shotOrder);
-  const approvedFrames = approved ? [...rest, shotOrder].sort((a, b) => a - b) : rest;
-  await writeProject({ ...project, approvedFrames });
-  return approvedFrames;
+  const hash = await currentFrameHash(projectId, shotOrder);
+  if (!hash) throw new Error(`第 ${shotOrder} 镜还没有首帧`);
+  const saved = await updateProject(projectId, "videoFactory.frame.approval", (project) => {
+    const rest = project.approvedFrameHashes.filter((item) => item !== hash);
+    return { ...project, approvedFrameHashes: approved ? [...rest, hash] : rest };
+  });
+  return approvedFrameOrders(saved);
 }
 
 /** 量一个媒体文件的时长，量不出来回 0，由调用方决定退回哪个值。 */

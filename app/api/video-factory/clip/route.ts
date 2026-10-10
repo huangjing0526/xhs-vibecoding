@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -19,8 +19,6 @@ import { isUploadProvider, snapShotDuration, type ShotClip, type VideoProject } 
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-/** 首帧图可能的扩展名，与生成接口放行的那组保持一致。 */
 
 /** 回传片子的时长上限（秒）。超出的多半是传错了文件，不该当成一镜挂上去。 */
 const MAX_CLIP_DURATION_SEC = 600;

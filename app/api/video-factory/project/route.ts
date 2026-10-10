@@ -6,10 +6,12 @@ import {
   listProjects,
   newProjectId,
   projectDir,
+  approvedFrameOrders,
   readProject,
+  withProjectLock,
   writeProject,
 } from "@/app/api/video-factory/_shared";
-import { DEFAULT_TARGET_DURATION_SEC, EMPTY_CAST, EMPTY_TOPIC_INPUT, type VideoProject } from "@/lib/videoFactory";
+import { DEFAULT_TARGET_DURATION_SEC, EMPTY_TOPIC_INPUT, mergeServerOwned, type VideoProject } from "@/lib/videoFactory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +25,7 @@ export async function GET(request: NextRequest) {
 
     const project = await readProject(projectId);
     if (!project) return apiBadRequest("这个项目不存在或已被删除");
-    return apiOk({ project }, "项目已读取");
+    return apiOk({ project, approvedFrames: await approvedFrameOrders(project) }, "项目已读取");
   } catch (error) {
     return apiError(error, "videoFactory.project.get", "项目读取失败");
   }
@@ -32,9 +34,9 @@ export async function GET(request: NextRequest) {
 /**
  * 整份覆盖保存。四步共用一个项目，前端每步结束存一次，刷新不丢。
  *
- * 唯一的例外是 clips：它归产物路由所有（generate 出片、clip 回传都在服务端写），
- * 这里一律以盘上的为准、不收前端送来的那份。否则页面开着时它手里的 clips 是旧的，
- * 一次自动存盘就能把扩展刚推回来的片子从项目里抹掉，只留一个孤儿 mp4 在盘上。
+ * 例外是归服务端写的那几个字段（片子、配音、成片、首帧确认、各处绑定的素材），
+ * 一律以盘上的为准，规则见 mergeServerOwned。否则页面开着时它手里那份是旧的，
+ * 一次自动存盘就能把扩展刚推回来的片子、刚绑的素材从项目里抹掉。
  * 前端要清空只能显式说 resetClips —— 重拆分镜是唯一会用到的场景。
  */
 export async function POST(request: NextRequest) {
@@ -47,35 +49,28 @@ export async function POST(request: NextRequest) {
     if (!incoming) return apiBadRequest("缺少项目内容");
 
     const id = incoming.id && isSafeSegment(incoming.id) ? incoming.id : newProjectId();
-    const existing = await readProject(id);
-    const now = new Date().toISOString();
+    const saved = await withProjectLock(id, async () => {
+      const existing = await readProject(id);
+      const now = new Date().toISOString();
 
-    const project: VideoProject = {
-      id,
-      title: (incoming.title || existing?.title || "").trim() || "未命名视频",
-      createdAt: existing?.createdAt || now,
-      updatedAt: now,
-      skeleton: incoming.skeleton ?? existing?.skeleton ?? null,
-      topic: incoming.topic ?? existing?.topic ?? EMPTY_TOPIC_INPUT,
-      targetDurationSec: incoming.targetDurationSec ?? existing?.targetDurationSec ?? DEFAULT_TARGET_DURATION_SEC,
-      rhythm: incoming.rhythm ?? existing?.rhythm ?? null,
-      cast: incoming.cast ?? existing?.cast ?? EMPTY_CAST,
-      // 老项目没有这个字段；空对象就是「一个实体都没绑」，语义正确
-      castBinding: incoming.castBinding ?? existing?.castBinding ?? {},
-      // 老项目没有这个字段，回落到加它之前唯一能生成的引擎
-      genProvider: incoming.genProvider ?? existing?.genProvider ?? "grok-cli",
-      script: incoming.script ?? existing?.script ?? null,
-      storyboard: incoming.storyboard ?? existing?.storyboard ?? null,
-      // 注意这里不看 incoming.clips，理由见上面的注释；voiceovers 和 finalCut 同理，
-      // 都由合成路由在服务端写，前端手里那份随时可能是旧的
-      clips: body.resetClips ? [] : existing?.clips ?? [],
-      voiceovers: body.resetClips ? [] : existing?.voiceovers ?? [],
-      finalCut: body.resetClips ? null : existing?.finalCut ?? null,
-      // 首帧确认同理归服务端（重出首帧时由首帧路由撤掉）；重拆分镜后镜号全变了，一并清空
-      approvedFrames: body.resetClips ? [] : existing?.approvedFrames ?? [],
-    };
+      const project: VideoProject = {
+        id,
+        title: (incoming.title || existing?.title || "").trim() || "未命名视频",
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+        skeleton: incoming.skeleton ?? existing?.skeleton ?? null,
+        topic: incoming.topic ?? existing?.topic ?? EMPTY_TOPIC_INPUT,
+        targetDurationSec: incoming.targetDurationSec ?? existing?.targetDurationSec ?? DEFAULT_TARGET_DURATION_SEC,
+        rhythm: incoming.rhythm ?? existing?.rhythm ?? null,
+        // 老项目没有这个字段，回落到加它之前唯一能生成的引擎
+        genProvider: incoming.genProvider ?? existing?.genProvider ?? "grok-cli",
+        script: incoming.script ?? existing?.script ?? null,
+        ...mergeServerOwned(incoming, existing, { reset: body.resetClips }),
+      };
+      return writeProject(project);
+    });
 
-    return apiOk({ project: await writeProject(project) }, "已保存");
+    return apiOk({ project: saved, approvedFrames: await approvedFrameOrders(saved) }, "已保存");
   } catch (error) {
     return apiError(error, "videoFactory.project.save", "项目保存失败");
   }

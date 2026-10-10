@@ -5,6 +5,7 @@ import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk } from "@/app/api/feishu/_utils";
 import {
   IMAGE_JOB_ROOT,
+  approvedFrameOrders,
   clipPath,
   findFramePath,
   framePath,
@@ -181,10 +182,11 @@ export async function POST(request: NextRequest) {
       if (!frame) return apiBadRequest("先给这一镜一张首帧图：点「生成首帧」，或从图片工厂选一张");
     }
 
-    let approvedFrames = project.approvedFrames;
-    if (pickedNow) {
-      approvedFrames = await setFrameApproval(projectId, shotOrder, true);
-    } else if (!approvedFrames.includes(shotOrder)) {
+    // 确认跟着图走：拿本项目里另一镜确认过的图来用，同一张图照样算确认过
+    const approvedFrames = pickedNow
+      ? await setFrameApproval(projectId, shotOrder, true)
+      : await approvedFrameOrders(project);
+    if (!approvedFrames.includes(shotOrder)) {
       return apiBadRequest(`第 ${shotOrder} 镜的首帧还没确认，看一眼首帧再点「确认首帧」`);
     }
 

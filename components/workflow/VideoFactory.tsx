@@ -48,6 +48,7 @@ import {
   generateShotClip,
   generateShotFrame,
   getVideoGenProviders,
+  getVideoProject,
   listBenchmarkRhythms,
   listFrameCandidates,
   listVideoProjects,
@@ -83,7 +84,6 @@ import {
   describeUnitPlan,
   planGenerationUnits,
   shotParts,
-  shotSourceOrders,
   storyboardDurationSec,
   type BenchmarkRhythm,
   type BenchmarkSkeleton,
@@ -91,7 +91,7 @@ import {
   analysisToSkeleton,
   castToken,
   pruneCastBinding,
-  shotCastRefs,
+  takeServerOwned,
   unusedCastTokens,
   type BenchmarkCastEntity,
   type BenchmarkShotContent,
@@ -160,7 +160,7 @@ const EMPTY_PROJECT: VideoProject = {
   script: null,
   storyboard: null,
   clips: [],
-  approvedFrames: [],
+  approvedFrameHashes: [],
   voiceovers: [],
   finalCut: null,
 };
@@ -518,12 +518,17 @@ export default function VideoFactory({
   const [framingShot, setFramingShot] = useState<number | null>(null);
   /** 重新生成首帧会覆盖同名文件，缩略图要绕开缓存 */
   const [frameVersion, setFrameVersion] = useState<Record<number, number>>({});
+  /** 当前首帧已确认的镜号。服务端按首帧图现算，不在项目里存，每个会改它的接口都会回最新的一份 */
+  const [approvedFrames, setApprovedFrames] = useState<number[]>([]);
   /** 成片预览要绕开浏览器缓存：同一镜重跑会覆盖同名文件 */
   const [clipVersion, setClipVersion] = useState<Record<number, number>>({});
   /** 正在验收的镜号；验收要抽帧加看图，十几秒到一分钟 */
   const [checkingShots, setCheckingShots] = useState<number[]>([]);
 
   const savedRef = useRef("");
+  /** 异步回来的结果要认一下还是不是这条项目：切走了就别往新项目上写 */
+  const projectIdRef = useRef("");
+  projectIdRef.current = project.id;
   /** 存盘串成一条链：整份覆盖的接口不能并发，但也不能因为「正在存」就把新编辑丢掉。 */
   const saveChainRef = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -558,6 +563,7 @@ export default function VideoFactory({
   const startFreshProject = useCallback(
     (patch: Partial<VideoProject>, rhythm: BenchmarkRhythm | null, message?: string) => {
       setProject({ ...EMPTY_PROJECT, ...patch });
+      setApprovedFrames([]);
       setDetectedRhythm(rhythm);
       setStep("source");
       savedRef.current = "";
@@ -566,13 +572,25 @@ export default function VideoFactory({
     [onNotice],
   );
 
-  /** 切到一条已存在的项目：恢复它进度所在的步，标记已存盘，清掉未套用的拆片节奏。 */
+  /**
+   * 切到一条已存在的项目：恢复它进度所在的步，标记已存盘，清掉未套用的拆片节奏。
+   * 列表里不带已确认镜号（要逐张读图），单取一次补上。
+   */
   const selectProject = useCallback((item: VideoProject) => {
     setProject(item);
+    setApprovedFrames([]);
     setDetectedRhythm(null);
     savedRef.current = JSON.stringify({ ...item, updatedAt: "" });
     setStep(item.storyboard ? "storyboard" : item.script ? "script" : "source");
-  }, []);
+    getVideoProject(item.id)
+      .then((data) => {
+        if (projectIdRef.current === item.id) setApprovedFrames(data.approvedFrames);
+      })
+      .catch((error) => {
+        console.error("[VideoFactory] 首帧确认状态读取失败", { action: "videoFactory.project.get", projectId: item.id, error });
+        onNotice({ type: "error", message: error instanceof Error ? error.message : "首帧确认状态读取失败" });
+      });
+  }, [onNotice]);
 
   // 拆片页送过来的结构骨架：直接开一个新项目接住，不覆盖手上正在做的那条
   useEffect(() => {
@@ -676,22 +694,30 @@ export default function VideoFactory({
   /** 存盘：整份覆盖。返回带 id 的项目，生成环节要靠这个 id 定产物目录。 */
   const persist = useCallback(
     async (next: VideoProject, options?: { resetClips?: boolean }): Promise<VideoProject> => {
-      const { project: saved } = await saveVideoProject(next, options);
+      const { project: saved, approvedFrames: approved } = await saveVideoProject(next, options);
+      setApprovedFrames(approved);
       savedRef.current = JSON.stringify({ ...saved, updatedAt: "" });
+      // 服务端写的字段（片子、首帧确认、绑定的素材……）存盘时不收前端那份，这里把盘上那份接回来——
+      // 否则扩展推进来的片子在页面上永远不出现，得手动重选项目才看得到
       setProject((current) => ({
-        ...current,
+        ...takeServerOwned(current, saved),
         id: current.id || saved.id,
         createdAt: current.id ? current.createdAt : saved.createdAt,
-        // clips 归服务端所有，存盘时不上送，这里再把盘上那份接回来——
-        // 否则扩展推进来的片子在页面上永远不出现，得手动重选项目才看得到
-        clips: saved.clips,
-        // 首帧确认同理，由首帧、出片路由在服务端改
-        approvedFrames: saved.approvedFrames,
       }));
       return saved;
     },
     [],
   );
+
+  /**
+   * 排在已有的自动存盘后面立刻存一次。生成首帧、出片要从盘上读分镜和绑定，
+   * 刚改完的内容还在 900ms 的自动存盘里排队，不先落盘就会读到旧的。
+   */
+  const flushSave = (next: VideoProject): Promise<VideoProject> => {
+    const run = saveChainRef.current.then(() => persist(next));
+    saveChainRef.current = run.catch(() => undefined);
+    return run;
+  };
 
   // 自动存盘：脚本、分镜、每一处编辑都算数据，刷新不该丢
   useEffect(() => {
@@ -1016,7 +1042,7 @@ export default function VideoFactory({
     }
     setFramingShot(shot.order);
     try {
-      const saved = project.id ? project : await persist(project);
+      const saved = await flushSave(project);
       const formData = new FormData();
       formData.append("projectId", saved.id);
       formData.append("shotOrder", String(shot.order));
@@ -1024,31 +1050,10 @@ export default function VideoFactory({
       formData.append("continuityNote", storyboard?.continuityNote || "");
       if (shot.productFocus) formData.append("productFocus", shot.productFocus);
       formData.append("provider", frameProvider);
-      formData.append("cast", JSON.stringify(project.cast));
-      // 这一镜单独绑了素材就带上，服务端会把它排在项目级参考图前面
-      if (shot.material) formData.append("material", JSON.stringify(shot.material));
-      // 这一镜对应的对标实体绑了谁，按它覆盖的对标镜号现算——绑定是单一事实来源，
-      // 不在项目目录里再拷一份「展开后的每镜素材」，那要维护三份一致性。
-      // 并了镜的要把几刀里出现的实体凑齐：只按第一镜取，后面几刀的货就没有参考图
-      const entityRefs = shotCastRefs(project.rhythm?.cast, project.castBinding, shotSourceOrders(shot));
-      if (entityRefs.length) {
-        formData.append(
-          "castEntities",
-          JSON.stringify(
-            entityRefs.map(({ entity, ref }) => ({
-              kind: entity.kind,
-              label: ref.label,
-              path: ref.path,
-              traits: ref.traits,
-              category: ref.category,
-            })),
-          ),
-        );
-      }
 
-      // 新首帧还没人看过，服务端撤了它的确认，回来的是撤完的那份
-      const { approvedFrames } = await generateShotFrame(formData);
-      setProject((current) => ({ ...current, id: saved.id, approvedFrames }));
+      // 新首帧还没人看过，回来的已确认镜号里自然没有它
+      const data = await generateShotFrame(formData);
+      setApprovedFrames(data.approvedFrames);
       setFrameVersion((current) => ({ ...current, [shot.order]: (current[shot.order] || 0) + 1 }));
       // 刚生成的首帧已经落在项目目录，出片时不用再选图
       setPendingFrames((current) => {
@@ -1070,7 +1075,7 @@ export default function VideoFactory({
     if (!project.id) return;
     try {
       const data = await reviewShotFrame({ projectId: project.id, shotOrder, approved });
-      setProject((current) => ({ ...current, approvedFrames: data.approvedFrames }));
+      setApprovedFrames(data.approvedFrames);
     } catch (error) {
       console.error("[VideoFactory] 首帧确认失败", { action: "videoFactory.frameReview", shotOrder, error });
       onNotice({ type: "error", message: error instanceof Error ? error.message : "首帧确认失败" });
@@ -1301,8 +1306,7 @@ export default function VideoFactory({
     setGeneratingShot(shot.order);
     onNotice({ type: "info", message: `第 ${shot.order} 镜生成中，一般 1~3 分钟` });
     try {
-      // 生成要往项目目录里落产物，先确保项目已经有 id
-      const saved = project.id ? project : await persist(project);
+      const saved = await flushSave(project);
 
       const formData = new FormData();
       formData.append("projectId", saved.id);
@@ -1329,9 +1333,9 @@ export default function VideoFactory({
         ...current,
         id: saved.id,
         clips: upsertClip(current.clips, data.clip),
-        // 当场挑的首帧由出片路由记成已确认，用它回来的那份
-        approvedFrames: data.approvedFrames ?? current.approvedFrames,
       }));
+      // 当场挑的首帧由出片路由记成已确认，用它回来的那份
+      if (data.approvedFrames) setApprovedFrames(data.approvedFrames);
       setClipVersion((current) => ({ ...current, [shot.order]: (current[shot.order] || 0) + 1 }));
       onNotice({ type: "success", message: `第 ${shot.order} 镜已生成，开始验收` });
       // 出片即验收：不合格的当场就知道，别等到合成那一步才发现
@@ -2051,7 +2055,7 @@ export default function VideoFactory({
               const clip = project.clips.find((item) => item.shotOrder === shot.order);
               const pending = pendingFrames[shot.order];
               const frameLabel = pending?.label || (clip?.framePath ? "已用上次的首帧" : "");
-              const frameApproved = project.approvedFrames.includes(shot.order);
+              const frameApproved = approvedFrames.includes(shot.order);
               const busy = generatingShot === shot.order;
 
               return (

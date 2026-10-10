@@ -23,27 +23,37 @@ import {
 export interface ShotReference {
   label: string;
   ref: CastRef;
+  /** 这张图只准被用来做什么。角色图要「别抄场景」，场景图要的恰恰就是抄场景，所以逐张跟着图走 */
+  usage: string;
 }
 
+const SHOT_MATERIAL_USAGE = "这一镜要展示的就是它，款式、颜色、材质、细节都要照它来；场景和光线以上面的画面描述为准";
+
 /**
- * 这一镜的参考图，优先级与首帧路由一致：单镜素材 → 对标实体 → 项目级槽位，
- * 实体已经给了的槽位，项目级那张就不再算。
- * 首帧路由收的是前端现算的那份；出片和验收在服务端，只能从盘上的项目里算，所以这里再算一遍。
+ * 这一镜的参考图。首帧、出片、验收三处都从盘上的项目算这一份，不收前端现算的。
+ *
+ * 优先级：单镜素材 → 对标实体 → 项目级槽位。单镜素材是这一镜真正要展示的东西；
+ * 实体按它出现的对标镜号管镜头；项目级槽位兜底跨镜一致性。
+ * 实体已经给了的槽位，项目级那张就不再算——两张同类图互相矛盾。
  */
 export function shotReferences(project: VideoProject, shot: Shot): ShotReference[] {
   const refs: ShotReference[] = [];
-  if (shot.material) refs.push({ label: `本镜素材（${shot.material.label}）`, ref: shot.material });
+  if (shot.material) {
+    refs.push({ label: `本镜素材（${shot.material.label}）`, ref: shot.material, usage: SHOT_MATERIAL_USAGE });
+  }
 
   const covered = new Set<string>();
+  // 并了镜的要把几刀里出现的实体凑齐：只按第一镜取，后面几刀的货就没有参考图
   for (const { entity, ref } of shotCastRefs(project.rhythm?.cast, project.castBinding, shotSourceOrders(shot))) {
     const slot = CAST_SLOTS.find((item) => item.id === entity.kind);
-    refs.push({ label: `${slot?.label || "素材"}（${ref.label}）`, ref });
+    if (!slot) continue;
+    refs.push({ label: `${slot.label}（${ref.label}）`, ref, usage: slot.usage });
     covered.add(entity.kind);
   }
 
   for (const slot of CAST_SLOTS) {
     const ref = project.cast[slot.id];
-    if (ref?.path && !covered.has(slot.id)) refs.push({ label: `${slot.label}（${ref.label}）`, ref });
+    if (ref?.path && !covered.has(slot.id)) refs.push({ label: `${slot.label}（${ref.label}）`, ref, usage: slot.usage });
   }
   return refs;
 }

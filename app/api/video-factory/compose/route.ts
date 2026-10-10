@@ -13,8 +13,8 @@ import {
   projectDir,
   readProject,
   runCommand,
+  updateProject,
   voiceoverPath,
-  writeProject,
 } from "@/app/api/video-factory/_shared";
 import {
   DEFAULT_VOICE,
@@ -320,7 +320,8 @@ export async function POST(request: NextRequest) {
       createdAt: new Date().toISOString(),
       extendedShots,
     };
-    const saved = await writeProject({ ...project, voiceovers, finalCut });
+    // 合成要跑好几分钟，开头读的那份早旧了，写回时重读一次，只换这两个字段
+    const saved = await updateProject(projectId, "videoFactory.compose", (latest) => ({ ...latest, voiceovers, finalCut }));
 
     console.info("[VideoFactory] 成片已合成", {
       action: "videoFactory.compose",
