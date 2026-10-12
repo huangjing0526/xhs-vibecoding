@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { apiOk } from "@/app/api/feishu/_utils";
+import { GROK_QUOTA_MESSAGE, readGrokQuota } from "@/app/api/video-factory/_grokQuota";
 import { probeGeminiEngine } from "@/lib/engines/gemini/probe";
 import type { VideoGenProviderStatus } from "@/lib/videoFactory";
 
@@ -60,12 +61,13 @@ async function readGrokAuthState(): Promise<GrokAuthState> {
   }
 }
 
-function describeGrok(version: string | null, loggedIn: boolean, optOut: boolean | null): string {
+function describeGrok(version: string | null, loggedIn: boolean, optOut: boolean | null, quotaHit: boolean): string {
   if (!version) return "未安装 Grok CLI";
   if (!loggedIn) return "需要运行 grok login --oauth";
   if (optOut === true) {
     return "已登录，但视频生成被 coding data 的 Opt out 挡住：在 grok 里跑 /privacy 切成 Opt in";
   }
+  if (quotaHit) return `${GROK_QUOTA_MESSAGE}（上次出片撞上，充值后出片成功会自动清除）`;
   return "已登录，可用 image_to_video 出片（每镜 6/10 秒，480p/720p）";
 }
 
@@ -108,11 +110,12 @@ async function detectVeo(): Promise<VideoGenProviderStatus> {
 }
 
 export async function GET() {
-  const [grokVersion, grokModels, auth, veo] = await Promise.all([
+  const [grokVersion, grokModels, auth, veo, grokQuota] = await Promise.all([
     commandOutput("grok", ["--version"]),
     commandOutput("grok", ["--no-auto-update", "models"]),
     readGrokAuthState(),
     detectVeo(),
+    readGrokQuota(),
   ]);
 
   // models 探测要联网，token 刷新那几秒会失败；本机有凭据就别急着说人家没登录，
@@ -126,9 +129,10 @@ export async function GET() {
       name: "xAI · Grok CLI",
       available: Boolean(grokVersion),
       // opt-out 没关掉就等于用不了，直接算作未就绪，省得点下去才报 400
+      // 撞过额度不算未就绪（同 Veo）：充值后要能直接再点一次，成功了记录才会清掉
       authenticated: loggedIn && optOut !== true,
       version: grokVersion || undefined,
-      message: describeGrok(grokVersion, loggedIn, optOut),
+      message: describeGrok(grokVersion, loggedIn, optOut, Boolean(grokQuota)),
     },
     veo,
     {
@@ -141,7 +145,7 @@ export async function GET() {
     },
     {
       id: "manual",
-      name: "手动生成（即梦 / 可灵）",
+      name: "手动生成（Flow / 即梦 / 可灵）",
       available: true,
       authenticated: true,
       message: "复制每镜的提示词和首帧图去 Flow / 即梦 / 可灵生成，再把 mp4 传回来挂到镜头上",

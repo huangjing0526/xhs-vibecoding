@@ -5,7 +5,7 @@
  * 拿到的只有一串响度数和由它算出的对齐率。
  */
 
-import { runCommand } from "@/app/api/video-factory/_shared";
+import { hasAudioStream, runCommand } from "@/app/api/video-factory/_shared";
 import { detectOnsets, measureBeatSync, type BenchmarkBeatSync, type LoudnessSample } from "@/lib/videoFactory";
 
 const AUDIO_TIMEOUT_MS = 2 * 60 * 1000;
@@ -15,16 +15,6 @@ const WINDOW_SAMPLES = 1024;
 
 /** ffmpeg 对纯静音给的是 -inf，换成一个够低的实数，免得后面的差分全成 NaN。 */
 const SILENCE_DB = -90;
-
-/** 有没有音轨。没有就不用往下走了——一条片子本来就无声，谈不上踩不踩节拍。 */
-async function hasAudioStream(source: string): Promise<boolean> {
-  const out = await runCommand(
-    "ffprobe",
-    ["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", source],
-    { timeoutMs: AUDIO_TIMEOUT_MS },
-  );
-  return out.includes("audio");
-}
 
 /**
  * 逐窗响度。
@@ -75,6 +65,7 @@ async function readLoudness(source: string): Promise<LoudnessSample[]> {
  */
 export async function readLoudnessSafe(source: string): Promise<LoudnessSample[] | "no-audio" | null> {
   try {
+    // 没有音轨就不用往下走了——一条片子本来就无声，谈不上踩不踩节拍
     if (!(await hasAudioStream(source))) return "no-audio";
     return await readLoudness(source);
   } catch (error) {

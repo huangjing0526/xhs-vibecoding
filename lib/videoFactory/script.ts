@@ -7,6 +7,7 @@
 
 import type { BenchmarkSkeleton, ScriptDraft, ScriptSegment, TopicInput } from "./types";
 import type { ScriptAnalysis } from "../videoExtract";
+import type { BenchmarkRhythm } from "./benchmark";
 
 /** 中文口播约每秒 4.5 字，用来把字数折成时长；宁可估短，长了分镜会切不下。 */
 const CHARS_PER_SECOND = 4.5;
@@ -55,10 +56,48 @@ export function analysisToSkeleton(
   };
 }
 
+/**
+ * 上传原片走的是拆节奏，不经过拆文案，手里只有 rhythm。
+ * 从它的叙事阶段收出结构骨架：同样只带阶段名、作用和时长，原片口播一句都不带。
+ */
+export function rhythmToSkeleton(rhythm: BenchmarkRhythm | null): BenchmarkSkeleton | null {
+  if (!rhythm?.stages?.length) return null;
+  const seconds = new Map(rhythm.shots.map((shot) => [shot.order, shot.durationSec]));
+  return {
+    platform: "上传原片",
+    author: "",
+    title: rhythm.sourceLabel,
+    videoUrl: "",
+    hook: rhythm.stages[0].purpose,
+    stages: rhythm.stages.map((stage) => {
+      const sec = stage.shots.reduce((sum, order) => sum + (seconds.get(order) || 0), 0);
+      return { stage: stage.name, purpose: sec ? `${stage.purpose}（约 ${Math.round(sec)} 秒）` : stage.purpose };
+    }),
+    style: "",
+    painPoint: "",
+    reusableTemplate: "",
+  };
+}
+
+/**
+ * 口播按念的顺序排好的每一句。
+ * 模型常把钩子抄成第一段、行动号召抄成最后一段，原样拼起来同一句会念两遍——
+ * 和上一句完全相同的直接跳过，存量脚本也一样生效。
+ */
+export function scriptVoiceoverLines(draft: Pick<ScriptDraft, "hook" | "segments" | "cta">): string[] {
+  const lines = [draft.hook, ...draft.segments.map((s) => s.voiceover), draft.cta].map(str).filter(Boolean);
+  return dropRepeatedLines(lines, (line) => line);
+}
+
+/** 去掉和上一条口播完全相同的那条。拆分镜兜底按段落走，也用这一份规矩 */
+export function dropRepeatedLines<T>(items: T[], text: (item: T) => string): T[] {
+  return items.filter((item, index) => index === 0 || str(text(item)) !== str(text(items[index - 1])));
+}
+
 /** 估算一稿脚本的时长，UI 与分镜切段都用它。 */
 export function estimateDurationSec(draft: Pick<ScriptDraft, "hook" | "segments" | "cta">): number {
-  const chars = [draft.hook, ...draft.segments.map((s) => s.voiceover), draft.cta]
-    .map((text) => Array.from(str(text)).length)
+  const chars = scriptVoiceoverLines(draft)
+    .map((text) => Array.from(text).length)
     .reduce((sum, n) => sum + n, 0);
   return Math.max(1, Math.round(chars / CHARS_PER_SECOND));
 }
@@ -103,6 +142,7 @@ ${topic.sellingPoints || "（未填）"}
 【写作要求】
 - 目标时长约 ${targetDurationSec} 秒，中文口播按每秒 4.5 字估算，别写超。
 - 开头 3 秒必须立住钩子，让人不划走。
+- hook 只写在 hook，cta 只写在 cta；segments 是两者之间的正文，不要把开头或结尾那句再抄进 segments。
 - 段落数与对标结构对齐；对标没拆出结构时，自己按 钩子 / 痛点 / 干货 / 转折 / 行动号召 组织。
 - 口播稿写成人说的话：短句、口语、有停顿感，不要书面语和排比腔。
 

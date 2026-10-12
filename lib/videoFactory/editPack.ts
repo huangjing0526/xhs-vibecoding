@@ -19,7 +19,7 @@ import {
   type BenchmarkRhythm,
   type BenchmarkShot,
 } from "./benchmark";
-import { entitiesInShot } from "./cast";
+import { entitiesInShot, type CastBinding } from "./cast";
 import { shotSteps, STEP_LABEL, type ShotRisk } from "./replicability";
 
 /**
@@ -31,11 +31,12 @@ import { shotSteps, STEP_LABEL, type ShotRisk } from "./replicability";
  */
 export const EDIT_PACK_MANIFEST_NAME = "README.md";
 
-function describeEntity(entity: BenchmarkCastEntity, names: Map<string, string>): string {
+function describeEntity(entity: BenchmarkCastEntity, names: Map<string, string>, binding: CastBinding | undefined): string {
   const token = castToken(entity);
   const bound = names.get(token);
   const kind = CAST_KIND_LABEL[entity.kind];
-  return bound && bound !== entity.label
+  // 绑没绑看绑定本身：上传的素材默认就叫对标里的说法，拿名字比会误报「还没绑」
+  return binding?.[token]
     ? `- ${kind}「${bound}」← 对标里是${entity.label}（第 ${entity.shots.join("、")} 镜）`
     : `- ${kind}「${entity.label}」**还没绑自己的素材**（第 ${entity.shots.join("、")} 镜）`;
 }
@@ -100,7 +101,11 @@ function describeShot(
  * 只写要走编辑通道、且原片段真的切出来了的那些镜头——
  * 清单里出现一个包里没有的文件，比少写一镜更让人困惑。
  */
-export function buildEditPackManifest(rhythm: BenchmarkRhythm, names: Map<string, string>): string {
+export function buildEditPackManifest(
+  rhythm: BenchmarkRhythm,
+  names: Map<string, string>,
+  binding: CastBinding | undefined,
+): string {
   const riskByShot = new Map((rhythm.report?.shots || []).map((shot) => [shot.order, shot]));
   const shots = rhythm.shots.filter((shot) => shot.clip);
   const cast = rhythm.cast || [];
@@ -115,7 +120,7 @@ export function buildEditPackManifest(rhythm: BenchmarkRhythm, names: Map<string
     "",
     "## 要换的东西",
     "",
-    ...(cast.length ? cast.map((entity) => describeEntity(entity, names)) : ["- （这条片子没认出可替换的实体）"]),
+    ...(cast.length ? cast.map((entity) => describeEntity(entity, names, binding)) : ["- （这条片子没认出可替换的实体）"]),
     "",
     "## 逐镜",
     "",

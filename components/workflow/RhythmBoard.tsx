@@ -23,6 +23,7 @@ import {
   STEP_WHY,
   TALKING_APPROACH_LABEL,
   SHOT_TONE_BAR,
+  SHOT_TONE_TEXT,
   VERDICT_LABEL,
   beatLocked,
   castToken,
@@ -161,7 +162,9 @@ function RhythmBar({
                 } ${selected === shot.order ? "ring-2 ring-inset ring-ink" : ""}`}
               >
                 {wide && (
-                  <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[11px] font-bold text-white/90">
+                  <span
+                    className={`pointer-events-none absolute inset-0 flex items-center justify-center text-[11px] font-bold ${SHOT_TONE_TEXT[tone]}`}
+                  >
                     {shot.order}
                   </span>
                 )}

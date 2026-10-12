@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
       // zip -j 会拍平路径，而片段在盘上的名字和包里要的名字本来就是同一个（clipFileName），
       // 先复制一份到临时目录等于把几十兆白读白写一遍
       const manifest = path.join(work, EDIT_PACK_MANIFEST_NAME);
-      await writeFile(manifest, buildEditPackManifest(rhythm, names), "utf8");
+      await writeFile(manifest, buildEditPackManifest(rhythm, names, project?.castBinding), "utf8");
 
       const archive = path.join(work, "pack.zip");
       await runCommand(

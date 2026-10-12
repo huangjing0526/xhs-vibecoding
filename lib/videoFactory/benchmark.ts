@@ -448,8 +448,15 @@ export function shotTone(shot: BenchmarkShot): ShotTone {
 /** 快切深、常规浅、长镜发暖。节奏面板的宽条和模板卡的竖条共用这一套，两处颜色不能各说各的。 */
 export const SHOT_TONE_BAR: Record<ShotTone, string> = {
   fast: "bg-brand-500",
-  normal: "bg-brand-200",
-  long: "bg-warn/60",
+  normal: "bg-brand-300",
+  long: "bg-warn",
+};
+
+/** 色块上镜号的字色，跟着 SHOT_TONE_BAR 走：浅色块上白字看不见 */
+export const SHOT_TONE_TEXT: Record<ShotTone, string> = {
+  fast: "text-white/90",
+  normal: "text-brand-700",
+  long: "text-white/90",
 };
 
 /**

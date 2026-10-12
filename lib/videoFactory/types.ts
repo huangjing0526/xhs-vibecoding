@@ -241,13 +241,15 @@ export function upsertClip(clips: ShotClip[], clip: ShotClip): ShotClip[] {
 }
 
 /**
- * 视频作品：一镜成片在作品库里的视图，由 ShotClip 投影而来。
- * Omit 掉的两个盘上路径不外发，取流走 clipUrl；删除与重跑归项目所有，作品库只看、只下载。
+ * 视频作品：一镜成片或整条合成片在作品库里的视图，由 ShotClip / FinalCut 投影而来。
+ * Omit 掉的两个盘上路径不外发，取流走 clipUrl / finalCutUrl；删除与重跑归项目所有，作品库只看、只下载。
  */
 export type VideoWork = Omit<ShotClip, "videoPath" | "framePath"> & {
   kind: "video";
-  /** 列表键：projectId/shotOrder */
+  /** 列表键：projectId/shotOrder，合成片是 projectId/final */
   id: string;
+  /** 整条合成片（shotOrder 为 0），不是某一镜 */
+  isFinal?: boolean;
   projectId: string;
   projectTitle: string;
   /** 取流地址（clip 端点），浏览器按需拉 */
@@ -261,6 +263,17 @@ export type VideoWork = Omit<ShotClip, "videoPath" | "framePath"> & {
 export function clipUrl(projectId: string, shotOrder: number, version?: number): string {
   const base = `/api/video-factory/clip?projectId=${encodeURIComponent(projectId)}&shot=${shotOrder}`;
   return version ? `${base}&v=${version}` : base;
+}
+
+/** 合成片的取流地址；version 作用同 clipUrl */
+export function finalCutUrl(projectId: string, version?: number): string {
+  const base = `/api/video-factory/compose?projectId=${encodeURIComponent(projectId)}`;
+  return version ? `${base}&v=${version}` : base;
+}
+
+/** 作品库里怎么称呼这条视频 */
+export function videoWorkLabel(work: Pick<VideoWork, "isFinal" | "shotOrder">): string {
+  return work.isFinal ? "成片" : `第${work.shotOrder}镜`;
 }
 
 /** 拆片带过来的结构骨架：只有结构，没有原视频的画面与原句。 */
@@ -291,6 +304,8 @@ export interface TopicInput {
 
 /** 目标时长的默认档，新建项目与服务端兜底共用。 */
 export const DEFAULT_TARGET_DURATION_SEC = 45;
+/** 短于 15 秒切不出分镜，脚本路由和套用对标时长都按它兜底 */
+export const MIN_TARGET_DURATION_SEC = 15;
 
 /** 空选题：新建项目与请求兜底共用，别在各路由各写一份。 */
 export const EMPTY_TOPIC_INPUT: TopicInput = { topic: "", product: "", sellingPoints: "", audience: "" };

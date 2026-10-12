@@ -7,6 +7,7 @@ import { renderSubtitlePng } from "@/app/api/video-factory/_subtitleImage";
 import {
   RENDERER_URL,
   finalCutPath,
+  hasAudioStream,
   isSafeSegment,
   mapLimited,
   probeDurationSec,
@@ -117,6 +118,10 @@ async function ensureVoiceover(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, voice, rate }),
+  }).catch((error: unknown) => {
+    // 连不上时 fetch 只抛一句「fetch failed」，看不出是服务没起
+    console.error("[VideoFactory] 配音服务连不上", { action: "videoFactory.compose.tts", projectId: project.id, url: RENDERER_URL, error });
+    throw new Error(`配音服务没启动（${RENDERER_URL}）：在 services/video-renderer 里运行 npm start，或关掉配音再合成`);
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -192,10 +197,15 @@ export async function POST(request: NextRequest) {
     // 部件数从「镜数」变成「刀数」之后这两笔都翻了两三倍，串在循环里等的全是空耗
     const clipSecByShot = new Map<number, number>();
     const uniqueClips = [...new Map(project.clips.map((clip) => [clip.shotOrder, clip])).values()];
-    const probed = await mapLimited(uniqueClips, PROBE_CONCURRENCY, async (clip) =>
-      (await probeDurationSec(clip.videoPath)) || clip.durationSec,
-    );
-    uniqueClips.forEach((clip, index) => clipSecByShot.set(clip.shotOrder, probed[index]));
+    const audioByShot = new Map<number, boolean>();
+    const probed = await mapLimited(uniqueClips, PROBE_CONCURRENCY, async (clip) => {
+      const [sec, audio] = await Promise.all([probeDurationSec(clip.videoPath), hasAudioStream(clip.videoPath)]);
+      return { sec: sec || clip.durationSec, audio };
+    });
+    uniqueClips.forEach((clip, index) => {
+      clipSecByShot.set(clip.shotOrder, probed[index].sec);
+      audioByShot.set(clip.shotOrder, probed[index].audio);
+    });
 
     const spoken = withVoiceover ? parts.filter((part) => (part.voiceover || "").trim()) : [];
     const spokenAudio = await mapLimited(spoken, TTS_CONCURRENCY, (part) =>
@@ -269,15 +279,25 @@ export async function POST(request: NextRequest) {
         videoTap = "[v]";
       }
 
-      // 各镜自带的环境音压低垫在口播下面；补静音到整刀长度，否则 amix 会按最短那路提前收尾
+      // 各镜自带的环境音压低垫在口播下面；补静音到整刀长度，否则 amix 会按最短那路提前收尾。
+      // 片子没音轨时：有口播就只用口播，没口播就垫一条静音——拼接要求每段都有音轨
+      const ambient = audioByShot.get(part.shotOrder);
+      // 口播和静音二选一，都排在片子（和字幕图）后面那一路
+      const audioIndex = withSubtitles && (part.subtitle || "").trim() ? 2 : 1;
       if (voiceover) {
         inputs.push("-i", voiceover.path);
-        const voiceIndex = withSubtitles && (part.subtitle || "").trim() ? 2 : 1;
-        chains.push(`[0:a]volume=${AMBIENT_DB}dB[amb]`);
-        chains.push(`[${voiceIndex}:a]volume=${VOICE_GAIN},apad[vo]`);
-        chains.push(`[amb][vo]amix=inputs=2:duration=first[a]`);
-      } else {
+        if (ambient) {
+          chains.push(`[0:a]volume=${AMBIENT_DB}dB[amb]`);
+          chains.push(`[${audioIndex}:a]volume=${VOICE_GAIN},apad[vo]`);
+          chains.push(`[amb][vo]amix=inputs=2:duration=first[a]`);
+        } else {
+          chains.push(`[${audioIndex}:a]volume=${VOICE_GAIN},apad[a]`);
+        }
+      } else if (ambient) {
         chains.push(`[0:a]volume=${AMBIENT_DB}dB[a]`);
+      } else {
+        inputs.push("-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo");
+        chains.push(`[${audioIndex}:a]anull[a]`);
       }
 
       await run([
@@ -295,7 +315,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (tooShort.length > 0) {
-      return apiBadRequest(`这几镜放不下口播，按更长的档位重新生成：${tooShort.join("；")}`);
+      return apiBadRequest(`这几镜放不下口播，按更长的档位重新生成，或把口播删短：${tooShort.join("；")}`);
     }
 
     // ④ 拼接。各段编码参数已归一，可以直接流拷贝

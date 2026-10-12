@@ -357,6 +357,16 @@ export async function probeDurationSec(file: string): Promise<number> {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+/** 有没有音轨。生成的片子、对标原片都可能是无声的 */
+export async function hasAudioStream(file: string): Promise<boolean> {
+  const out = await runCommand(
+    "ffprobe",
+    ["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", file],
+    { timeoutMs: 30_000 },
+  );
+  return out.includes("audio");
+}
+
 export async function writeProject(project: VideoProject): Promise<VideoProject> {
   const next = { ...project, updatedAt: new Date().toISOString() };
   await mkdir(projectDir(project.id), { recursive: true });

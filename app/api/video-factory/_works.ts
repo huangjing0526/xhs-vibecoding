@@ -1,5 +1,5 @@
 import { listProjects } from "@/app/api/video-factory/_shared";
-import { clipUrl, type VideoWork } from "@/lib/videoFactory";
+import { clipUrl, finalCutUrl, type VideoWork } from "@/lib/videoFactory";
 
 /**
  * 视频侧的作品列表：各项目的成片投影成 VideoWork。
@@ -8,8 +8,8 @@ import { clipUrl, type VideoWork } from "@/lib/videoFactory";
  */
 export async function listVideoWorks(): Promise<VideoWork[]> {
   const projects = await listProjects();
-  return projects.flatMap((project) =>
-    project.clips.map((clip) => ({
+  return projects.flatMap((project) => {
+    const shots: VideoWork[] = project.clips.map((clip) => ({
       kind: "video" as const,
       id: `${project.id}/${clip.shotOrder}`,
       projectId: project.id,
@@ -21,6 +21,26 @@ export async function listVideoWorks(): Promise<VideoWork[]> {
       // 加 createdAt 之前落盘的老 clip 没有这个字段，按项目更新时间顶上，别让排序把它甩到最后
       createdAt: clip.createdAt || project.updatedAt,
       videoUrl: clipUrl(project.id, clip.shotOrder),
-    })),
-  );
+    }));
+    const final = project.finalCut;
+    if (!final) return shots;
+    // 合成片的引擎和分辨率跟着第一镜走：各镜引擎不一致时只是个大概，作品库只拿它当来历参考
+    const first = project.clips[0];
+    return [
+      {
+        kind: "video" as const,
+        id: `${project.id}/final`,
+        projectId: project.id,
+        projectTitle: project.title,
+        shotOrder: 0,
+        isFinal: true,
+        provider: first?.provider ?? project.genProvider,
+        durationSec: final.durationSec,
+        resolution: first?.resolution,
+        createdAt: final.createdAt,
+        videoUrl: finalCutUrl(project.id),
+      },
+      ...shots,
+    ];
+  });
 }

@@ -5,7 +5,9 @@ import {
   buildScriptRewritePrompt,
   createFallbackScriptDraft,
   normalizeScriptDraft,
+  DEFAULT_TARGET_DURATION_SEC,
   EMPTY_TOPIC_INPUT,
+  MIN_TARGET_DURATION_SEC,
   type BenchmarkSkeleton,
   type ScriptDraft,
   type TopicInput,
@@ -29,7 +31,10 @@ export async function POST(request: NextRequest) {
 
     const skeleton = body.skeleton || null;
     // 目标时长限制在 15~180 秒：短于 15 秒切不出分镜，长于 180 秒不该走单条 AI 生成
-    const targetDurationSec = Math.min(180, Math.max(15, Math.round(body.targetDurationSec || 45)));
+    const targetDurationSec = Math.min(
+      180,
+      Math.max(MIN_TARGET_DURATION_SEC, Math.round(body.targetDurationSec || DEFAULT_TARGET_DURATION_SEC)),
+    );
 
     const fallback = createFallbackScriptDraft(skeleton, topic);
     const ai = await generateWorkflowJson<ScriptDraft>({

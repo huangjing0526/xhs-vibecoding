@@ -16,6 +16,7 @@ import {
   type BenchmarkShotMetrics,
 } from "./benchmark";
 import { castNameMap, type CastBinding } from "./cast";
+import { dropRepeatedLines, scriptVoiceoverLines } from "./script";
 // 只取类型，运行时不成环：unit.ts 反过来要用本文件的 metricsToCameraMove
 import { unitSourceOrders, type GenerationUnit } from "./unit";
 import {
@@ -107,10 +108,7 @@ export function suggestShotCount(totalDurationSec: number): number {
  * 一旦把「钩子：」「痛点：」这类标签混在正文里，它会当成口播内容切进字幕。
  */
 function scriptSection(script: ScriptDraft): string {
-  const fullVoiceover = [script.hook, ...script.segments.map((item) => item.voiceover), script.cta]
-    .map((text) => (text || "").trim())
-    .filter(Boolean)
-    .join("\n");
+  const fullVoiceover = scriptVoiceoverLines(script).join("\n");
   const outline = script.segments
     .map((item, index) => `${index + 1}. ${item.stage || `第 ${index + 1} 段`}：${item.purpose || "（未标注）"}`)
     .join("\n");
@@ -313,11 +311,15 @@ cuts 只有「组内要切几刀」的镜头才给；给了就必须刚好那么
 
 /** 未配置 AI 时的兜底：按脚本分段一段一镜，提示词留空等人填。 */
 export function createFallbackStoryboard(script: ScriptDraft, provider: VideoGenProviderId): Storyboard {
-  const pieces = [
-    script.hook ? { stage: "钩子", text: script.hook } : null,
-    ...script.segments.map((item) => ({ stage: item.stage, text: item.voiceover })),
-    script.cta ? { stage: "行动号召", text: script.cta } : null,
-  ].filter((item): item is { stage: string; text: string } => Boolean(item));
+  const pieces = dropRepeatedLines(
+    [
+      script.hook ? { stage: "钩子", text: script.hook } : null,
+      ...script.segments.map((item) => ({ stage: item.stage, text: item.voiceover })),
+      script.cta ? { stage: "行动号召", text: script.cta } : null,
+    ].filter((item): item is { stage: string; text: string } => Boolean(item)),
+    // 钩子 / 行动号召被抄进首尾段时只留一镜；空段落不算重复，照样占一镜等人填
+    (item) => item.text || `\u0000${item.stage}`,
+  );
 
   return {
     shots: pieces.map((item, index) => ({

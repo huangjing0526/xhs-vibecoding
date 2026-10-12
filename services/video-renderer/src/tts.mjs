@@ -108,6 +108,15 @@ async function synthesizeMsEdge({ text, voice, rate, outPath }) {
 
 const SYNTHESIZERS = { "edge-cli": synthesizeEdgeCli, msedge: synthesizeMsEdge };
 
+/**
+ * msedge-tts 连不上时 reject 的是它自己拼好的字符串 "Connect Error: " + 事件对象，
+ * 原因在库里就丢了，只剩 [object Object]——换成一句看得懂的话，别把这串原样甩给用户。
+ */
+function describeError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace("[object Object]", "连不上微软语音服务（库没给出具体原因）");
+}
+
 export async function synthesizeToFile({
   text,
   voice = "zh-CN-XiaoxiaoNeural",
@@ -124,7 +133,7 @@ export async function synthesizeToFile({
     try {
       return await SYNTHESIZERS[id]({ text, voice, rate, outPath });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = describeError(error);
       failures.push(`${id}：${message}`);
       // 还有通道可试，所以这里不抛；但失败原因必须留痕，否则永远查不出是哪条挂了
       console.error("[video-renderer] TTS 通道失败，尝试下一条", {

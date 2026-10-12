@@ -78,6 +78,10 @@ import {
   VIDEO_FACTORY_STEPS,
   applyCameraMove,
   checkScriptDuration,
+  MIN_TARGET_DURATION_SEC,
+  finalCutUrl,
+  rhythmToSkeleton,
+  scriptVoiceoverLines,
   estimateDurationSec,
   secondsToChars,
   replanRhythm,
@@ -165,12 +169,15 @@ const EMPTY_PROJECT: VideoProject = {
   finalCut: null,
 };
 
-const DURATION_OPTIONS = [
-  { value: "30", label: "30 秒" },
-  { value: "45", label: "45 秒" },
-  { value: "60", label: "60 秒" },
-  { value: "90", label: "90 秒" },
-];
+const DURATION_PRESETS = [15, 30, 45, 60, 90];
+
+/** 套了对标节奏的项目时长是对标的实际秒数，不在预设里也要能选中 */
+function targetDurationOptions(current: number) {
+  const values = DURATION_PRESETS.includes(current)
+    ? DURATION_PRESETS
+    : [...DURATION_PRESETS, current].sort((a, b) => a - b);
+  return values.map((value) => ({ value: String(value), label: `${value} 秒` }));
+}
 
 const SectionTitle = ({ children }: { children: React.ReactNode }) => (
   <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">{children}</div>
@@ -520,6 +527,8 @@ export default function VideoFactory({
   const [frameVersion, setFrameVersion] = useState<Record<number, number>>({});
   /** 当前首帧已确认的镜号。服务端按首帧图现算，不在项目里存，每个会改它的接口都会回最新的一份 */
   const [approvedFrames, setApprovedFrames] = useState<number[]>([]);
+  /** 每镜上一次出片失败的原因，留在卡片上；提示条几秒就消失，人回来时已经看不到了 */
+  const [shotErrors, setShotErrors] = useState<Record<number, string>>({});
   /** 成片预览要绕开浏览器缓存：同一镜重跑会覆盖同名文件 */
   const [clipVersion, setClipVersion] = useState<Record<number, number>>({});
   /** 正在验收的镜号；验收要抽帧加看图，十几秒到一分钟 */
@@ -537,7 +546,12 @@ export default function VideoFactory({
   /** 已出片但没过验收的镜号；合成路由会拦，这里提前说 */
   const unclearedShots = project.clips.filter((clip) => !clipQaCleared(clip.qa)).map((clip) => clip.shotOrder);
   /** 已绑上参考图的槽位，首帧那一段的文案与提醒都按它算，别再写死角色和产品 */
-  const boundCastSlots = CAST_SLOTS.filter((slot) => project.cast[slot.id]);
+  const boundCastSlots = CAST_SLOTS.filter(
+    (slot) =>
+      project.cast[slot.id] ||
+      // 套了对标节奏后，绑定挂在对标实体上（castBinding），不在项目级槽位里
+      (project.rhythm?.cast || []).some((entity) => entity.kind === slot.id && project.castBinding[castToken(entity)]),
+  );
   const benchmarkCast = useMemo(() => project.rhythm?.cast || [], [project.rhythm]);
   /**
    * 清单里列了、却没有任何一镜描述引用到的实体。
@@ -564,6 +578,7 @@ export default function VideoFactory({
     (patch: Partial<VideoProject>, rhythm: BenchmarkRhythm | null, message?: string) => {
       setProject({ ...EMPTY_PROJECT, ...patch });
       setApprovedFrames([]);
+      setShotErrors({});
       setDetectedRhythm(rhythm);
       setStep("source");
       savedRef.current = "";
@@ -579,6 +594,7 @@ export default function VideoFactory({
   const selectProject = useCallback((item: VideoProject) => {
     setProject(item);
     setApprovedFrames([]);
+    setShotErrors({});
     setDetectedRhythm(null);
     savedRef.current = JSON.stringify({ ...item, updatedAt: "" });
     setStep(item.storyboard ? "storyboard" : item.script ? "script" : "source");
@@ -696,14 +712,17 @@ export default function VideoFactory({
     async (next: VideoProject, options?: { resetClips?: boolean }): Promise<VideoProject> => {
       const { project: saved, approvedFrames: approved } = await saveVideoProject(next, options);
       setApprovedFrames(approved);
-      savedRef.current = JSON.stringify({ ...saved, updatedAt: "" });
       // 服务端写的字段（片子、首帧确认、绑定的素材……）存盘时不收前端那份，这里把盘上那份接回来——
       // 否则扩展推进来的片子在页面上永远不出现，得手动重选项目才看得到
-      setProject((current) => ({
-        ...takeServerOwned(current, saved),
-        id: current.id || saved.id,
-        createdAt: current.id ? current.createdAt : saved.createdAt,
-      }));
+      const adopt = (local: VideoProject): VideoProject => ({
+        ...takeServerOwned(local, saved),
+        id: local.id || saved.id,
+        createdAt: local.id ? local.createdAt : saved.createdAt,
+      });
+      // 记「送出去的这份 + 接回的服务端字段」，不记服务端原样那份：两边字段顺序、默认值不同，
+      // 拿服务端那份比永远不相等，自动存盘会存完再存、停不下来。存盘途中又改了的，比出来不同，照常再存
+      savedRef.current = JSON.stringify({ ...adopt(next), updatedAt: "" });
+      setProject(adopt);
       return saved;
     },
     [],
@@ -1223,7 +1242,7 @@ export default function VideoFactory({
     setIsWritingScript(true);
     try {
       const data = await rewriteVideoScript({
-        skeleton: project.skeleton,
+        skeleton: project.skeleton ?? rhythmToSkeleton(project.rhythm),
         topic: project.topic,
         targetDurationSec: project.targetDurationSec,
       });
@@ -1304,6 +1323,7 @@ export default function VideoFactory({
     }
 
     setGeneratingShot(shot.order);
+    setShotErrors(({ [shot.order]: _cleared, ...rest }) => rest);
     onNotice({ type: "info", message: `第 ${shot.order} 镜生成中，一般 1~3 分钟` });
     try {
       const saved = await flushSave(project);
@@ -1342,7 +1362,9 @@ export default function VideoFactory({
       void runClipQa(saved.id, shot.order);
     } catch (error) {
       console.error("[VideoFactory] 图生视频失败", { action: "videoFactory.generate", shotOrder: shot.order, error });
-      onNotice({ type: "error", message: error instanceof Error ? error.message : "图生视频失败" });
+      const message = error instanceof Error ? error.message : "图生视频失败";
+      setShotErrors((current) => ({ ...current, [shot.order]: message }));
+      onNotice({ type: "error", message });
     } finally {
       setGeneratingShot(null);
     }
@@ -1579,7 +1601,9 @@ export default function VideoFactory({
             applied={Boolean(shownRhythm && project.rhythm?.id === shownRhythm.id)}
             onApply={() => {
               if (!shownRhythm) return;
-              setProject((current) => applyRhythm(current, shownRhythm));
+              // 复刻就是照对标的长度拍，目标时长跟着它走
+              const targetDurationSec = Math.max(MIN_TARGET_DURATION_SEC, Math.round(shownRhythm.totalDurationSec));
+              setProject((current) => ({ ...applyRhythm(current, shownRhythm), targetDurationSec }));
               onNotice({ type: "success", message: "已套用这条节奏，拆分镜时会照它切" });
             }}
             onClear={() => setProject((current) => ({ ...current, rhythm: null }))}
@@ -1606,7 +1630,7 @@ export default function VideoFactory({
             cast={project.cast}
             busySlot={castBusySlot}
             onPickAsset={(slot, asset) => handleBindCast(slot, { assetId: asset.id, label: asset.name })}
-            onUpload={(slot, file) => handleBindCast(slot, { label: file.name.replace(/\.[^.]+$/, ""), file })}
+            onUpload={(slot, file) => handleBindCast(slot, { label: CAST_SLOTS.find((item) => item.id === slot)?.label || "", file })}
             onClear={handleClearCast}
           />
 
@@ -1646,7 +1670,7 @@ export default function VideoFactory({
                 <SegmentedControl
                   ariaLabel="目标时长"
                   value={String(project.targetDurationSec)}
-                  options={DURATION_OPTIONS}
+                  options={targetDurationOptions(project.targetDurationSec)}
                   onChange={(value) =>
                     setProject((current) => ({ ...current, targetDurationSec: Number(value) }))
                   }
@@ -1704,9 +1728,7 @@ export default function VideoFactory({
                   <div className="flex gap-2">
                     <CopyButton
                       label="复制全稿"
-                      text={[script.hook, ...script.segments.map((s) => s.voiceover), script.cta]
-                        .filter(Boolean)
-                        .join("\n\n")}
+                      text={scriptVoiceoverLines(script).join("\n\n")}
                     />
                     <Button size="sm" variant="secondary" onClick={handleWriteScript} loading={isWritingScript}>
                       重写一版
@@ -1981,7 +2003,7 @@ export default function VideoFactory({
                     handleBindShotMaterial(shot.order, { assetId: asset.id, library, label: asset.name })
                   }
                   onUpload={(file) =>
-                    handleBindShotMaterial(shot.order, { label: file.name.replace(/\.[^.]+$/, ""), file })
+                    handleBindShotMaterial(shot.order, { label: "本镜素材", file })
                   }
                   onClear={() => handleClearShotMaterial(shot.order)}
                 />
@@ -2056,6 +2078,7 @@ export default function VideoFactory({
               const pending = pendingFrames[shot.order];
               const frameLabel = pending?.label || (clip?.framePath ? "已用上次的首帧" : "");
               const frameApproved = approvedFrames.includes(shot.order);
+              const frameReady = frameApproved || Boolean(pending);
               const busy = generatingShot === shot.order;
 
               return (
@@ -2109,16 +2132,19 @@ export default function VideoFactory({
 
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     {isGenerativeProvider(genProvider) ? (
-                      <Button
-                        variant="ai"
-                        size="sm"
-                        onClick={() => handleGenerateShot(shot)}
-                        loading={busy}
-                        disabled={!providerReady || generatingShot !== null}
-                        icon={<Film size={13} />}
-                      >
-                        {busy ? "生成中" : clip ? "重新生成" : "生成这一镜"}
-                      </Button>
+                      <>
+                        <Button
+                          variant="ai"
+                          size="sm"
+                          onClick={() => handleGenerateShot(shot)}
+                          loading={busy}
+                          disabled={!providerReady || !frameReady || generatingShot !== null}
+                          icon={<Film size={13} />}
+                        >
+                          {busy ? "生成中" : clip ? "重新生成" : "生成这一镜"}
+                        </Button>
+                        {!frameReady && <span className="text-[11px] text-faint">先确认首帧</span>}
+                      </>
                     ) : (
                       <>
                         <CopyButton label="复制运动提示词" text={shot.videoPrompt} />
@@ -2148,6 +2174,10 @@ export default function VideoFactory({
                       </span>
                     )}
                   </div>
+
+                  {shotErrors[shot.order] && (
+                    <p className="mt-2 break-all text-[11px] leading-5 text-danger">{shotErrors[shot.order]}</p>
+                  )}
 
                   {(frameVersion[shot.order] || clip?.framePath || frameApproved) && (
                     <div className="mt-3 flex items-end gap-3">
@@ -2318,7 +2348,7 @@ export default function VideoFactory({
                   ].join(" · ")}
                   action={
                     <a
-                      href={`/api/video-factory/compose?projectId=${encodeURIComponent(project.id)}&v=${finalVersion}`}
+                      href={finalCutUrl(project.id, finalVersion)}
                       download={`${project.title || "成片"}.mp4`}
                       className="rounded-2xl border border-line px-4 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-line-strong"
                     >
@@ -2341,7 +2371,7 @@ export default function VideoFactory({
                 {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                 <video
                   key={finalVersion}
-                  src={`/api/video-factory/compose?projectId=${encodeURIComponent(project.id)}&v=${finalVersion}`}
+                  src={finalCutUrl(project.id, finalVersion)}
                   controls
                   className="mx-auto max-h-[70vh] rounded-2xl bg-black"
                 />

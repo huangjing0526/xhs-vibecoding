@@ -16,6 +16,7 @@ import {
   runCommand,
   setFrameApproval,
 } from "@/app/api/video-factory/_shared";
+import { clearGrokQuota, throwIfGrokQuota } from "@/app/api/video-factory/_grokQuota";
 import { generateVeoVideo } from "@/lib/engines/gemini/video";
 import { listGeminiModels } from "@/lib/engines/gemini/models";
 import {
@@ -225,7 +226,8 @@ export async function POST(request: NextRequest) {
       await writeFile(promptFile, prompt, "utf8");
 
       const startedAt = Date.now();
-      await runGrok(
+      // 退出码 0 也可能没出片（额度用完时 grok 只是把 403 讲给你听），输出要留着查原因
+      const output = await runGrok(
         [
           "--no-auto-update",
           "--cwd", dir,
@@ -237,7 +239,10 @@ export async function POST(request: NextRequest) {
           "--output-format", "plain",
         ],
         dir,
-      );
+      ).catch(async (error: unknown) => {
+        if (error instanceof Error) await throwIfGrokQuota(error.message);
+        throw error;
+      });
 
       // grok 有时会把片子留在会话目录里没复制过来，兜底自己捞一次
       let produced = await stat(outputPath).then((info) => info.isFile(), () => false);
@@ -248,7 +253,12 @@ export async function POST(request: NextRequest) {
           produced = true;
         }
       }
-      if (!produced) throw new Error("grok 已结束，但没找到生成的视频文件");
+      if (!produced) {
+        await throwIfGrokQuota(output);
+        console.error("[VideoFactory] grok 结束但没出片", { action: "videoFactory.generate", projectId, shotOrder, output: output.slice(-2000) });
+        throw new Error(`grok 没生成视频文件：${output.trim().slice(-300) || "没有输出"}`);
+      }
+      await clearGrokQuota();
     }
 
     const clip: ShotClip = {

@@ -12,6 +12,7 @@ import SegmentedControl from "@/components/workflow/SegmentedControl";
 import { groupInOrder } from "@/lib/collections";
 import { LIBRARY_COPY, LIBRARY_KINDS } from "@/lib/imageFactory/libraries";
 import type { AnyWork, ImageWork, VideoWork } from "@/lib/works";
+import { videoWorkLabel } from "@/lib/videoFactory";
 import { deleteWork, listWorks, saveLibraryAssets } from "@/lib/workflowClient";
 import type { Notice } from "./types";
 
@@ -197,7 +198,7 @@ function downloadName(work: ImageWork): string {
 
 /** 视频下载名：日期 + 项目 + 镜号，同一条片子的各镜排在一起。 */
 function videoDownloadName(work: VideoWork): string {
-  return `${work.createdAt.slice(0, 10)}-${work.projectTitle}-第${work.shotOrder}镜.mp4`;
+  return `${work.createdAt.slice(0, 10)}-${work.projectTitle}-${videoWorkLabel(work)}.mp4`;
 }
 
 /** 详情里的生成时间：到分钟。 */
@@ -267,7 +268,7 @@ function WorkThumb({
 
 /** 视频缩略卡：首帧当封面（preload=metadata 不拉整条片子），角标写时长。没有删除——成片归项目所有。 */
 function VideoThumb({ work, onOpen }: { work: VideoWork; onOpen: (work: VideoWork) => void }) {
-  const label = `${work.projectTitle} · 第${work.shotOrder}镜`;
+  const label = `${work.projectTitle} · ${videoWorkLabel(work)}`;
   return (
     <div className="group overflow-hidden rounded-2xl border border-line bg-surface">
       <div className="relative aspect-square bg-soft">
@@ -440,7 +441,7 @@ function VideoDetail({ work, onClose }: { work: VideoWork; onClose: () => void }
           <div className="min-w-0">
             <h2 className="truncate text-base font-bold text-ink">{work.projectTitle}</h2>
             <p className="mt-0.5 text-xs text-faint">
-              第{work.shotOrder}镜 · {work.durationSec} 秒{work.resolution ? ` · ${work.resolution}` : ""}
+              {videoWorkLabel(work)} · {work.durationSec} 秒{work.resolution ? ` · ${work.resolution}` : ""}
             </p>
           </div>
           <a
@@ -457,7 +458,7 @@ function VideoDetail({ work, onClose }: { work: VideoWork; onClose: () => void }
         </div>
 
         <div className="mt-3 rounded-2xl bg-soft p-3">
-          <h3 className="text-xs font-bold text-muted">这一镜是怎么跑出来的</h3>
+          <h3 className="text-xs font-bold text-muted">{work.isFinal ? "这条" : "这一镜"}是怎么跑出来的</h3>
           <dl className="mt-2 space-y-1.5 text-[11px] leading-5">
             <MetaRow label="生成时间" value={formatWorkTime(work.createdAt)} />
             <MetaRow label="引擎" value={work.provider} />

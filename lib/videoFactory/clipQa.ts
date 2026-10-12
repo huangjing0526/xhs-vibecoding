@@ -29,6 +29,11 @@ export interface ShotReference {
 
 const SHOT_MATERIAL_USAGE = "这一镜要展示的就是它，款式、颜色、材质、细节都要照它来；场景和光线以上面的画面描述为准";
 
+/** 参考图在提示词里的叫法；素材名就是槽位名时不再重复一遍 */
+function refLabel(slotLabel: string, name: string): string {
+  return name && name !== slotLabel ? `${slotLabel}（${name}）` : slotLabel;
+}
+
 /**
  * 这一镜的参考图。首帧、出片、验收三处都从盘上的项目算这一份，不收前端现算的。
  *
@@ -39,7 +44,7 @@ const SHOT_MATERIAL_USAGE = "这一镜要展示的就是它，款式、颜色、
 export function shotReferences(project: VideoProject, shot: Shot): ShotReference[] {
   const refs: ShotReference[] = [];
   if (shot.material) {
-    refs.push({ label: `本镜素材（${shot.material.label}）`, ref: shot.material, usage: SHOT_MATERIAL_USAGE });
+    refs.push({ label: refLabel("本镜素材", shot.material.label), ref: shot.material, usage: SHOT_MATERIAL_USAGE });
   }
 
   const covered = new Set<string>();
@@ -47,13 +52,13 @@ export function shotReferences(project: VideoProject, shot: Shot): ShotReference
   for (const { entity, ref } of shotCastRefs(project.rhythm?.cast, project.castBinding, shotSourceOrders(shot))) {
     const slot = CAST_SLOTS.find((item) => item.id === entity.kind);
     if (!slot) continue;
-    refs.push({ label: `${slot.label}（${ref.label}）`, ref, usage: slot.usage });
+    refs.push({ label: refLabel(slot.label, ref.label), ref, usage: slot.usage });
     covered.add(entity.kind);
   }
 
   for (const slot of CAST_SLOTS) {
     const ref = project.cast[slot.id];
-    if (ref?.path && !covered.has(slot.id)) refs.push({ label: `${slot.label}（${ref.label}）`, ref, usage: slot.usage });
+    if (ref?.path && !covered.has(slot.id)) refs.push({ label: refLabel(slot.label, ref.label), ref, usage: slot.usage });
   }
   return refs;
 }

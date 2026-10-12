@@ -180,7 +180,7 @@ export default function BenchmarkCastBoard({
                         disabled={!ready || busy}
                         onChange={(event) => {
                           const file = event.target.files?.[0];
-                          if (file) onBind(entity, { label: file.name.replace(/\.[^.]+$/, ""), file });
+                          if (file) onBind(entity, { label: entity.label, file });
                           event.target.value = "";
                         }}
                       />
