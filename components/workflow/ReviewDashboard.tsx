@@ -1,11 +1,11 @@
 "use client";
 
-import { toast } from "sonner";
-import { BarChart3 } from "lucide-react";
+import { useRef } from "react";
+import { BarChart3, RefreshCw, Upload } from "lucide-react";
 import Button from "@/components/ui/Button";
 import EmptyState from "@/components/ui/EmptyState";
 import Stat from "@/components/ui/Stat";
-import type { ReviewActionLayer, ReviewMetric, ReviewResult } from "@/lib/xhsWorkflow";
+import { hasReviewData, type ReviewActionLayer, type ReviewMetric, type ReviewResult } from "@/lib/xhsWorkflow";
 import { copyToClipboard } from "@/lib/clipboard";
 
 interface ReviewDashboardProps {
@@ -30,6 +30,55 @@ function toPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+/** 页头主操作：选一份创作服务平台导出的 xlsx 就开始导入。 */
+export function ImportStatsButton({
+  onImport,
+  importing,
+  disabled,
+}: {
+  onImport: (file: File) => void;
+  importing: boolean;
+  disabled: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".xlsx"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          // 清掉值，同一个文件改完再选一次也能触发
+          event.target.value = "";
+          if (file) onImport(file);
+        }}
+      />
+      <Button
+        variant="primary"
+        icon={<Upload size={15} />}
+        loading={importing}
+        disabled={disabled}
+        title={disabled ? "连接飞书后才能导入" : "导入创作服务平台的笔记数据表"}
+        onClick={() => inputRef.current?.click()}
+      >
+        导入数据
+      </Button>
+    </>
+  );
+}
+
+/** 每行写回的是同一次复盘的总结，取出现最多的那句当「上次复盘」 */
+function latestSummary(metrics: ReviewMetric[]): string {
+  const counts = new Map<string, number>();
+  for (const metric of metrics) {
+    const summary = metric.conclusion?.summary;
+    if (summary) counts.set(summary, (counts.get(summary) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+}
+
 export default function ReviewDashboard({ metrics, review, onGenerate, onCancel, generating }: ReviewDashboardProps) {
   const handleCarry = (advice: string) => {
     void copyToClipboard(advice, {
@@ -39,10 +88,14 @@ export default function ReviewDashboard({ metrics, review, onGenerate, onCancel,
   };
 
   const sortedMetrics = [...metrics].sort((a, b) => b.reads - a.reads);
-  const totalReads = metrics.reduce((sum, item) => sum + item.reads, 0);
-  const totalImpressions = metrics.reduce((sum, item) => sum + (item.impressions ?? 0), 0);
+  // 刚标记发布、还没回填的行不进统计，否则一堆 0 会把均值拉低
+  const withData = metrics.filter(hasReviewData);
+  const awaitingCount = metrics.length - withData.length;
+  const totalReads = withData.reduce((sum, item) => sum + item.reads, 0);
+  const totalImpressions = withData.reduce((sum, item) => sum + (item.impressions ?? 0), 0);
   const averageSaveRate =
-    metrics.length > 0 ? metrics.reduce((sum, item) => sum + item.saveRate, 0) / metrics.length : 0;
+    withData.length > 0 ? withData.reduce((sum, item) => sum + item.saveRate, 0) / withData.length : 0;
+  const lastSummary = latestSummary(metrics);
   // 整体封面点击率按总量算，而不是各条求平均——否则几十次曝光的笔记会把数字拉飞
   const overallClickRate = totalImpressions > 0 ? totalReads / totalImpressions : 0;
 
@@ -51,6 +104,7 @@ export default function ReviewDashboard({ metrics, review, onGenerate, onCancel,
       <div className="overflow-hidden rounded-3xl border border-line bg-surface shadow-card">
         <div className="flex gap-2 p-4">
           <Stat value={metrics.length} label="已发布" />
+          {awaitingCount > 0 && <Stat value={awaitingCount} label="待回填" />}
           {totalImpressions > 0 && <Stat value={totalImpressions} label="曝光" />}
           <Stat value={totalReads} label="阅读" />
           {totalImpressions > 0 && <Stat value={toPercent(overallClickRate)} label="封面点击率" />}
@@ -66,31 +120,41 @@ export default function ReviewDashboard({ metrics, review, onGenerate, onCancel,
               <div className="min-w-0">
                 <div className="font-mono text-[11px] font-bold text-faint">{metric.noteId}</div>
                 <div className="mt-1 text-sm font-bold leading-6 text-ink">{metric.title || "未命名笔记"}</div>
+                {metric.conclusion?.action && (
+                  <div className="mt-1 flex items-start gap-1.5 text-xs leading-5 text-muted">
+                    <span className="shrink-0 rounded-full bg-soft px-2 py-0.5 font-bold text-ink">{metric.conclusion.action}</span>
+                    <span className="min-w-0">{metric.conclusion.diagnosis}</span>
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-4 text-center text-xs">
-                <div>
-                  <div className="font-rounded font-bold tabular-nums text-muted">
-                    {metric.impressions ?? "—"}
+              {!hasReviewData(metric) ? (
+                <div className="flex items-center justify-end text-xs text-faint">待回填数据</div>
+              ) : (
+                <div className="grid grid-cols-4 text-center text-xs">
+                  <div>
+                    <div className="font-rounded font-bold tabular-nums text-muted">
+                      {metric.impressions ?? "—"}
+                    </div>
+                    <div className="mt-0.5 text-faint">曝光</div>
                   </div>
-                  <div className="mt-0.5 text-faint">曝光</div>
-                </div>
-                <div>
-                  <div className="font-rounded font-bold tabular-nums text-ink">{metric.reads}</div>
-                  <div className="mt-0.5 text-faint">
-                    {metric.coverClickRate === undefined ? "阅读" : `阅读 ${toPercent(metric.coverClickRate)}`}
+                  <div>
+                    <div className="font-rounded font-bold tabular-nums text-ink">{metric.reads}</div>
+                    <div className="mt-0.5 text-faint">
+                      {metric.coverClickRate === undefined ? "阅读" : `阅读 ${toPercent(metric.coverClickRate)}`}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-rounded font-bold tabular-nums text-ok">{metric.saves}</div>
+                    <div className="mt-0.5 text-faint">收藏</div>
+                  </div>
+                  <div>
+                    <div className="font-rounded font-bold tabular-nums text-muted">
+                      {toPercent(metric.interactionRate)}
+                    </div>
+                    <div className="mt-0.5 text-faint">互动率</div>
                   </div>
                 </div>
-                <div>
-                  <div className="font-rounded font-bold tabular-nums text-ok">{metric.saves}</div>
-                  <div className="mt-0.5 text-faint">收藏</div>
-                </div>
-                <div>
-                  <div className="font-rounded font-bold tabular-nums text-muted">
-                    {toPercent(metric.interactionRate)}
-                  </div>
-                  <div className="mt-0.5 text-faint">互动率</div>
-                </div>
-              </div>
+              )}
             </div>
           ))}
           {metrics.length === 0 && <div className="p-10 text-center text-sm text-faint">暂无已发布笔记数据</div>}
@@ -100,8 +164,20 @@ export default function ReviewDashboard({ metrics, review, onGenerate, onCancel,
       <div className="overflow-hidden rounded-3xl border border-line bg-surface shadow-card">
         {review ? (
           <div className="p-5">
-            <div className="rounded-2xl bg-soft px-4 py-3 text-sm font-semibold leading-6 text-ink">
-              {review.summary}
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1 rounded-2xl bg-soft px-4 py-3 text-sm font-semibold leading-6 text-ink">
+                {review.summary}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<RefreshCw size={14} />}
+                onClick={onGenerate}
+                loading={generating}
+                disabled={withData.length === 0}
+              >
+                重新生成
+              </Button>
             </div>
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -174,12 +250,15 @@ export default function ReviewDashboard({ metrics, review, onGenerate, onCancel,
             <EmptyState
               bare
               icon={<BarChart3 size={22} />}
-              title="把发布后的数据回填后，生成复盘结论"
-              description={metrics.length === 0 ? "先发布一篇笔记才有数据可复盘。" : undefined}
+              title={lastSummary ? "上次复盘" : "把发布后的数据回填后，生成复盘结论"}
+              description={
+                lastSummary ||
+                (withData.length === 0 ? "页头「导入数据」，上传创作服务平台导出的笔记数据表。" : undefined)
+              }
               action={
                 <div className="flex items-center gap-2">
-                  <Button variant="ai" size="lg" onClick={onGenerate} loading={generating} disabled={metrics.length === 0}>
-                    {generating ? "生成中" : "生成复盘"}
+                  <Button variant="ai" size="lg" onClick={onGenerate} loading={generating} disabled={withData.length === 0}>
+                    {generating ? "生成中" : lastSummary ? "重新复盘" : "生成复盘"}
                   </Button>
                   {generating && (
                     <Button variant="ghost" size="lg" onClick={onCancel}>

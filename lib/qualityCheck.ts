@@ -1,5 +1,5 @@
 import { bodyMatchesStructure, countAbstractWords, firstThreeLines, hasCollectibleAsset, titleMatchesStructure } from "./contentStrategy";
-import type { ContentCard, DraftNote } from "./xhsWorkflow";
+import type { ContentCard, DraftNote, ViralTitleStructure } from "./xhsWorkflow";
 
 /**
  * 发布前质检（阶段 A · 纯规则版）。
@@ -79,6 +79,12 @@ const HOOK_BENEFIT = /免费|一键|秒|0基础|零基础|必看|收藏|私藏|�
 const HOOK_CONTRAST = /反而|结果|没想到|居然|竟然|别再|原来|终于|不是.*而是|从.*到|越.*越/;
 /** 疑问信号 */
 const QUESTION_SIGNAL = /[?？]|怎么|为什么|如何|是不是|为何|凭什么|该不该|有没有|吗$/;
+/**
+ * 钩子要求，写给模型看。与 checkHook 的四类信号（数字 / QUESTION_SIGNAL / HOOK_CONTRAST / HOOK_BENEFIT）一一对应，
+ * 改了上面的正则必须同步改这里。命中两类才算「钩子到位」，一类只是警告。
+ */
+export const HOOK_REQUIREMENT =
+  "标题至少命中两类钩子：数字；提问（？/怎么/为什么/如何）；反差（反而/结果/没想到/终于/别再/不是…而是）；利益点（清单/模板/避坑/踩坑/实测/手把手）";
 
 /** 从文本里抽「可比对的硬术语」：ASCII 词（专有名词/技术名）+ 长度≥2 */
 function extractAsciiTerms(text: string): string[] {
@@ -171,9 +177,9 @@ function checkFact(draft: DraftNote, topic: ContentCard | null): QualityIssue {
   };
 }
 
-function checkHook(draft: DraftNote): QualityIssue {
+function checkHook(rawTitle: string): QualityIssue {
   const base = { dimension: "hook" as const, label: DIMENSION_LABEL.hook, fixAction: "rewrite" as const };
-  const title = draft.title.trim();
+  const title = rawTitle.trim();
   if (!title) {
     return { ...base, verdict: "fail", message: "标题为空。", fixHint: "进改写抽屉先定一个钩子标题。" };
   }
@@ -281,8 +287,15 @@ function checkCta(draft: DraftNote): QualityIssue {
   return { ...base, verdict: "pass", message: "引导是真实讨论问题。", fixHint: "评论引导检查通过。" };
 }
 
-function checkTitleStructure(draft: DraftNote, topic: ContentCard | null): QualityIssue {
-  const structure = draft.viralTitleStructure || topic?.viralTitleStructure;
+/** 标题结构以草稿为准，草稿没定就沿用选题的。质检与改写取法一致，都走这里。 */
+export function resolveTitleStructure(
+  draft: Pick<DraftNote, "viralTitleStructure"> | null,
+  topic: Pick<ContentCard, "viralTitleStructure"> | null
+): ViralTitleStructure | undefined {
+  return draft?.viralTitleStructure || topic?.viralTitleStructure;
+}
+
+function checkTitleStructure(title: string, structure: ViralTitleStructure | undefined): QualityIssue {
   const base = {
     dimension: "title-structure" as const,
     label: DIMENSION_LABEL["title-structure"],
@@ -291,7 +304,7 @@ function checkTitleStructure(draft: DraftNote, topic: ContentCard | null): Quali
   if (!structure) {
     return { ...base, verdict: "warn", message: "还没有指定标题结构。", fixHint: "先给这篇选一个明确的标题结构。" };
   }
-  if (!titleMatchesStructure(draft.title, structure)) {
+  if (!titleMatchesStructure(title, structure)) {
     return {
       ...base,
       verdict: "fail",
@@ -390,6 +403,17 @@ function checkSimilarity(draft: DraftNote, topic: ContentCard | null): QualityIs
   return { ...base, verdict: "pass", message: "未见明显撞题风险。", fixHint: "相似度检查通过。" };
 }
 
+/**
+ * 只跑针对标题的两项（钩子 + 标题结构），给改写结果排序用：同一套判定，改写排第一的标题就是质检最可能放行的那个。
+ * 返回值越小越好：每个不过记 2，每个警告记 1。
+ */
+export function titleQualityPenalty(title: string, structure?: ViralTitleStructure): number {
+  return [checkHook(title), checkTitleStructure(title, structure)].reduce(
+    (sum, issue) => sum + (issue.verdict === "fail" ? 2 : issue.verdict === "warn" ? 1 : 0),
+    0
+  );
+}
+
 export function runQualityCheck(input: QualityCheckInput): QualityCheckResult {
   const { draft, topic, coverReady } = input;
 
@@ -408,8 +432,8 @@ export function runQualityCheck(input: QualityCheckInput): QualityCheckResult {
 
   const issues: QualityIssue[] = [
     checkFact(draft, topic),
-    checkHook(draft),
-    checkTitleStructure(draft, topic),
+    checkHook(draft.title),
+    checkTitleStructure(draft.title, resolveTitleStructure(draft, topic)),
     checkBodyStructure(draft, topic),
     checkOpening(draft),
     checkAsset(draft, topic),

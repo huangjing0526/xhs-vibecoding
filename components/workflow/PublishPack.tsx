@@ -18,14 +18,16 @@ import {
   type PublishTextBlock,
 } from "@/lib/publishPack";
 import { isPublishedDraft, type ContentCard, type DraftNote } from "@/lib/xhsWorkflow";
+import type { ContentImagePlan } from "@/lib/imageWorkflow";
+import ContentImageThumb from "@/components/workflow/ContentImageThumb";
 
 interface PublishPackProps {
   draft: DraftNote | null;
   topic: ContentCard | null;
   /** 这篇笔记落库的封面配置，面板内现渲染成 PNG 后随包带走 */
   coverConfig: CoverConfig | null;
-  /** 本次会话生成的内容配图；配图方案不落库，换一篇回来就没了 */
-  contentImageDataUrl: string;
+  /** 这篇存过的配图方案，面板内现渲染成 PNG 后随包带走，同封面 */
+  contentImagePlan: ContentImagePlan | null;
   quality: QualityCheckResult;
   onOpenCover: () => void;
   onOpenImages: () => void;
@@ -64,7 +66,7 @@ export default function PublishPack({
   draft,
   topic,
   coverConfig,
-  contentImageDataUrl,
+  contentImagePlan,
   quality,
   onOpenCover,
   onOpenImages,
@@ -74,6 +76,7 @@ export default function PublishPack({
 }: PublishPackProps) {
   // 封面 PNG 由下面的 CoverThumb 现渲染回传：落库的只有配置，图要用时才画
   const [coverDataUrl, setCoverDataUrl] = useState("");
+  const [contentImageDataUrl, setContentImageDataUrl] = useState("");
 
   const pack = useMemo(
     () => buildPublishPack(draft, topic, { coverDataUrl, contentImageDataUrl }),
@@ -176,14 +179,14 @@ export default function PublishPack({
             </div>
           )}
 
-          {contentImageDataUrl ? (
+          {contentImagePlan ? (
             <figure className="w-28">
-              {/* 配图是会话里刚渲染的 PNG，直接显示；它没有落库的配置可重建 */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={contentImageDataUrl}
-                alt="配图"
+              <ContentImageThumb
+                plan={contentImagePlan}
                 className="w-28 rounded-2xl border border-line shadow-card"
+                sizes="112px"
+                alt="配图"
+                onRendered={setContentImageDataUrl}
               />
               <figcaption className="mt-1.5 text-[11px] font-bold text-faint">02 配图</figcaption>
             </figure>

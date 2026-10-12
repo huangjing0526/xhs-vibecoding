@@ -1,27 +1,27 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Radar } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, Radar } from "lucide-react";
 import Button from "@/components/ui/Button";
 import EmptyState from "@/components/ui/EmptyState";
 import { Input, Textarea } from "@/components/ui/Field";
 import {
-  DEMO_BLOGGER_PROFILES,
-  DEMO_BLOGGER_SAMPLES,
-  getDistillationForBlogger,
-  getSamplesForBlogger,
+  makeManualSample,
   type BloggerDistillation,
   type BloggerProfile,
   type BloggerSample,
   type DaokuSlot,
 } from "@/lib/bloggerWorkflow";
-import { distillBlogger } from "@/lib/workflowClient";
+import { addBloggerSample, createBlogger, distillBlogger, listBloggers } from "@/lib/workflowClient";
 import type { Notice } from "@/components/workflow/types";
 
 interface BloggerResearchProps {
   selectedDistillation: BloggerDistillation | null;
+  /** 已落盘的道库模板：选中的博主蒸馏过，就直接显示那一份 */
+  savedDistillations: BloggerDistillation[];
   onDistillationChange: (distillation: BloggerDistillation) => void;
   onNotice: (notice: Notice) => void;
+  onError: (action: string, error: unknown) => void;
 }
 
 function metricText(sample: BloggerSample): string {
@@ -66,15 +66,38 @@ function SlotList({ slots }: { slots: DaokuSlot[] }) {
 
 export default function BloggerResearch({
   selectedDistillation,
+  savedDistillations,
   onDistillationChange,
   onNotice,
+  onError,
 }: BloggerResearchProps) {
-  const [profiles] = useState<BloggerProfile[]>(DEMO_BLOGGER_PROFILES);
-  const [samples, setSamples] = useState<BloggerSample[]>(DEMO_BLOGGER_SAMPLES);
-  const [selectedBloggerId, setSelectedBloggerId] = useState(profiles[0]?.id || "");
+  const [profiles, setProfiles] = useState<BloggerProfile[]>([]);
+  const [samples, setSamples] = useState<BloggerSample[]>([]);
+  // null = 还在读；false = 没配对标表，读到的是 demo，新增只留在本页
+  const [persisted, setPersisted] = useState<boolean | null>(null);
+  const [selectedBloggerId, setSelectedBloggerId] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftContent, setDraftContent] = useState("");
   const [distilling, setDistilling] = useState(false);
+  const [savingSample, setSavingSample] = useState(false);
+  const [newBlogger, setNewBlogger] = useState<{ name: string; positioning: string } | null>(null);
+  const [savingBlogger, setSavingBlogger] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    listBloggers()
+      .then((data) => {
+        if (!active) return;
+        setProfiles(data.profiles);
+        setSamples(data.samples);
+        setPersisted(data.persisted);
+        setSelectedBloggerId((current) => current || data.profiles[0]?.id || "");
+      })
+      .catch((error) => onError("bloggers.list", error));
+    return () => {
+      active = false;
+    };
+  }, [onError]);
 
   const selectedProfile = profiles.find((profile) => profile.id === selectedBloggerId) || profiles[0];
   const visibleSamples = useMemo(
@@ -84,21 +107,37 @@ export default function BloggerResearch({
   const distillation =
     selectedDistillation?.bloggerId === selectedBloggerId
       ? selectedDistillation
-      : getDistillationForBlogger(selectedBloggerId);
+      : savedDistillations.find((item) => item.bloggerId === selectedBloggerId) || null;
 
-  const handleAddSample = () => {
-    if (!draftTitle.trim() && !draftContent.trim()) return;
-    const nextSample: BloggerSample = {
-      id: `sample-${Date.now().toString(36)}`,
-      bloggerId: selectedBloggerId,
-      title: draftTitle.trim() || "未命名样本",
-      content: draftContent.trim(),
-      tags: [],
-      coverDescription: "手动录入样本",
-    };
-    setSamples((current) => [nextSample, ...current]);
-    setDraftTitle("");
-    setDraftContent("");
+  const handleAddSample = async () => {
+    if (!selectedBloggerId || (!draftTitle.trim() && !draftContent.trim())) return;
+    const input = { bloggerId: selectedBloggerId, title: draftTitle.trim(), content: draftContent.trim() };
+    setSavingSample(true);
+    try {
+      const sample = persisted ? await addBloggerSample(input) : makeManualSample(`sample-${crypto.randomUUID()}`, input);
+      setSamples((current) => [sample, ...current]);
+      setDraftTitle("");
+      setDraftContent("");
+    } catch (error) {
+      onError("bloggers.samples.create", error);
+    } finally {
+      setSavingSample(false);
+    }
+  };
+
+  const handleCreateBlogger = async () => {
+    if (!newBlogger?.name.trim()) return;
+    setSavingBlogger(true);
+    try {
+      const profile = await createBlogger({ name: newBlogger.name.trim(), positioning: newBlogger.positioning.trim() });
+      setProfiles((current) => [...current, profile]);
+      setSelectedBloggerId(profile.id);
+      setNewBlogger(null);
+    } catch (error) {
+      onError("bloggers.create", error);
+    } finally {
+      setSavingBlogger(false);
+    }
   };
 
   // 蒸馏走服务端：本机没配 AI 时后端自己落到关键词骨架，这里只管把结果交上去
@@ -112,13 +151,7 @@ export default function BloggerResearch({
         onNotice({ type: "info", message: "未检测到 AI 配置，这版道是按关键词规则出的骨架，建议人工过一遍" });
       }
     } catch (error) {
-      console.error("[BloggerResearch] 蒸馏失败", {
-        userId: "local",
-        action: "daoku.distill",
-        bloggerId: selectedProfile.id,
-        error,
-      });
-      onNotice({ type: "error", message: error instanceof Error ? error.message : "蒸馏失败，稍后再试" });
+      onError("daoku.distill", error);
     } finally {
       setDistilling(false);
     }
@@ -131,20 +164,52 @@ export default function BloggerResearch({
           <div className="min-w-0">
             <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">对标博主</div>
             <h3 className="mt-1 font-rounded text-xl font-bold text-ink">{selectedProfile?.name || "未选择博主"}</h3>
-            <p className="mt-1 text-sm leading-6 text-muted">{selectedProfile?.positioning}</p>
+            <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted">{selectedProfile?.positioning}</p>
           </div>
-          <select
-            value={selectedBloggerId}
-            onChange={(event) => setSelectedBloggerId(event.target.value)}
-            className="h-10 rounded-xl border border-line bg-soft px-3.5 text-sm font-bold text-ink outline-none transition-colors focus:border-brand-300 focus:bg-surface focus:ring-4 focus:ring-brand-500/10"
-          >
-            {profiles.map((profile) => (
-              <option key={profile.id} value={profile.id}>
-                {profile.name}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedBloggerId}
+              onChange={(event) => setSelectedBloggerId(event.target.value)}
+              className="h-10 rounded-xl border border-line bg-soft px-3.5 text-sm font-bold text-ink outline-none transition-colors focus:border-brand-300 focus:bg-surface focus:ring-4 focus:ring-brand-500/10"
+            >
+              {profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.platform ? `${profile.name} · ${profile.platform}` : profile.name}
+                </option>
+              ))}
+            </select>
+            {persisted && (
+              <Button variant="secondary" icon={<Plus size={15} />} onClick={() => setNewBlogger({ name: "", positioning: "" })}>
+                新建博主
+              </Button>
+            )}
+          </div>
         </div>
+        {newBlogger && (
+          <div className="mt-4 flex flex-col gap-2 border-t border-line pt-4 md:flex-row md:items-center">
+            <Input
+              value={newBlogger.name}
+              onChange={(event) => setNewBlogger({ ...newBlogger, name: event.target.value })}
+              placeholder="博主名字"
+              className="md:w-48"
+              autoFocus
+            />
+            <Input
+              value={newBlogger.positioning}
+              onChange={(event) => setNewBlogger({ ...newBlogger, positioning: event.target.value })}
+              placeholder="一句话定位（可选）"
+              className="flex-1"
+            />
+            <div className="flex items-center gap-2">
+              <Button variant="primary" onClick={handleCreateBlogger} loading={savingBlogger} disabled={!newBlogger.name.trim()}>
+                添加
+              </Button>
+              <Button variant="ghost" onClick={() => setNewBlogger(null)}>
+                取消
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[0.88fr_1.12fr]">
@@ -153,9 +218,16 @@ export default function BloggerResearch({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-[15px] font-bold text-ink">样本录入</h3>
-                <p className="mt-1 text-xs text-faint">第一阶段支持手动粘贴，不自动抓取平台数据。</p>
+                <p className="mt-1 text-xs text-faint">
+                  {persisted === false ? "未配置对标表，样本只留在本页。" : "粘贴的样本存进飞书「对标笔记」表。"}
+                </p>
               </div>
-              <Button variant="primary" onClick={handleAddSample} disabled={!draftTitle.trim() && !draftContent.trim()}>
+              <Button
+                variant="primary"
+                onClick={handleAddSample}
+                loading={savingSample}
+                disabled={!selectedBloggerId || (!draftTitle.trim() && !draftContent.trim())}
+              >
                 新增样本
               </Button>
             </div>

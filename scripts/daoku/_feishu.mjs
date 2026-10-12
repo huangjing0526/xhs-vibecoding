@@ -146,6 +146,18 @@ export async function createRecords(table, records) {
   );
 }
 
+/** 批量更新记录（records: [{record_id, fields}]，单次上限 1000，由调用方分批） */
+export async function batchUpdateRecords(table, records) {
+  if (!records.length) return { records: [] };
+  const { appToken, tableId } = tableRef(table);
+  return feishu(
+    "POST",
+    `/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/batch_update`,
+    { records },
+    `batchUpdate.${table}`
+  );
+}
+
 /** 写某张表单条记录的字段 */
 export async function updateRecord(table, recordId, fields) {
   const { appToken, tableId } = tableRef(table);

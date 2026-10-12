@@ -236,6 +236,11 @@ async function runCodexCli(prompt: string, images: WorkflowImage[] | undefined, 
   }
 }
 
+/** 当前会用哪家模型，供界面展示。与 generateWorkflowJson 同一套探测，不另写一份规则。 */
+export function getWorkflowAIProvider(): WorkflowAIProvider {
+  return detectWorkflowAIConfig().provider;
+}
+
 export async function generateWorkflowJson<T>({
   action,
   prompt,

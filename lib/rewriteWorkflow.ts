@@ -1,5 +1,16 @@
 import type { BloggerDistillation } from "./bloggerWorkflow";
-import type { ContentCard, DraftNote } from "./xhsWorkflow";
+import { TITLE_STRUCTURE_LABEL, TITLE_STRUCTURE_SIGNAL } from "./contentStrategy";
+import { HOOK_REQUIREMENT, resolveTitleStructure, titleQualityPenalty } from "./qualityCheck";
+import {
+  BODY_MAX_CHARS,
+  cleanGeneratedBody,
+  cleanGeneratedTitle,
+  unknownToText,
+  unknownToTextList,
+  type ContentCard,
+  type DraftNote,
+  type ViralTitleStructure,
+} from "./xhsWorkflow";
 
 export type RewriteSourceType = "topic" | "draft" | "manual";
 export type RewriteTarget = "title" | "content" | "structure" | "full";
@@ -13,6 +24,8 @@ export interface RewriteInput {
   painPoint?: string;
   reusableAsset?: string;
   coreViewpoint?: string;
+  /** 质检按它判标题；改写时得朝同一个结构写，否则改完还是过不了 */
+  titleStructure?: ViralTitleStructure;
 }
 
 export interface RewriteResult {
@@ -44,23 +57,44 @@ export function topicToRewriteInput(topic: ContentCard): RewriteInput {
     painPoint: topic.painPoint,
     reusableAsset: topic.reusableAsset,
     coreViewpoint: topic.coreViewpoint,
+    titleStructure: topic.viralTitleStructure,
   };
 }
 
-export function draftToRewriteInput(draft: DraftNote): RewriteInput {
+/** 草稿本身不带痛点和观点，从它的选题补上；标题结构取法与质检一致（草稿优先）。 */
+export function draftToRewriteInput(draft: DraftNote, topic: ContentCard | null): RewriteInput {
   return {
     sourceType: "draft",
     sourceId: draft.noteId || draft.recordId,
     title: draft.title,
     content: draft.content,
-    reusableAsset: draft.imageSuggestions,
+    painPoint: topic?.painPoint,
+    coreViewpoint: topic?.coreViewpoint,
+    reusableAsset: topic?.reusableAsset || draft.imageSuggestions,
+    titleStructure: resolveTitleStructure(draft, topic),
   };
 }
 
-function getIntensityLabel(intensity: RewriteIntensity): string {
-  if (intensity === "light") return "轻改";
-  if (intensity === "deep") return "重构";
-  return "中改";
+/** 强度的界面标签与写给模型的规则放一处，改名不会只改到一边。 */
+const INTENSITY: Record<RewriteIntensity, { label: string; rule: string }> = {
+  light: { label: "轻改", rule: "保留原句式，只修表达和节奏。" },
+  medium: { label: "中改", rule: "保留事实与观点，换进入角度和表达顺序。" },
+  deep: { label: "重构", rule: "保留事实与观点，从开头钩子到结尾整体重写。" },
+};
+
+const TARGET_RULE: Record<RewriteTarget, string> = {
+  title: "只改标题，正文原样返回。",
+  content: "只改正文，标题给 3 个微调版本即可。",
+  structure: "保留观点和事实，重排正文结构与段落顺序，标题给 3 个微调版本。",
+  full: "标题和正文都重写。",
+};
+
+export function isRewriteTarget(value: unknown): value is RewriteTarget {
+  return typeof value === "string" && value in TARGET_RULE;
+}
+
+export function isRewriteIntensity(value: unknown): value is RewriteIntensity {
+  return typeof value === "string" && value in INTENSITY;
 }
 
 export function createFallbackRewrite(
@@ -95,7 +129,7 @@ export function createFallbackRewrite(
     titles,
     content,
     structureNotes: [
-      `${getIntensityLabel(intensity)}：保留原素材事实，只调整进入角度和表达顺序。`,
+      `${INTENSITY[intensity].label}：保留原素材事实，只调整进入角度和表达顺序。`,
       "开头先抛读者处境，再进入真实案例。",
       "结尾直接给结构化资产，不做私域引导。",
     ],
@@ -107,5 +141,80 @@ export function createFallbackRewrite(
       "素材里没有的数据、收益和规模不能补写。",
       "如果用于发布，标题需要再检查是否过度夸张。",
     ],
+  };
+}
+
+export function buildRewritePrompt(
+  input: RewriteInput,
+  distillation: BloggerDistillation | null,
+  target: RewriteTarget,
+  intensity: RewriteIntensity
+): string {
+  const dao = distillation
+    ? [
+        `核心道：${distillation.coreDao}`,
+        distillation.titlePatterns.length ? `标题句式：${distillation.titlePatterns.join("；")}` : "",
+        distillation.contentPatterns.length ? `正文结构：${distillation.contentPatterns.join("；")}` : "",
+        distillation.toneRules.length ? `语气：${distillation.toneRules.join("；")}` : "",
+        distillation.boundaries.length ? `边界：${distillation.boundaries.join("；")}` : "",
+      ].filter(Boolean).join("\n")
+    : "";
+  const context = [
+    input.painPoint ? `读者痛点：${input.painPoint}` : "",
+    input.coreViewpoint ? `核心观点：${input.coreViewpoint}` : "",
+    input.reusableAsset ? `可收藏资产：${input.reusableAsset}` : "",
+    input.titleStructure ? `标题结构：${TITLE_STRUCTURE_LABEL[input.titleStructure]}，3 个标题都${TITLE_STRUCTURE_SIGNAL[input.titleStructure]}` : "",
+  ].filter(Boolean).join("\n");
+
+  return `你在改写一篇中文小红书笔记。
+
+改写范围：${TARGET_RULE[target]}
+改写强度：${INTENSITY[intensity].label}——${INTENSITY[intensity].rule}
+
+硬性要求：
+- 不许编造原文没有的数据、收益、时间和规模。
+- 不要营销腔，不要「点赞收藏」「评论区扣1」「私发」「领取」这类话术。
+- 正文不超过 ${BODY_MAX_CHARS} 个中文字符，前 3 行要有具体场景、反差或结果。
+- 标题 8–24 字，不要在原标题前面硬加前缀。
+- ${HOOK_REQUIREMENT}。
+${context ? `\n这篇笔记的要点：\n${context}\n` : ""}${dao ? `\n对标道库（学它的写法，不照搬原句）：\n${dao}\n` : ""}
+原标题：${input.title}
+
+原正文：
+${input.content}
+
+只返回 JSON，不要解释：
+{
+  "titles": ["标题1", "标题2", "标题3"],
+  "content": "改写后的正文",
+  "structureNotes": ["这次怎么改的，2-3 条"],
+  "hitDao": "命中了哪条道，一句话",
+  "risks": ["发布前要人工确认的点"]
+}`;
+}
+
+/**
+ * 模型结果落成 RewriteResult：缺字段用 fallback 补；标题按质检的标题两项排序，
+ * 最可能放行的排第一个——「应用到草稿」默认取的就是第一个。
+ */
+export function normalizeRewriteResult(
+  raw: Partial<RewriteResult>,
+  input: RewriteInput,
+  fallback: RewriteResult
+): RewriteResult {
+  // sort 是稳定的：同分时保留模型给的先后
+  const titles = unknownToTextList(raw.titles, [])
+    .map((title) => cleanGeneratedTitle(title, input.title))
+    .map((title) => ({ title, penalty: titleQualityPenalty(title, input.titleStructure) }))
+    .sort((a, b) => a.penalty - b.penalty)
+    .map((item) => item.title);
+
+  return {
+    ...fallback,
+    titles: titles.length ? titles : fallback.titles,
+    content: fallback.target === "title" ? input.content : cleanGeneratedBody(unknownToText(raw.content), input.content),
+    structureNotes: unknownToTextList(raw.structureNotes, fallback.structureNotes),
+    hitDao: unknownToText(raw.hitDao, fallback.hitDao),
+    risks: unknownToTextList(raw.risks, fallback.risks),
   };
 }

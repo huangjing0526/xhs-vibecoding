@@ -1,13 +1,14 @@
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk, readJsonBody } from "../_utils";
-import { searchFeishuRecords, updateFeishuRecord } from "@/lib/feishu";
+import { batchUpdateFeishuRecords, fieldToText, searchFeishuRecords } from "@/lib/feishu";
 import { generateWorkflowJson } from "@/lib/workflowAi";
 import {
   buildReviewPrompt,
   createFallbackReview,
   filterMetricsByDraftStatus,
   filterUsableDrafts,
-  filterUsableReviewMetrics,
+  hasReviewData,
+  mapReviewConclusionToFeishuFields,
   normalizeDraftNote,
   normalizeReviewMetric,
   ReviewMetric,
@@ -27,11 +28,12 @@ export async function POST(request: NextRequest) {
     const drafts = body.metrics
       ? null
       : filterUsableDrafts((await searchFeishuRecords("draft")).map(normalizeDraftNote));
-    const usableMetrics = filterUsableReviewMetrics(body.metrics || records.map(normalizeReviewMetric));
-    const metrics = drafts ? filterMetricsByDraftStatus(usableMetrics, drafts) : usableMetrics;
+    // 只复盘回填过数据的；刚标记发布、数全是 0 的行进来只会让模型分析一堆空数
+    const withData = (body.metrics || records.map(normalizeReviewMetric)).filter(hasReviewData);
+    const metrics = drafts ? filterMetricsByDraftStatus(withData, drafts) : withData;
 
     if (metrics.length === 0) {
-      return apiBadRequest("没有可复盘的笔记数据，请先发布笔记并回填数据");
+      return apiBadRequest("没有回填过数据的笔记，先在复盘页导入创作服务平台的数据");
     }
 
     const fallbackReview = createFallbackReview(metrics);
@@ -49,27 +51,30 @@ export async function POST(request: NextRequest) {
       recordActions: aiResult.result.recordActions || fallbackReview.recordActions,
     };
 
-    const writeResults: unknown[] = [];
+    let writeResult: unknown = null;
     if (writeBack && records.length > 0) {
-      for (const action of result.recordActions) {
-        const record = records.find((item) => normalizeReviewMetric(item).noteId === action.noteId);
-        if (!record) continue;
-        writeResults.push(
-          await updateFeishuRecord("review", record.record_id, {
-            "72小时结论": result.summary,
-            "问题归因": action.diagnosis,
-            "下一步动作": action.action,
-            "复盘备注": action.reason,
-          })
-        );
-      }
+      const recordIdByNoteId = new Map(records.map((record) => [fieldToText(record.fields?.["笔记ID"]), record.record_id]));
+      const updates = result.recordActions.flatMap((action) => {
+        const recordId = recordIdByNoteId.get(action.noteId);
+        if (!recordId) return [];
+        return [{
+          record_id: recordId,
+          fields: mapReviewConclusionToFeishuFields({
+            summary: result.summary,
+            diagnosis: action.diagnosis,
+            action: action.action,
+            reason: action.reason,
+          }),
+        }];
+      });
+      writeResult = await batchUpdateFeishuRecords("review", updates);
     }
 
     return apiOk(
       {
         review: result,
         writeBack,
-        writeResults,
+        writeResult,
         usedFallback: aiResult.usedFallback,
         provider: aiResult.provider,
       },

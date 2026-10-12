@@ -9,13 +9,13 @@ import {
   type InlineRewriteRequest,
   type InlineRewriteResult,
 } from "@/lib/inlineRewrite";
-import { getDistillationForBlogger } from "@/lib/bloggerWorkflow";
+import type { BloggerDistillation } from "@/lib/bloggerWorkflow";
 
 interface InlineRewriteBody extends Omit<InlineRewriteRequest, "selection" | "action"> {
   selection?: string;
   action?: InlineRewriteAction;
-  /** 绑定的对标博主，用它的道库约束改写口径 */
-  bloggerId?: string;
+  /** 这条选题绑定的道库，页面直接带来：落盘的道库只有页面拿得到，服务端按博主查只查得到 demo */
+  distillation?: BloggerDistillation | null;
 }
 
 const VALID_ACTIONS: InlineRewriteAction[] = ["polish", "expand", "condense", "hook", "custom"];
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
       noteTitle: body.noteTitle,
       painPoint: body.painPoint,
     };
-    const distillation = body.bloggerId ? getDistillationForBlogger(body.bloggerId) : null;
+    const distillation = body.distillation || null;
 
     const aiResult = await generateWorkflowJson<InlineRewriteResult>({
       action: "rewrite.inline",

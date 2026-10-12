@@ -1,12 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Sparkles } from "lucide-react";
 import Button from "@/components/ui/Button";
 import CoverEditor from "@/components/CoverEditor";
+import ContentImageThumb from "@/components/workflow/ContentImageThumb";
 import CoverThumb from "@/components/workflow/CoverThumb";
-import { DEFAULT_TARGET_ID, assetPx, assetRatioCss } from "@/lib/targets";
 import type { CoverConfig } from "@/lib/cover";
 import {
   contentCardToCoverInput,
@@ -23,7 +22,6 @@ import {
   downloadImageAsset,
   draftToImageSourceInput,
   getContentImageTemplate,
-  renderContentImageDataUrl,
   type ContentImagePlan,
   type ContentImageTemplateType,
   type ImageWorkflowSourceInput,
@@ -135,69 +133,6 @@ function createTopicCoverVersion(topic: ContentCard): CoverVersion | null {
     style: topic.coverStyle || config.templateId || "自定义",
     hasStoredConfig,
   };
-}
-
-function ContentImagePreview({
-  plan,
-  onGenerated,
-}: {
-  plan: ContentImagePlan | null;
-  onGenerated: (dataUrl: string) => void;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [previewUrl, setPreviewUrl] = useState("");
-
-  useEffect(() => {
-    let isCancelled = false;
-    setPreviewUrl("");
-    onGenerated("");
-
-    async function renderPreview() {
-      if (!canvasRef.current || !plan) return;
-
-      try {
-        const dataUrl = await renderContentImageDataUrl(
-          canvasRef.current,
-          plan,
-          assetPx(DEFAULT_TARGET_ID, "content")
-        );
-        if (!isCancelled) {
-          setPreviewUrl(dataUrl);
-          onGenerated(dataUrl);
-        }
-      } catch (error) {
-        console.warn("[CoverStudio] 内容配图渲染失败", {
-          action: "image.renderContentPreview",
-          error,
-        });
-      }
-    }
-
-    renderPreview();
-    return () => {
-      isCancelled = true;
-    };
-  }, [onGenerated, plan]);
-
-  return (
-    <div className="rounded-2xl border border-line bg-soft p-4">
-      <div className="mx-auto max-w-[420px]">
-        <div
-          className="relative overflow-hidden rounded-2xl border border-line bg-surface shadow-raised"
-          style={{ aspectRatio: assetRatioCss(DEFAULT_TARGET_ID, "content") }}
-        >
-          {previewUrl ? (
-            <Image src={previewUrl} alt="内容配图预览" fill sizes="420px" className="object-cover" unoptimized />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-faint">
-              {plan ? "渲染中" : "等待生成"}
-            </div>
-          )}
-        </div>
-      </div>
-      <canvas ref={canvasRef} className="hidden" />
-    </div>
-  );
 }
 
 export default function CoverStudio({
@@ -476,7 +411,15 @@ export default function CoverStudio({
           </div>
 
           <div className="space-y-3">
-            <ContentImagePreview plan={contentImagePlan} onGenerated={onContentImageGenerated} />
+            <div className="rounded-2xl border border-line bg-soft p-4">
+              <ContentImageThumb
+                plan={contentImagePlan}
+                className="mx-auto max-w-[420px] rounded-2xl border border-line bg-surface shadow-raised"
+                sizes="420px"
+                alt="内容配图预览"
+                onRendered={onContentImageGenerated}
+              />
+            </div>
             <div className="grid grid-cols-[1fr_auto] gap-3">
               <div className="rounded-2xl border border-line bg-surface px-3 py-2.5">
                 <div className="text-xs font-bold text-faint">当前类型</div>

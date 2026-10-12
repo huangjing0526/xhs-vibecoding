@@ -1,6 +1,7 @@
 import { FeishuRecord, fieldToNumber, fieldToOptionalNumber, fieldToText } from "./feishu";
 import { ACCOUNT_POSITIONING } from "./account";
-import { deriveStrategyForCard, firstThreeLines, inferAssetType } from "./contentStrategy";
+import { deriveStrategyForCard, firstThreeLines, inferAssetType, TITLE_STRUCTURE_SIGNAL } from "./contentStrategy";
+import { HOOK_REQUIREMENT } from "./qualityCheck";
 import {
   DEFAULT_TARGET_ID,
   parseTarget,
@@ -36,7 +37,7 @@ export const DRAFT_STATUS = {
  * 正文字数上限（中文字符）。同时写在草稿 prompt 与 limitDraftContent 里，两处必须一致。
  * 现为账号/小红书口径的固定值；接第二个目标时改由目标档案声明（见改造方案 Phase 3）。
  */
-const BODY_MAX_CHARS = 200;
+export const BODY_MAX_CHARS = 600;
 
 export interface TopicBrief {
   theme: string;
@@ -202,12 +203,21 @@ export interface ReviewMetric {
   coverClickRate?: number;
   /** 这条笔记带来的涨粉数。来源同 impressions。 */
   newFollowers?: number;
+  /** 上次 AI 复盘写回这一行的结论（复盘表 72小时结论 / 问题归因 / 下一步动作 / 复盘备注），没复盘过为空 */
+  conclusion?: ReviewConclusion;
   contentLane?: ContentLane;
   referencePool?: ReferencePool;
   viralTitleStructure?: ViralTitleStructure;
   viralBodyStructure?: ViralBodyStructure;
   hookType?: HookType;
   assetType?: AssetType;
+}
+
+export interface ReviewConclusion {
+  summary: string;
+  diagnosis: string;
+  action: string;
+  reason: string;
 }
 
 /** 复盘的「下次优化」动作，层级与发布前质检维度同构，让复盘建议能直接喂回质检关注点。 */
@@ -452,8 +462,30 @@ export function normalizeReviewMetric(record: FeishuRecord): ReviewMetric {
     impressions: fieldToOptionalNumber(fields["曝光"]),
     coverClickRate: fieldToOptionalNumber(fields["封面点击率"]),
     newFollowers: fieldToOptionalNumber(fields["涨粉"]),
+    conclusion: normalizeReviewConclusion(fields),
     ...normalizeStrategyMetadata(fields),
   };
+}
+
+/** 复盘结论四个字段的唯一映射处：写回（review 路由）与读回都走这里 */
+const REVIEW_CONCLUSION_FIELDS = {
+  summary: "72小时结论",
+  diagnosis: "问题归因",
+  action: "下一步动作",
+  reason: "复盘备注",
+} as const satisfies Record<keyof ReviewConclusion, string>;
+
+const REVIEW_CONCLUSION_KEYS = Object.keys(REVIEW_CONCLUSION_FIELDS) as Array<keyof ReviewConclusion>;
+
+function normalizeReviewConclusion(fields: Record<string, unknown>): ReviewConclusion | undefined {
+  const conclusion = Object.fromEntries(
+    REVIEW_CONCLUSION_KEYS.map((key) => [key, fieldToText(fields[REVIEW_CONCLUSION_FIELDS[key]])])
+  ) as unknown as ReviewConclusion;
+  return Object.values(conclusion).some(Boolean) ? conclusion : undefined;
+}
+
+export function mapReviewConclusionToFeishuFields(conclusion: ReviewConclusion): Record<string, unknown> {
+  return Object.fromEntries(REVIEW_CONCLUSION_KEYS.map((key) => [REVIEW_CONCLUSION_FIELDS[key], conclusion[key]]));
 }
 
 /**
@@ -476,6 +508,11 @@ export function hasReviewMetricContent(item: ReviewMetric): boolean {
 
 export function filterUsableReviewMetrics(items: ReviewMetric[]): ReviewMetric[] {
   return items.filter(hasReviewMetricContent);
+}
+
+/** 有没有回填过数据。刚「标记发布」的行只有标题、数全是 0，不能拿去复盘，只能算「待回填」。 */
+export function hasReviewData(item: ReviewMetric): boolean {
+  return [item.reads, item.likes, item.saves, item.comments, item.shares, item.impressions ?? 0].some((value) => value > 0);
 }
 
 export function filterByStatus<T extends { status: string }>(items: T[], targetStatus?: string): T[] {
@@ -592,9 +629,10 @@ export function buildDraftPrompt(card: ContentCard): string {
 9. 写法要克制：少用感叹号、少用煽动式反问，保留真实上下文和可复用步骤。
 10. 不要把个人项目包装成团队成功学案例；素材没有团队背景时，使用“我这次/这个项目/这轮协作”。
 11. 正文必须简明，总字数不超过 ${BODY_MAX_CHARS} 个中文字符。
-12. 标题必须符合这条选题指定的标题结构，正文必须符合指定的正文结构。
+12. 标题必须符合这条选题指定的标题结构${card.viralTitleStructure ? `（${TITLE_STRUCTURE_SIGNAL[card.viralTitleStructure]}）` : ""}，正文必须符合指定的正文结构。
 13. 前 3 行必须出现具体场景、反差或结果。
 14. 正文必须直接给出可收藏资产，不能只说“我整理了一个模板”。
+15. ${HOOK_REQUIREMENT}。
 
 内容卡片：
 ${JSON.stringify(card, null, 2)}
@@ -805,7 +843,8 @@ export function createFallbackDraft(card: ContentCard, target: string): DraftNot
     topicId: card.topicId,
     target,
     title,
-    coverText: "",
+    // 草稿 prompt 不让模型出封面，封面大字只能沿用选题阶段定下的那一句
+    coverText: card.coverText,
     content: `这次踩坑是：${card.painPoint}\n\n场景：${card.realCase}\n\n我现在会先做三步：\n1. 让 AI 复述需求和边界\n2. 列出影响页面、接口、数据和测试\n3. 再进入代码实现\n\n可复用提示词：写代码前，先列出影响范围和不确定点。\n\n${card.commentPrompt}`,
     imageSuggestions: "",
     tags: ["#AI编程", "#VibeCoding", "#Claude", "#Cursor", "#产品经理"],
@@ -909,7 +948,7 @@ export function createFallbackReview(metrics: ReviewMetric[]): ReviewResult {
   };
 }
 
-function unknownToText(value: unknown, fallback = ""): string {
+export function unknownToText(value: unknown, fallback = ""): string {
   if (value === null || value === undefined) return fallback;
   if (typeof value === "string") return value.trim() || fallback;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
@@ -924,7 +963,7 @@ function unknownToText(value: unknown, fallback = ""): string {
   return fallback;
 }
 
-function unknownToTextList(value: unknown, fallback: string[]): string[] {
+export function unknownToTextList(value: unknown, fallback: string[]): string[] {
   if (Array.isArray(value)) {
     const values = value.map((item) => unknownToText(item)).filter(Boolean);
     return values.length > 0 ? values : fallback;
@@ -971,6 +1010,16 @@ function stripMarketingParagraphs(value: string, fallback: string): string {
 function limitDraftContent(value: string, maxLength = BODY_MAX_CHARS): string {
   const chars = Array.from(value.trim());
   return chars.length > maxLength ? chars.slice(0, maxLength).join("").trim() : value.trim();
+}
+
+/** 模型写回来的正文统一走这一道：去营销腔段落、压到字数上限。草稿生成与整篇改写共用。 */
+export function cleanGeneratedBody(value: string, fallback: string): string {
+  return limitDraftContent(stripMarketingParagraphs(value, fallback));
+}
+
+/** 模型写回来的标题：营销腔就退回 fallback。 */
+export function cleanGeneratedTitle(value: string, fallback: string): string {
+  return keepNonMarketingText(value, fallback);
 }
 
 export function normalizeGeneratedContentCard(card: Partial<ContentCard>, fallback: ContentCard): ContentCard {
@@ -1025,9 +1074,9 @@ export function normalizeGeneratedDraft(draft: Partial<DraftNote>, fallback: Dra
     noteId: fallback.noteId,
     topicId: unknownToText(draft.topicId, fallback.topicId),
     target: fallback.target,
-    title: keepNonMarketingText(unknownToText(draft.title, fallback.title), fallback.title),
+    title: cleanGeneratedTitle(unknownToText(draft.title, fallback.title), fallback.title),
     coverText: unknownToText(draft.coverText, fallback.coverText),
-    content: limitDraftContent(stripMarketingParagraphs(content, fallback.content)),
+    content: cleanGeneratedBody(content, fallback.content),
     imageSuggestions: unknownToText(draft.imageSuggestions, fallback.imageSuggestions),
     tags,
     commentPrompt: keepNonMarketingText(unknownToText(draft.commentPrompt, fallback.commentPrompt), fallback.commentPrompt),
