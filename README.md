@@ -1,5 +1,16 @@
 # 内容生产工作台
 
+## 当前整合入口（2026-11-17）
+
+本目录统一承接内容工作台与 content-ops，保留原图片/视频工厂、资产/作品、发布包和复盘，并整合移动端、账号采集、模板制作与一键出片。最终证据和未验证边界见 [整合交付说明](docs/content-ops-integration-final.md)；早期 README 与历史设计不能替代当前验收记录。
+
+- 本机整合目录：`/Users/kp/projects/content-ops-integrated`；分支 `integration/content-ops-20261117`。
+- 桌面入口 `/`；移动入口 `/m`。无真实配置时仅体验 Demo/mock，不表示飞书或模型服务已接通。
+- 本地预览：`npm run dev -- --hostname 127.0.0.1 --port 5397`。此命令不部署、不导入原目录数据。
+- 视频服务独立启动；收费接口需 app 与 renderer 配置相同的 `VIDEO_RENDERER_SERVICE_TOKEN`。非回环访问还需在 app 显式配置 `VIDEO_WORKBENCH_ALLOWED_ORIGINS`，不直接信任请求 Host。
+- 不自动复制旧 `.env`、`.local` 或浏览器记录；原目录保留。真实数据接入、对外开放及收费生成应单独安排。
+- 回归入口：`npm run test:integration`；类型检查 `node_modules/.bin/tsc --noEmit --incremental false`；另运行 `npm run lint` 与 `npm run build`。
+
 把开发日报、问题记录、AI Coding 术语沉淀成可发布的内容，跑通「素材 → 选题 → 草稿 → 封面/配图/视频 → 质检 → 发布 → 数据复盘」的完整闭环。飞书多维表格作为内容数据库。
 
 > **改造中**：本项目正在从「小红书内容工作台」改造为平台无关的内容生产工作台，首批覆盖小红书、视频号、抖音、TikTok、Facebook。

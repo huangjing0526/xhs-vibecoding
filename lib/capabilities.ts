@@ -65,6 +65,8 @@ type CategoryFreeAreaId = LibraryAreaId | NoteStepAreaId;
 export type AreaId =
   | "home"
   | "tools"
+  | "templateStudio"
+  | "videoGenerate"
   | "templates"
   | "projects"
   | "note"
@@ -174,6 +176,16 @@ const AREA_TABLE = {
     icon: Images,
     category: "做图",
     tint: "from-soft",
+  },
+  templateStudio: {
+    label: "模板制作", hint: "选配方 · 填参数 · 出图",
+    subtitle: "选择内容配方，填写参数，生成可下载的配图。",
+    icon: Shapes, category: "做图", tint: "from-soft",
+  },
+  videoGenerate: {
+    label: "一键出片", hint: "图与脚本 · 异步成片",
+    subtitle: "本地合成、数字人口播与产品展示，共用本地视频任务服务。",
+    icon: Film, category: "做视频", tint: "from-sunken",
   },
   textLayer: {
     label: "叠字排版",

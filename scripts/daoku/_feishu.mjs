@@ -83,7 +83,7 @@ async function parseResponse(res, action) {
   return payload.data ?? payload;
 }
 
-async function feishu(method, path, body, action) {
+export async function feishu(method, path, body, action) {
   const token = await getTenantToken();
   const res = await fetch(`${API_BASE}${path}`, {
     method,
@@ -97,12 +97,15 @@ async function feishu(method, path, body, action) {
 }
 
 /** 表名 → 飞书 table_id 环境变量（与 lib/feishu.ts 一致） */
-const TABLE_ENV = {
+export const TABLE_ENV = {
   material: "FEISHU_MATERIAL_TABLE_ID",
   glossary: "FEISHU_GLOSSARY_TABLE_ID",
   topic: "FEISHU_TOPIC_TABLE_ID",
   draft: "FEISHU_DRAFT_TABLE_ID",
   review: "FEISHU_REVIEW_TABLE_ID",
+  blogger: "FEISHU_BLOGGER_TABLE_ID",
+  bloggerNote: "FEISHU_BLOGGER_NOTE_TABLE_ID",
+  videoExtract: "FEISHU_VIDEO_EXTRACT_TABLE_ID",
 };
 
 function tableRef(table) {
@@ -206,4 +209,8 @@ export function fieldToText(value) {
     return fieldToText(value.text ?? value.name ?? value.title ?? value.value ?? "");
   }
   return "";
+}
+
+export function getAppToken() {
+  return requireEnv("FEISHU_BASE_APP_TOKEN");
 }

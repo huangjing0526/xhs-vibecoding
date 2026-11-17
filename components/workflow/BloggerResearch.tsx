@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Radar } from "lucide-react";
+import BloggerCollector from "./BloggerCollector";
 import Button from "@/components/ui/Button";
 import EmptyState from "@/components/ui/EmptyState";
 import { Input, Textarea } from "@/components/ui/Field";
@@ -19,9 +20,13 @@ interface BloggerResearchProps {
   selectedDistillation: BloggerDistillation | null;
   /** 已落盘的道库模板：选中的博主蒸馏过，就直接显示那一份 */
   savedDistillations: BloggerDistillation[];
-  onDistillationChange: (distillation: BloggerDistillation) => void;
+  onDistillationChange: (distillation: BloggerDistillation) => Promise<void>;
   onNotice: (notice: Notice) => void;
   onError: (action: string, error: unknown) => void;
+}
+
+function bloggerDisplayName(profile: BloggerProfile): string {
+  return profile.name || profile.id || profile.homepageUrl || "未获取昵称";
 }
 
 function metricText(sample: BloggerSample): string {
@@ -146,7 +151,7 @@ export default function BloggerResearch({
     setDistilling(true);
     try {
       const { distillation: distilled, usedFallback } = await distillBlogger(selectedProfile, visibleSamples);
-      onDistillationChange(distilled);
+      await onDistillationChange(distilled);
       if (usedFallback) {
         onNotice({ type: "info", message: "未检测到 AI 配置，这版道是按关键词规则出的骨架，建议人工过一遍" });
       }
@@ -159,11 +164,18 @@ export default function BloggerResearch({
 
   return (
     <section className="space-y-4">
+      <BloggerCollector configured={persisted === true} onNotice={onNotice} onError={onError}
+        onSaved={(profile, notes) => {
+          setProfiles((current) => [profile, ...current.filter((item) => item.id !== profile.id)]);
+          setSamples((current) => [...notes, ...current.filter((item) => !notes.some((note) => note.id === item.id))]);
+          setSelectedBloggerId(profile.id);
+        }}
+      />
       <div className="rounded-3xl border border-line bg-surface p-5 shadow-card">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
             <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-faint">对标博主</div>
-            <h3 className="mt-1 font-rounded text-xl font-bold text-ink">{selectedProfile?.name || "未选择博主"}</h3>
+            <h3 className="mt-1 font-rounded text-xl font-bold text-ink">{selectedProfile ? bloggerDisplayName(selectedProfile) : "未选择博主"}</h3>
             <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted">{selectedProfile?.positioning}</p>
           </div>
           <div className="flex items-center gap-2">
@@ -174,7 +186,7 @@ export default function BloggerResearch({
             >
               {profiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>
-                  {profile.platform ? `${profile.name} · ${profile.platform}` : profile.name}
+                  {profile.platform ? `${bloggerDisplayName(profile)} · ${profile.platform}` : bloggerDisplayName(profile)}
                 </option>
               ))}
             </select>

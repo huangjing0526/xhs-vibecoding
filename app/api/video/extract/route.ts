@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk, readJsonBody } from "../../feishu/_utils";
 import { generateWorkflowJson } from "@/lib/workflowAi";
+import { buildViralAnalysisPrompt, createFallbackViralAnalysis, normalizeViralAnalysis } from "@/lib/viralSignals";
+import { toViralInput } from "@/lib/videoExtract";
 import {
   buildPunctuationPrompt,
   buildScriptAnalysisPrompt,
@@ -31,7 +33,8 @@ function normalizeVideo(raw: Record<string, unknown>, url: string): ExtractedVid
   // 信任本地服务已识别的平台，非法值再按链接兜底一次。
   const rawPlatform = raw.platform as VideoPlatform;
   return {
-    platform: rawPlatform === "douyin" || rawPlatform === "xiaohongshu" ? rawPlatform : detectVideoPlatform(url),
+    platform: ["douyin", "xiaohongshu", "tiktok"].includes(rawPlatform) ? rawPlatform : detectVideoPlatform(url),
+    sourceUrl: str(raw.sourceUrl) || url,
     title: str(raw.title),
     desc: str(raw.desc),
     author: str(raw.author),
@@ -122,9 +125,16 @@ export async function POST(request: NextRequest) {
     });
     const analysis = normalizeAnalysis(ai.result, fallback);
 
+    const viralInput = toViralInput(video);
+    const viralFallback = createFallbackViralAnalysis(viralInput);
+    const scored = await generateWorkflowJson({
+      action: "video.extract.score", prompt: buildViralAnalysisPrompt(viralInput),
+      fallback: viralFallback, maxTokens: 1200,
+    });
+    const viral = normalizeViralAnalysis(scored.result, viralFallback);
     const label = VIDEO_PLATFORM_LABEL[video.platform];
     return apiOk(
-      { video, analysis, usedFallback: ai.usedFallback, provider: ai.provider },
+      { video, analysis, viral, usedFallback: ai.usedFallback, provider: ai.provider },
       ai.usedFallback ? "已抓到视频，但未配置 AI，脚本结构请手动拆解" : `已从${label}拆出视频与脚本结构`
     );
   } catch (error) {

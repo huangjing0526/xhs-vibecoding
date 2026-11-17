@@ -67,6 +67,7 @@ function detectPlatform(url, extractorKey) {
   if (key.includes("xiaohongshu") || key.includes("redbook") || /xiaohongshu\.com|xhslink\.com/i.test(url)) {
     return "xiaohongshu";
   }
+  if (key.includes("tiktok") || /tiktok\.com/i.test(url)) return "tiktok";
   return "unknown";
 }
 

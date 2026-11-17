@@ -8,6 +8,21 @@ export interface BloggerProfile {
   homepageUrl?: string;
   positioning: string;
   status: string;
+  recordId?: string;
+  bio?: string;
+  followers?: number;
+  noteCount?: number;
+  lastCollectedAt?: string;
+}
+
+export const BLOGGER_STATUS = { pending: "待采集", collected: "已采集" } as const;
+
+export interface BloggerNote extends BloggerSample {
+  noteId: string;
+  recordId?: string;
+  url: string;
+  publishedAt: string;
+  analysis?: import("./viralSignals").ViralAnalysis;
 }
 
 export interface BloggerSample {

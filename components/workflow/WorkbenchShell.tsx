@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { RefreshCw, Search } from "lucide-react";
+import Link from "next/link";
 import VibeNoteLogo from "@/components/VibeNoteLogo";
 import AppRail from "@/components/workflow/AppRail";
 import Button from "@/components/ui/Button";
@@ -98,6 +99,7 @@ export default function WorkbenchShell({
               {isConnected ? "已连接飞书" : "本地体验"}
               {aiProvider && <span className="text-faint">· AI {aiProvider}</span>}
             </span>
+            <Link href="/m" className="text-xs font-semibold text-muted hover:text-ink">移动版</Link>
             <Button
               size="sm"
               variant="secondary"

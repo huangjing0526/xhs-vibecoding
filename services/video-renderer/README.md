@@ -111,3 +111,39 @@ PY
 - 视觉风格：`src/FlashCards.tsx`（暖白纸感 + 普惠橙，和封面图工作流同一套识别度）。
 - 音色/语速：请求里传 `voice` / `rate`。
 - 想换数字人口播或文生视频，只需替换 `src/server.mjs` 里 TTS + 渲染两段，对外接口不变。
+
+## 整合后的生成管线与数据边界（2026-11-17）
+
+桌面从「工具 → 一键出片」进入，移动从 `/m/t/clip` 进入；两端复用同一个 `VideoGenerationStudio` 和主 app API。旧视频工厂、`/render`、`/tts`、`/extract` 保留。
+
+| 主 app 接口 | 本服务接口 | 用途 |
+| --- | --- | --- |
+| `POST /api/video/generate`，`mode: local` | `POST /local` | 图片、脚本、TTS、字幕与静态图合成 |
+| 同上，`mode: avatar`、`openingSec: 0` | `POST /avatar` | 全程数字人分段生成 |
+| 同上，`mode: avatar`、`openingSec > 0` | `POST /avatar` | 开场数字人，后续图片混合剪辑 |
+| 同上，`mode: product` | `POST /product` | 产品图生视频，再合成配音字幕 |
+| `GET /api/video/jobs/:id` | `GET /jobs/:id` | 查询进度、结果或具体错误 |
+
+生成请求示例（仅契约说明，本次没有实际提交）：
+
+```json
+{"mode":"local","script":"你的口播脚本","images":["data:image/jpeg;base64,..."],"voice":"zh-CN-XiaoxiaoNeural"}
+```
+
+提交返回 `{code:0,data:{jobId,kind,state},message}`，查询返回 `{code:0,data:{id,kind,state,stage,step,totalSteps,result,error,...},message}`。完成态 `result` 含 `videoUrl/fileName/durationSec/segments/resolution`。内部服务维持原始 JSON 响应，主 app 兼容代理统一包装；HTTP 200 非 JSON/错误载荷也按失败返回。
+
+- **本地合成不等于离线**：画面在本机合成，但默认 TTS 仍访问微软。数字人、产品展示还会调用百炼或硅基流动。四条管线本次只做隔离 mock 验证，没有真实语音或收费生成。
+- 服务只绑定 `127.0.0.1`。`VIDEO_RENDERER_URL` 是 app 到 renderer 的地址；新生成任务的结果通过 app 的 `/api/video/media/:filename` 同源读取，手机不用连接自己的 localhost。`PUBLIC_URL` 仍供 Remotion 内部读取音频/图片，不需为新结果暴露 renderer 端口。旧 `/render`、`/tts` 的内部地址契约保持不变，此次没有开放网络。
+- `out/`、`audio/`、`assets/` 是该服务自己的本机输出，全部忽略；不会迁移源端文件，也不会自动加入工作台视频项目或作品库。现有 `/api/works` 聚合逻辑不变。
+- 任务仍采用源端内存机制：重启丢失上下文，已完成文件仍在，完成态任务保留约六小时。不会自动恢复或重新提交收费作业。
+- 整合目录已用只读依赖链接复用既有依赖，**链接存在时不要运行 npm install**。此次未安装依赖，也未修改原依赖目录。新环境如需安装，应先在整合副本使用独立依赖目录。
+- 不复制或读取源端 `.env`、Cookie。需要真实服务验证时，必须单独准备整合环境配置并由父任务核准；本任务不建表、不发布、不部署。
+
+## 服务认证与开场预算（审查修复）
+
+app 与 renderer 各自的运行环境必须设置相同的私有 `VIDEO_RENDERER_SERVICE_TOKEN`，示例键见仓库 `.env.example`。app 为新生成、任务查询和结果代理添加 `Authorization: Bearer <token>`；该值不发送到浏览器。此修复没有生成密钥或改写真实配置。
+
+- `/avatar`、`/product` 缺配置返回 503，缺少或错误认证返回 401；认证成功才可进入生成路由。
+- `/avatar`、`/product`、`/local`、`/tts`、`/render`、`/extract` 拒绝跨站浏览器请求（403）。app 的新建任务入口同样检查来源，防止绕过 renderer 边界。服务端 app/CLI 的无 Origin 本地 TTS/render 调用保持可用；媒体 GET/HEAD 保留供 Remotion 使用的只读 CORS。
+- 查询断线只暂停查询，保留任务 ID，点「继续查询」查同一任务；不会重新创建付费任务。切换模式不会丢弃活动任务。页面卸载会中止查询和定时器，后台任务继续运行；刷新后的任务恢复仍属原有未实现能力。
+- 开场切分优先沿用句子边界，超长首句按所选时长的字数估算切开。TTS 实测超过所选开场时长或平台单次上限时，在上传和付费创建之前停止，提示缩短开场或重新选择；不自动扩大预算。全程出镜管线保持不变。

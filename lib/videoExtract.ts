@@ -8,17 +8,19 @@
 
 import { DAOKU_BASE_SLOTS, type BloggerDistillation } from "./bloggerWorkflow";
 
-export type VideoPlatform = "douyin" | "xiaohongshu" | "unknown";
+export type VideoPlatform = "douyin" | "xiaohongshu" | "tiktok" | "unknown";
 
 export const VIDEO_PLATFORM_LABEL: Record<VideoPlatform, string> = {
   douyin: "抖音",
   xiaohongshu: "小红书",
+  tiktok: "TikTok",
   unknown: "未知平台",
 };
 
 /** 本地服务抓回来的原始视频（不含 AI 分析） */
 export interface ExtractedVideo {
   platform: VideoPlatform;
+  sourceUrl: string;
   title: string;
   /** 平台自带文案（抖音 desc / 小红书正文） */
   desc: string;
@@ -61,6 +63,7 @@ export interface ScriptAnalysis {
 export interface VideoExtractResult {
   video: ExtractedVideo;
   analysis: ScriptAnalysis;
+  viral?: import("./viralSignals").ViralAnalysis;
   usedFallback: boolean;
   provider: string;
 }
@@ -68,6 +71,7 @@ export interface VideoExtractResult {
 export function detectVideoPlatform(url: string): VideoPlatform {
   if (/douyin\.com|iesdouyin\.com/i.test(url)) return "douyin";
   if (/xiaohongshu\.com|xhslink\.com/i.test(url)) return "xiaohongshu";
+  if (/tiktok\.com/i.test(url)) return "tiktok";
   return "unknown";
 }
 
@@ -181,5 +185,67 @@ export function scriptAnalysisToDistillation(
     ]),
     // 拆一条视频只够拆出「道」，看不出这位作者额外要什么料，所以只给基座三槽。
     slots: DAOKU_BASE_SLOTS,
+  };
+}
+
+export interface VideoExtractRecord {
+  /** 业务键，由平台 + 视频 ID 派生，重复拆同一条视频会覆盖而不是新增一行 */
+  extractId: string;
+  extractedAt: string;
+  platform: VideoPlatform;
+  sourceUrl: string;
+  title: string;
+  author: string;
+  durationSec: number;
+  /** 平台自带文案 */
+  desc: string;
+  transcript: string;
+  analysis: ScriptAnalysis;
+  viralityScore: number;
+  viralReason: string;
+}
+
+
+export function toViralInput(video: ExtractedVideo): import("./viralSignals").ViralAnalysisInput {
+  return {
+    title: video.title,
+    content: video.transcript || video.desc,
+    platform: VIDEO_PLATFORM_LABEL[video.platform],
+  };
+}
+
+/**
+ * 视频页地址 → 拆片历史的业务键。
+ *
+ * 取 URL 最后一段路径：抖音/TikTok 是 `/video/<数字 id>`，小红书是 `/explore/<hex id>`，
+ * 都落在最后一段。带上平台前缀，免得两个平台撞到同一串数字。
+ * 抠不出来就退回整条 URL——宁可键长一点，也不能让两条不同的视频共用一个键、互相覆盖。
+ */
+export function videoExtractId(platform: VideoPlatform, sourceUrl: string): string {
+  const path = (sourceUrl || "").split("?")[0].split("#")[0];
+  const segment = path.split("/").filter(Boolean).pop() || "";
+  const slug = segment.replace(/[^a-zA-Z0-9_-]/g, "");
+  return `${platform}-${slug || sourceUrl}`;
+}
+
+/** 一次拆片结果 → 可落库的历史记录。 */
+export function toVideoExtractRecord(
+  result: VideoExtractResult,
+  extractedAt: string
+): VideoExtractRecord {
+  const { video, analysis, viral } = result;
+  return {
+    extractId: videoExtractId(video.platform, video.sourceUrl),
+    extractedAt,
+    platform: video.platform,
+    sourceUrl: video.sourceUrl,
+    title: video.title,
+    author: video.author,
+    durationSec: video.durationSec,
+    desc: video.desc,
+    transcript: video.transcript,
+    analysis,
+    viralityScore: viral?.viralityScore ?? 0,
+    viralReason: viral?.reason ?? "未评分",
   };
 }

@@ -9,6 +9,7 @@ const TABLE_ENV = {
   review: "FEISHU_REVIEW_TABLE_ID",
   blogger: "FEISHU_BLOGGER_TABLE_ID",
   bloggerNote: "FEISHU_BLOGGER_NOTE_TABLE_ID",
+  videoExtract: "FEISHU_VIDEO_EXTRACT_TABLE_ID",
 } as const;
 
 export type WorkflowTableName = keyof typeof TABLE_ENV;
@@ -333,4 +334,46 @@ export function fieldToNumber(value: unknown): number {
 export function fieldToOptionalNumber(value: unknown): number | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   return fieldToNumber(value);
+}
+
+
+export async function upsertFeishuRecords(
+  tableName: WorkflowTableName,
+  keyColumn: string,
+  rows: Array<{ key: string; fields: Record<string, unknown> }>
+): Promise<{ created: number; updated: number }> {
+  const usable = [...new Map(rows.filter((row) => row.key).map((row) => [row.key, row])).values()];
+  if (!usable.length) return { created: 0, updated: 0 };
+
+  // 只取业务键这一列建索引：正文等大字段一并拉回来是纯浪费
+  const existing = new Map<string, string>();
+  for (const record of await searchFeishuRecords(tableName, { field_names: [keyColumn] })) {
+    const key = fieldToText(record.fields?.[keyColumn]);
+    if (key) existing.set(key, record.record_id);
+  }
+
+  const toCreate: Array<{ fields: Record<string, unknown> }> = [];
+  const toUpdate: Array<{ record_id: string; fields: Record<string, unknown> }> = [];
+
+  for (const row of usable) {
+    const recordId = existing.get(row.key);
+    if (recordId) toUpdate.push({ record_id: recordId, fields: row.fields });
+    else toCreate.push({ fields: row.fields });
+  }
+
+  // Respect the provider's native batch size without limiting collection size.
+  for (let offset = 0; offset < Math.max(toUpdate.length, toCreate.length); offset += 1000) {
+    await Promise.all([
+      toUpdate.length > offset ? batchUpdateFeishuRecords(tableName, toUpdate.slice(offset, offset + 1000)) : undefined,
+      toCreate.length > offset ? createFeishuRecords(tableName, toCreate.slice(offset, offset + 1000)) : undefined,
+    ]);
+  }
+  return { created: toCreate.length, updated: toUpdate.length };
+}
+
+
+export function nowTimestampText(): string {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
 }

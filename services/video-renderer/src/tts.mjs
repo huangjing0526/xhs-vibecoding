@@ -35,7 +35,7 @@ function execFileAsync(bin, args, timeoutMs = 120000) {
 }
 
 /** 量出 mp3 的真实时长。比按字数估准得多，画面按它对齐口播才不会飘。 */
-async function probeDurationSec(filePath) {
+export async function probeDurationSec(filePath) {
   const { stdout } = await execFileAsync(
     process.env.FFPROBE_BIN || "ffprobe",
     ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", filePath],

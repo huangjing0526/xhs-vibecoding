@@ -1,3 +1,8 @@
+import type { TemplatePack, TemplateRunResult, TemplateInputValues } from "@/lib/templates/types";
+import type { VideoGenMode, VideoGenJob, I2VProvider, AvatarResolution } from "@/lib/videoGen";
+import type { VideoExtractRecord } from "@/lib/videoExtract";
+import type { CollectPlatform } from "@/lib/collector";
+import type { BloggerNote } from "@/lib/bloggerWorkflow";
 import type { TopicBrief } from "@/lib/xhsWorkflow";
 import type { BloggerDistillation, BloggerProfile, BloggerSample } from "@/lib/bloggerWorkflow";
 import type { CoverConfig } from "@/lib/cover";
@@ -1069,5 +1074,150 @@ export async function routeIntent(text: string, signal?: AbortSignal): Promise<I
     "/api/intent",
     { method: "POST", signal, body: JSON.stringify({ text }) },
     "没看懂这句话要做什么"
+  );
+}
+
+
+export interface VideoExtractHistoryResult {
+  records: VideoExtractRecord[];
+  /** false 表示拆片记录表还没建，UI 应引导去建表而不是报错 */
+  configured: boolean;
+}
+
+/** 读拆片历史 */
+export async function listVideoExtracts(): Promise<VideoExtractHistoryResult> {
+  const response = await fetch("/api/video/history");
+  return parseApiResponse<VideoExtractHistoryResult>(response, "读取拆片历史失败");
+}
+
+/** 存一条拆片历史。同一条视频重复拆会覆盖同一行，不会堆重复记录。 */
+export async function saveVideoExtract(
+  result: VideoExtractResult
+): Promise<{ created: number; updated: number }> {
+  return workflowRequest<{ created: number; updated: number }>(
+    "/api/video/history",
+    { method: "POST", body: JSON.stringify({ result }) },
+    "保存拆片历史失败"
+  );
+}
+
+
+export async function collectBloggerProfile(options: {
+  platform: CollectPlatform;
+  homeUrl: string;
+  signal?: AbortSignal;
+}): Promise<{ profile: BloggerProfile }> {
+  return workflowRequest<{ profile: BloggerProfile }>(
+    "/api/blogger/profile",
+    {
+      method: "POST",
+      signal: options.signal,
+      body: JSON.stringify({ platform: options.platform, homeUrl: options.homeUrl }),
+    },
+    "账号采集失败"
+  );
+}
+
+/** 采集账号最近若干条笔记，默认顺带 AI 打爆款分。 */
+export async function collectBloggerNotes(options: {
+  platform: CollectPlatform;
+  homeUrl: string;
+  limit?: number;
+  score?: boolean;
+  signal?: AbortSignal;
+}): Promise<{ profile: BloggerProfile; notes: BloggerNote[] }> {
+  return workflowRequest<{ profile: BloggerProfile; notes: BloggerNote[] }>(
+    "/api/blogger/notes",
+    {
+      method: "POST",
+      signal: options.signal,
+      body: JSON.stringify({
+        platform: options.platform,
+        homeUrl: options.homeUrl,
+        limit: options.limit,
+        score: options.score,
+      }),
+    },
+    "笔记采集失败"
+  );
+}
+
+
+export async function saveBloggerData(options: {
+  profile?: BloggerProfile;
+  notes?: BloggerNote[];
+  distillation?: BloggerDistillation;
+  signal?: AbortSignal;
+}): Promise<{ profile: { created: number; updated: number }; notes: { created: number; updated: number } }> {
+  return workflowRequest(
+    "/api/blogger/save",
+    {
+      method: "POST",
+      signal: options.signal,
+      body: JSON.stringify({
+        profile: options.profile,
+        notes: options.notes,
+        distillation: options.distillation,
+      }),
+    },
+    "保存对标数据失败"
+  );
+}
+
+
+export interface StartVideoGenerationOptions {
+  mode: VideoGenMode;
+  script: string;
+  /** 数字人：人物形象图（data URL） */
+  image?: string;
+  /** 产品展示：产品图（data URL） */
+  images?: string[];
+  /** 产品展示的画面提示词，不传走服务端默认 */
+  prompt?: string;
+  /** 图生视频供应商，不传走服务端默认（百炼 flash） */
+  provider?: I2VProvider;
+  voice?: string;
+  resolution?: AvatarResolution;
+  /** 数字人：开场出镜秒数，0 = 全程出镜 */
+  openingSec?: number;
+  signal?: AbortSignal;
+}
+
+/** 建生视频任务。分钟级异步，返回 jobId 后用 getVideoJob 轮询。 */
+export async function startVideoGeneration(
+  options: StartVideoGenerationOptions
+): Promise<{ jobId: string; kind: VideoGenMode }> {
+  const { signal, ...body } = options;
+  return workflowRequest<{ jobId: string; kind: VideoGenMode }>(
+    "/api/video/generate",
+    { method: "POST", signal, body: JSON.stringify(body) },
+    "视频生成任务创建失败"
+  );
+}
+
+export async function getVideoJob(jobId: string, signal?: AbortSignal): Promise<VideoGenJob> {
+  const response = await fetch(`/api/video/jobs/${encodeURIComponent(jobId)}`, { signal });
+  return parseApiResponse<VideoGenJob>(response, "任务状态查询失败");
+}
+
+/** 模板画廊的注册表。静态配置，进模板区时取一次即可。 */
+export async function listTemplates(): Promise<{ packs: TemplatePack[] }> {
+  const response = await fetch("/api/templates");
+  return parseApiResponse<{ packs: TemplatePack[] }>(response, "模板列表获取失败");
+}
+
+export async function runTemplate(options: {
+  templateId: string;
+  values: TemplateInputValues;
+  signal?: AbortSignal;
+}): Promise<TemplateRunResult> {
+  return workflowRequest<TemplateRunResult>(
+    "/api/templates/generate",
+    {
+      method: "POST",
+      signal: options.signal,
+      body: JSON.stringify({ templateId: options.templateId, values: options.values }),
+    },
+    "模板生成失败"
   );
 }

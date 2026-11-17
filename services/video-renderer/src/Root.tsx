@@ -1,6 +1,8 @@
 import { Composition, type CalculateMetadataFunction } from "remotion";
 import { FlashCards, type FlashCardsProps } from "./FlashCards";
 
+import { ClipReel, type ClipReelProps } from "./ClipReel";
+
 const FPS = 30;
 
 // 时长由配音音频长度决定（+0.6s 收尾留白），避免画面与口播错位。
@@ -13,6 +15,7 @@ const calculateMetadata: CalculateMetadataFunction<FlashCardsProps> = ({ props }
 
 export const RemotionRoot = () => {
   return (
+    <>
     <Composition
       id="FlashCards"
       component={FlashCards}
@@ -32,5 +35,14 @@ export const RemotionRoot = () => {
       }}
       calculateMetadata={calculateMetadata}
     />
+    <Composition
+      id="ClipReel" component={ClipReel} fps={FPS} width={1080} height={1920}
+      durationInFrames={FPS * 30}
+      defaultProps={{ slides: [], subtitles: [], audioUrl: "", audioDurationSec: 20, accent: "#D97732" }}
+      calculateMetadata={({ props }: { props: ClipReelProps }) => ({
+        durationInFrames: Math.ceil((Math.max(4, props.audioDurationSec || 0) + 0.6) * FPS),
+      })}
+    />
+    </>
   );
 };

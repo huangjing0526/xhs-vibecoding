@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import VideoExtractHistory from "./VideoExtractHistory";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Callout from "@/components/ui/Callout";
@@ -19,11 +20,11 @@ import type { Notice } from "./types";
 interface VideoExtractPanelProps {
   onNotice: (notice: Notice) => void;
   /** 一键把脚本结构沉淀成对标拆解道库 */
-  onSinkToDaoku: (distillation: BloggerDistillation) => void;
+  onSinkToDaoku: (distillation: BloggerDistillation) => void | Promise<void>;
   /** 沉淀后跳到对标拆解页 */
   onGoBlogger: () => void;
   /** 把结构骨架送进视频工厂，接着写自己的脚本 */
-  onSendToVideoFactory: (skeleton: BenchmarkSkeleton) => void;
+  onSendToVideoFactory?: (skeleton: BenchmarkSkeleton) => void;
   /** 首页那句话里抠出来的链接，进来即填进输入框 */
   incomingUrl?: string | null;
   onUrlConsumed?: () => void;
@@ -54,7 +55,7 @@ function ResultView({
 }: {
   result: VideoExtractResult;
   onSink: () => void;
-  onSendToVideoFactory: () => void;
+  onSendToVideoFactory?: () => void;
 }) {
   const { video, analysis } = result;
   return (
@@ -103,9 +104,9 @@ function ResultView({
             <Button variant="secondary" onClick={onSink}>
               沉淀进对标拆解道库
             </Button>
-            <Button variant="primary" onClick={onSendToVideoFactory}>
+            {onSendToVideoFactory && <Button variant="primary" onClick={onSendToVideoFactory}>
               送进视频工厂
-            </Button>
+            </Button>}
           </div>
         </div>
 
@@ -220,16 +221,21 @@ export default function VideoExtractPanel({
 
   const handleExtract = () => runExtract(input);
 
-  const handleSink = () => {
+  const handleSink = async () => {
     if (!result) return;
-    onSinkToDaoku(scriptAnalysisToDistillation(result.video, result.analysis));
-    onNotice({ type: "success", message: "已沉淀进对标拆解道库" });
-    onGoBlogger();
+    try {
+      await onSinkToDaoku(scriptAnalysisToDistillation(result.video, result.analysis));
+      onNotice({ type: "success", message: "已沉淀进对标拆解道库" });
+      onGoBlogger();
+    } catch (error) {
+      console.error("[VideoExtractPanel] Daoku save failed", { action: "daoku.save", error });
+      onNotice({ type: "error", message: error instanceof Error ? error.message : "道库保存失败" });
+    }
   };
 
   /** 只把结构送下游：原句和原画面留在这一页，不进改写环节。 */
   const handleSendToVideoFactory = () => {
-    if (!result) return;
+    if (!result || !onSendToVideoFactory) return;
     onSendToVideoFactory(
       analysisToSkeleton(result.analysis, {
         platform: VIDEO_PLATFORM_LABEL[result.video.platform],
@@ -261,7 +267,8 @@ export default function VideoExtractPanel({
         </div>
       </Card>
 
-      {result && <ResultView result={result} onSink={handleSink} onSendToVideoFactory={handleSendToVideoFactory} />}
+      <VideoExtractHistory result={result} onNotice={onNotice} />
+      {result && <ResultView result={result} onSink={handleSink} onSendToVideoFactory={onSendToVideoFactory ? handleSendToVideoFactory : undefined} />}
     </div>
   );
 }

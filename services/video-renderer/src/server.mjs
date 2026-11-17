@@ -7,6 +7,12 @@ import { bundle } from "@remotion/bundler";
 import { selectComposition, renderMedia } from "@remotion/renderer";
 import { synthesizeToFile } from "./tts.mjs";
 import { extractVideo } from "./extract.mjs";
+import { createJob, failJob, getJob, updateJob } from "./jobs.mjs";
+import { runAvatarPipeline } from "./avatarPipeline.mjs";
+import { runHybridPipeline } from "./hybridPipeline.mjs";
+import { runProductPipeline } from "./productPipeline.mjs";
+import { runLocalPipeline } from "./localPipeline.mjs";
+import { rendererRequestAuth } from "./requestAuth.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -15,6 +21,7 @@ const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
 
 const OUT_DIR = path.join(ROOT, "out");
 const AUDIO_DIR = path.join(ROOT, "audio");
+const ASSET_DIR = path.join(ROOT, "assets");
 
 // 整个 Remotion 工程只 bundle 一次，多次渲染复用。
 let bundlePromise = null;
@@ -40,6 +47,20 @@ function normalizeError(error) {
   }
 }
 
+async function renderComposition({ compositionId, inputProps, outPath }) {
+  const serveUrl = await getBundle();
+  const composition = await selectComposition({ serveUrl, id: compositionId, inputProps });
+  await renderMedia({
+    composition,
+    serveUrl,
+    codec: "h264",
+    audioCodec: "aac",
+    outputLocation: outPath,
+    inputProps,
+  });
+  return outPath;
+}
+
 function planToProps(plan) {
   const subtitles = (plan.scenes || []).map((scene) => scene.subtitle).filter(Boolean);
   return {
@@ -52,10 +73,13 @@ function planToProps(plan) {
 }
 
 const app = express();
-app.use(cors());
-app.use(express.json({ limit: "4mb" }));
+app.use(rendererRequestAuth());
+// Remotion reads local audio and assets from its own bundle origin.
+app.use((req, res, next) => ["GET", "HEAD"].includes(req.method) ? cors()(req, res, next) : next());
+app.use(express.json({ limit: "32mb" }));
 app.use("/out", express.static(OUT_DIR));
 app.use("/audio", express.static(AUDIO_DIR));
+app.use("/assets", express.static(ASSET_DIR));
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -149,7 +173,124 @@ app.post("/tts", async (req, res) => {
   }
 });
 
-// 抖音/小红书拆片：下无水印视频 + ffmpeg 抽音频 + ASR 转写口播脚本。下载文件复用 /out 静态目录对外提供。
+// Run long generation pipelines asynchronously and expose progress through /jobs.
+function startGenerationJob(kind, res, run) {
+  const job = createJob(kind);
+
+  // 故意不 await：请求要立刻返回。失败全部落到 failJob，不会变成未捕获的 rejection。
+  (async () => {
+    try {
+      await mkdir(OUT_DIR, { recursive: true });
+      await mkdir(AUDIO_DIR, { recursive: true });
+      await mkdir(ASSET_DIR, { recursive: true });
+      const result = await run(job);
+      updateJob(job.id, {
+        state: "done",
+        stage: "已完成",
+        step: job.totalSteps,
+        result: { ...result, videoUrl: `${PUBLIC_URL}/out/${result.fileName}` },
+      });
+    } catch (error) {
+      failJob(job.id, error, { kind });
+    }
+  })();
+
+  return res.json({ jobId: job.id, kind, state: job.state });
+}
+
+/**
+ * 数字人口播：一张形象图 + 脚本 → 百炼 wan2.2-s2v 对口型视频。
+ *
+ * openingSec > 0 走混合剪辑（只有开场那几秒按秒付费，后面用图铺），
+ * 省九成以上；不传或传 0 才是全程出镜。默认走省钱的那条。
+ */
+app.post("/avatar", (req, res) => {
+  const { script, image, images, openingSec = 5, voice, rate, resolution } = req.body || {};
+  if (!script || !String(script).trim()) return res.status(400).json({ error: "缺少口播脚本" });
+  if (!image) return res.status(400).json({ error: "缺少人物形象图" });
+
+  const shared = {
+    script,
+    image,
+    voice,
+    rate,
+    resolution,
+    audioDir: AUDIO_DIR,
+    assetDir: ASSET_DIR,
+    outDir: OUT_DIR,
+  };
+
+  return startGenerationJob("avatar", res, (job) =>
+    Number(openingSec) > 0
+      ? runHybridPipeline({
+          ...shared,
+          job,
+          sceneImages: Array.isArray(images) ? images : [],
+          openingSec: Number(openingSec),
+          publicUrl: PUBLIC_URL,
+          renderClipReel: ({ outPath, props }) =>
+            renderComposition({ compositionId: "ClipReel", inputProps: props, outPath }),
+        })
+      : runAvatarPipeline({ ...shared, job })
+  );
+});
+
+// 产品展示：多张产品图 + 脚本 → 图生视频片段（默认百炼 flash 档）→ 配音字幕合成
+app.post("/product", (req, res) => {
+  const { script, images, prompt, provider, voice, rate, resolution, imageSize } = req.body || {};
+  if (!script || !String(script).trim()) return res.status(400).json({ error: "缺少口播脚本" });
+  if (!Array.isArray(images) || images.length === 0) return res.status(400).json({ error: "至少上传一张产品图" });
+
+  return startGenerationJob("product", res, (job) =>
+    runProductPipeline({
+      job,
+      script,
+      images,
+      prompt,
+      provider,
+      voice,
+      rate,
+      resolution,
+      imageSize,
+      audioDir: AUDIO_DIR,
+      outDir: OUT_DIR,
+      publicUrl: PUBLIC_URL,
+      renderClipReel: ({ outPath, props }) =>
+        renderComposition({ compositionId: "ClipReel", inputProps: props, outPath }),
+    })
+  );
+});
+
+// 本地合成：不调云 API，零成本，用来先把脚本和节奏跑顺
+app.post("/local", (req, res) => {
+  const { script, images, voice, rate } = req.body || {};
+  if (!script || !String(script).trim()) return res.status(400).json({ error: "缺少口播脚本" });
+  if (!Array.isArray(images) || images.length === 0) return res.status(400).json({ error: "至少上传一张图" });
+
+  return startGenerationJob("local", res, (job) =>
+    runLocalPipeline({
+      job,
+      script,
+      images,
+      voice,
+      rate,
+      audioDir: AUDIO_DIR,
+      assetDir: ASSET_DIR,
+      outDir: OUT_DIR,
+      publicUrl: PUBLIC_URL,
+      renderClipReel: ({ outPath, props }) =>
+        renderComposition({ compositionId: "ClipReel", inputProps: props, outPath }),
+    })
+  );
+});
+
+app.get("/jobs/:id", (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job) return res.status(404).json({ error: "任务不存在或已过期" });
+  return res.json(job);
+});
+
+// Keep the existing extraction contract and mainline URL normalization.
 app.post("/extract", async (req, res) => {
   const { url } = req.body || {};
   if (!url || typeof url !== "string") {
@@ -168,7 +309,7 @@ app.post("/extract", async (req, res) => {
   }
 });
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, "127.0.0.1", () => {
   console.log(`[video-renderer] listening on ${PUBLIC_URL}`);
 });
 

@@ -8,7 +8,7 @@ import {
   useVideoConfig,
 } from "remotion";
 
-export interface FlashCardsProps {
+export type FlashCardsProps = {
   title: string;
   hook: string;
   coverText: string;
@@ -17,7 +17,7 @@ export interface FlashCardsProps {
   audioDurationSec: number;
   imageUrls: string[];
   accent: string;
-}
+};
 
 const PAPER = "#FBF7F0";
 const INK = "#161616";

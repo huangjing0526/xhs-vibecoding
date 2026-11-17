@@ -24,6 +24,8 @@ import BloggerResearch from "@/components/workflow/BloggerResearch";
 import VideoExtractPanel from "@/components/workflow/VideoExtractPanel";
 import RewriteStudio from "@/components/workflow/RewriteStudio";
 import VideoStudio from "@/components/workflow/VideoStudio";
+import TemplateStudio from "@/components/workflow/TemplateStudio";
+import VideoGenerationStudio from "@/components/workflow/VideoGenerationStudio";
 import WorkbenchShell from "@/components/workflow/WorkbenchShell";
 import AssetLibrary from "@/components/workflow/AssetLibrary";
 import CanvasPage from "@/components/workflow/CanvasPage";
@@ -1262,9 +1264,9 @@ export default function WorkflowDashboard() {
    * 蒸馏出一份道库：设为当前道库，同时落盘。
    * 不落盘它就只活在这一次会话里，进不了模板目录——「设为当前」和「存成模板」是同一个动作，只有这一处。
    */
-  const adoptDistillation = useCallback((distillation: BloggerDistillation) => {
+  const adoptDistillation = useCallback(async (distillation: BloggerDistillation) => {
     setBloggerDistillation(distillation);
-    saveDaokuTemplate(distillation)
+    return saveDaokuTemplate(distillation)
       .then(() => {
         setDaokuTemplates((current) => [distillation, ...current.filter((item) => item.id !== distillation.id)]);
         setNotice({
@@ -1284,6 +1286,7 @@ export default function WorkflowDashboard() {
           type: "error",
           message: error instanceof Error ? error.message : "道库没能存进模板，这次蒸馏只在当前会话里有效",
         });
+        throw error;
       });
   }, [setNotice]);
 
@@ -1826,6 +1829,17 @@ export default function WorkflowDashboard() {
                   </div>
                 )}
             </div>
+          </ToolPage>
+        )}
+
+        {area === "templateStudio" && (
+          <ToolPage area="templateStudio" onGoProjects={() => setArea("projects")}>
+            <TemplateStudio onNotice={setNotice} />
+          </ToolPage>
+        )}
+        {area === "videoGenerate" && (
+          <ToolPage area="videoGenerate" onGoProjects={() => setArea("projects")}>
+            <VideoGenerationStudio />
           </ToolPage>
         )}
 

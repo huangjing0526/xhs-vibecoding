@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef } from "react";
-import type { InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
+import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 
 // 输入类控件的共用底样式：圆角、内陷底色、聚焦时收束到品牌色细环
 const BASE =
@@ -37,3 +37,9 @@ export function Field({
     </label>
   );
 }
+
+export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(
+  function Select({ className = "", ...rest }, ref) {
+    return <select ref={ref} className={`${BASE} h-10 text-sm ${className}`} {...rest} />;
+  }
+);

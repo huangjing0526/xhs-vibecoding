@@ -73,3 +73,12 @@ export function assetRatioCss(id: TargetId, kind: AssetKind): string {
   const [width, height] = assetPx(id, kind);
   return `${width} / ${height}`;
 }
+
+export function aspectPx(aspect: AspectId): readonly [number, number] {
+  return ASPECT_PX[aspect];
+}
+
+export function aspectRatioCss(aspect: AspectId): string {
+  const [width, height] = aspectPx(aspect);
+  return `${width} / ${height}`;
+}

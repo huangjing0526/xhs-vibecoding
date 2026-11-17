@@ -57,5 +57,10 @@ export function mapBloggerSampleToFeishuFields(sample: BloggerSample): Record<st
     "正文": sample.content,
     "话题标签": sample.tags.join(" "),
     "封面描述": sample.coverDescription || "",
+    ...(sample.metrics?.views !== undefined ? { "阅读量": sample.metrics.views } : {}),
+    ...(sample.metrics?.likes !== undefined ? { "点赞量": sample.metrics.likes } : {}),
+    ...(sample.metrics?.saves !== undefined ? { "收藏量": sample.metrics.saves } : {}),
+    ...(sample.metrics?.comments !== undefined ? { "评论量": sample.metrics.comments } : {}),
+    ...(sample.metrics?.shares !== undefined ? { "分享量": sample.metrics.shares } : {}),
   };
 }

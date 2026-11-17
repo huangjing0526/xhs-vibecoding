@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { apiBadRequest, apiError, apiOk, readJsonBody } from "../feishu/_utils";
-import { createFeishuRecords, hasFeishuConfig, searchFeishuRecords } from "@/lib/feishu";
+import { createFeishuRecords, fieldToText, hasFeishuConfig, searchFeishuRecords } from "@/lib/feishu";
 import { mapBloggerProfileToFeishuFields, normalizeBloggerProfile, normalizeBloggerSample } from "@/lib/bloggerFeishu";
 import { DEMO_BLOGGER_PROFILES, DEMO_BLOGGER_SAMPLES, type BloggerProfile } from "@/lib/bloggerWorkflow";
 import { newShortId } from "@/app/api/image-factory/_shared";
@@ -22,7 +22,12 @@ export async function GET() {
     ]);
     return apiOk(
       {
-        profiles: profileRecords.map(normalizeBloggerProfile).filter((profile) => profile.name),
+        profiles: profileRecords
+          .filter((record) => {
+            const fields = record.fields || {};
+            return ["账号ID", "昵称", "主页链接"].some((key) => fieldToText(fields[key]).trim());
+          })
+          .map(normalizeBloggerProfile),
         samples: sampleRecords.map(normalizeBloggerSample),
         persisted: true,
       },
